@@ -33,28 +33,29 @@ body {
 
 .app {
     display: grid;
-    grid-template-rows: auto auto auto auto 1fr;  /* Added row for device-status */
+    /* Rows: TopNav, Log, MidiControls, CandideHeader, CandideContent, Bartleby */
+    grid-template-rows: auto auto auto auto auto auto;
     grid-template-columns: minmax(min-content, 25vw) min-content 1fr 400px;
-    height: calc(100vh - 60px);  /* Account for app-header */
+    min-height: calc(100vh - 60px);  /* Allow page to scroll if content overflows */
     gap: 1px;
     background: #ddd;
 }
 
-/* Top Navigation */
+/* Top Navigation - Connection Status Bar */
 .top-nav {
     grid-column: 1 / -1;
-    background: #fff;
-    padding: 12px 16px;
+    grid-row: 1;
+    background: #1a1a2e;
+    padding: 8px 16px;
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    border-bottom: 2px solid #ddd;
+    justify-content: flex-start;
 }
 
 .top-nav-left {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 16px;
 }
 
 .top-nav-right {
@@ -138,15 +139,99 @@ body {
     box-shadow: 0 2px 8px rgba(255, 176, 0, 0.3);
 }
 
+/* Section Headers (Candide, Bartleby) */
+.section-header {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    background: #2d2d30;
+    border-bottom: 1px solid #3e3e42;
+}
+
+.section-header h2 {
+    font-size: 16px;
+    font-weight: 600;
+    color: #fff;
+    margin: 0;
+}
+
+.section-controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.section-controls .device-version {
+    font-size: 12px;
+    color: #888;
+}
+
+.section-controls button {
+    padding: 4px 10px;
+    font-size: 12px;
+    border: 1px solid #555;
+    background: #3c3c3c;
+    color: #ccc;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.section-controls button:hover:not(:disabled) {
+    background: #4a4a4a;
+}
+
+.section-controls button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Save button states */
+.section-controls .save-button-saved {
+    background: #1e3a1e;
+    border-color: #2d5a2d;
+    color: #6fbf6f;
+}
+
+.section-controls .save-button-saving {
+    background: #3a3a1e;
+    border-color: #5a5a2d;
+    color: #bfbf6f;
+}
+
+.section-controls .save-button-unsaved {
+    background: #3a1e1e;
+    border-color: #5a2d2d;
+    color: #bf6f6f;
+}
+
+.candide-section-header {
+    grid-row: 4;
+}
+
+/* Factory reset button (warning style) */
+.section-controls .factory-reset-button {
+    background: #3a2020;
+    border-color: #5a3030;
+    color: #c88;
+}
+
+.section-controls .factory-reset-button:hover:not(:disabled) {
+    background: #4a2525;
+}
+
 /* Patches Panel (left sidebar) */
 .patches-panel {
-    grid-row: 5 / -1;
+    grid-row: 5;
     grid-column: 1;
     background: #fff;
     border-right: 2px solid #ddd;
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    align-self: start;  /* Don't stretch to row height */
+    max-height: 400px;  /* Scroll if many patches */
 }
 
 .patches-panel-header {
@@ -412,7 +497,7 @@ body {
 /* Collapsible Log Section */
 .log-section {
     grid-column: 1 / -1;
-    grid-row: 3;
+    grid-row: 2;
     background: #1e1e1e;
 }
 
@@ -445,7 +530,7 @@ body {
 /* MIDI Controls Row */
 .midi-controls-row {
     grid-column: 1 / -1;
-    grid-row: 4;
+    grid-row: 3;
     display: flex;
     align-items: center;
     gap: 24px;
@@ -540,6 +625,7 @@ body {
     overflow-y: auto;
     width: min-content;
     min-width: 150px;
+    align-self: start;  /* Don't stretch to row height */
 }
 
 .module-checklist h3 {
@@ -607,13 +693,13 @@ body {
     margin-right: 8px;
 }
 
-/* Parameter Editor */
+/* Parameter Editor - drives row height */
 .parameter-editor {
     grid-column: 3;
     grid-row: 5;
     background: #fff;
     padding: 16px;
-    overflow-y: auto;
+    /* No max-height - this panel determines the Candide row height */
 }
 
 .module-section {
@@ -862,6 +948,8 @@ body {
     background: #1e1e1e;
     padding: 16px;
     overflow-y: auto;
+    align-self: start;  /* Don't stretch to row height */
+    max-height: 400px;  /* Scroll if tall JSON */
 }
 
 .json-viewer pre {
@@ -1064,4 +1152,364 @@ body {
 
 .command-error-indicator:hover {
     background: #c82333;
+}
+
+/* ==================================================================
+   BARTLEBY EDITOR STYLES
+   ================================================================== */
+
+.bartleby-editor {
+    grid-row: 6;
+    grid-column: 1 / -1;
+    background: #1a1a2e;
+    color: #e0e0e0;
+    padding: 0;  /* Header handles its own padding */
+}
+
+.bartleby-editor .bartleby-content {
+    padding: 16px 20px;
+}
+
+/* Bartleby section header (inside bartleby-editor) */
+.bartleby-section-header {
+    background: #252538;
+    border-bottom: 1px solid #3a3a4e;
+    margin: 0;
+}
+
+.bartleby-editor.bartleby-loading {
+    text-align: center;
+    padding: 24px;
+}
+
+.bartleby-editor.bartleby-loading h2 {
+    color: #8b8b9e;
+    margin-bottom: 8px;
+}
+
+.bartleby-editor.bartleby-loading p {
+    color: #6b6b7e;
+}
+
+/* Bartleby Header */
+.bartleby-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid #2d2d45;
+}
+
+.bartleby-title {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.bartleby-title h2 {
+    font-size: 18px;
+    font-weight: 600;
+    color: #fff;
+    margin: 0;
+}
+
+.bartleby-version {
+    font-size: 12px;
+    color: #8b8b9e;
+    background: #2d2d45;
+    padding: 2px 8px;
+    border-radius: 4px;
+}
+
+.bartleby-save-button {
+    padding: 6px 16px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.bartleby-save-saved {
+    background: #1e3a1e;
+    border: 1px solid #2d5a2d;
+    color: #6fbf6f;
+}
+
+.bartleby-save-saving {
+    background: #3a3a1e;
+    border: 1px solid #5a5a2d;
+    color: #bfbf6f;
+    cursor: wait;
+}
+
+.bartleby-save-unsaved {
+    background: #3a1e1e;
+    border: 1px solid #5a2d2d;
+    color: #bf6f6f;
+}
+
+/* Bartleby Sections */
+.bartleby-section {
+    background: #12121f;
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 12px;
+}
+
+.bartleby-section:last-child {
+    margin-bottom: 0;
+}
+
+.bartleby-section h3 {
+    font-size: 14px;
+    font-weight: 600;
+    color: #bbb;
+    margin-bottom: 12px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+/* Curve Editor */
+.bartleby-curve-group {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 12px;
+    padding: 8px 0;
+    border-bottom: 1px solid #1d1d30;
+}
+
+.bartleby-curve-group:last-child {
+    border-bottom: none;
+    margin-bottom: 0;
+}
+
+.bartleby-curve-group h4 {
+    width: 80px;
+    font-size: 13px;
+    font-weight: 500;
+    color: #9b9bae;
+}
+
+.bartleby-curve-controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex: 1;
+}
+
+.bartleby-curve-control {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.bartleby-curve-control label {
+    font-size: 11px;
+    color: #6b6b7e;
+    width: 16px;
+}
+
+.bartleby-curve-control input[type="range"] {
+    width: 100px;
+    height: 4px;
+    background: #2d2d45;
+    border-radius: 2px;
+    cursor: pointer;
+    -webkit-appearance: none;
+}
+
+.bartleby-curve-control input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 12px;
+    height: 12px;
+    background: #3b82f6;
+    border-radius: 50%;
+    cursor: pointer;
+}
+
+.bartleby-curve-value {
+    font-size: 11px;
+    color: #6b6b7e;
+    font-family: monospace;
+    width: 36px;
+}
+
+.bartleby-curve-canvas {
+    background: #0d1117;
+    border-radius: 4px;
+    border: 1px solid #2d2d45;
+}
+
+/* Pots Grid */
+.bartleby-pots-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+}
+
+.bartleby-pot-card {
+    background: #1d1d30;
+    border: 1px solid #2d2d45;
+    border-radius: 6px;
+    padding: 10px;
+    transition: opacity 0.2s;
+}
+
+.bartleby-pot-card.inactive {
+    opacity: 0.5;
+}
+
+.bartleby-pot-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.bartleby-pot-index {
+    font-size: 11px;
+    color: #6b6b7e;
+    font-family: monospace;
+}
+
+.bartleby-pot-header input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    cursor: pointer;
+}
+
+.bartleby-pot-label {
+    width: 100%;
+    background: #12121f;
+    border: 1px solid #2d2d45;
+    border-radius: 4px;
+    padding: 6px 8px;
+    font-size: 12px;
+    color: #e0e0e0;
+    margin-bottom: 8px;
+}
+
+.bartleby-pot-label:focus {
+    outline: none;
+    border-color: #3b82f6;
+}
+
+.bartleby-pot-cc {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.bartleby-pot-cc label {
+    font-size: 11px;
+    color: #6b6b7e;
+}
+
+.bartleby-pot-cc input[type="number"] {
+    width: 50px;
+    background: #12121f;
+    border: 1px solid #2d2d45;
+    border-radius: 4px;
+    padding: 4px 6px;
+    font-size: 12px;
+    color: #e0e0e0;
+    text-align: center;
+}
+
+.bartleby-pot-cc input[type="number"]:focus {
+    outline: none;
+    border-color: #3b82f6;
+}
+
+/* Pedal Options */
+.bartleby-pedal-options {
+    display: flex;
+    gap: 24px;
+    margin-bottom: 12px;
+}
+
+.bartleby-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+}
+
+.bartleby-checkbox input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+}
+
+.bartleby-checkbox span {
+    font-size: 13px;
+    color: #bbb;
+}
+
+.bartleby-description {
+    font-size: 11px;
+    color: #6b6b7e;
+    font-style: italic;
+}
+
+/* Toggle Row */
+.bartleby-toggle-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.bartleby-toggle-row span {
+    font-size: 13px;
+    color: #bbb;
+}
+
+/* Toggle Switch */
+.bartleby-toggle {
+    position: relative;
+    display: inline-block;
+    width: 44px;
+    height: 24px;
+}
+
+.bartleby-toggle input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.bartleby-toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #2d2d45;
+    transition: 0.3s;
+    border-radius: 12px;
+}
+
+.bartleby-toggle-slider:before {
+    position: absolute;
+    content: "";
+    height: 18px;
+    width: 18px;
+    left: 3px;
+    bottom: 3px;
+    background-color: #6b6b7e;
+    transition: 0.3s;
+    border-radius: 50%;
+}
+
+.bartleby-toggle input:checked + .bartleby-toggle-slider {
+    background-color: #1e5a1e;
+}
+
+.bartleby-toggle input:checked + .bartleby-toggle-slider:before {
+    transform: translateX(20px);
+    background-color: #6fbf6f;
 }

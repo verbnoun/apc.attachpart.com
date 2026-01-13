@@ -707,12 +707,17 @@ function App() {
 
     // Firmware update state
     const [showFirmwareModal, setShowFirmwareModal] = useState(false);
+    const [firmwareDevice, setFirmwareDevice] = useState(null); // 'candide' | 'bartleby'
     const [firmwarePhase, setFirmwarePhase] = useState(null); // 'confirm' | 'erasing' | 'transferring' | 'flashing' | 'ready' | 'restarting'
     const [firmwareProgress, setFirmwareProgress] = useState(0);
 
     // Device info state
     const [deviceInfo, setDeviceInfo] = useState(null);  // {project, version}
     const [targetFirmwareInfo, setTargetFirmwareInfo] = useState(null);  // {version, size}
+
+    // Bartleby state
+    const [bartlebyApi] = useState(() => new BartlebyAPI());
+    const [bartlebyConnected, setBartlebyConnected] = useState(false);
 
     // Derived state
     const topology = useMemo(() => extractTopology(currentPatch), [currentPatch]);
@@ -778,8 +783,18 @@ function App() {
         currentIndexRef.current = patchListHook.currentIndex;
     }, [patchListHook.currentIndex]);
 
+    // Bartleby hooks
+    const bartlebySession = useBartlebySession(bartlebyApi, { addLog });
+    const bartlebyDeviceInfo = useBartlebyDeviceInfo(bartlebyApi, { addLog });
+
     // Combined busy state
     const busy = patchListHook.busy || moduleToggleHook.busy || parameterEditorHook.busy;
+
+    // Control MIDI logging based on log panel state
+    // When collapsed, logging is disabled for zero latency
+    useEffect(() => {
+        deviceRegistry.setMidiLogging(!logCollapsed);
+    }, [logCollapsed]);
 
     //------------------------------------------------------------------
     // Transport task loop
@@ -794,6 +809,17 @@ function App() {
 
         return () => clearInterval(interval);
     }, [status]);
+
+    // Bartleby transport task (separate from Candide)
+    useEffect(() => {
+        if (!bartlebyConnected) return;
+
+        const interval = setInterval(() => {
+            bartlebyApi.task();
+        }, 100);
+
+        return () => clearInterval(interval);
+    }, [bartlebyConnected, bartlebyApi]);
 
     //------------------------------------------------------------------
     // Connection handlers
@@ -887,6 +913,42 @@ function App() {
                     }
                 });
 
+                // Bartleby connection callback
+                deviceRegistry.onBartlebyConnected(async () => {
+                    if (!mounted) return;
+
+                    const input = deviceRegistry.getBartlebyInput();
+                    const output = deviceRegistry.getBartlebyOutput();
+
+                    if (input && output) {
+                        try {
+                            bartlebyApi.connectToDevice(input, output, (msg, type) => {
+                                if (mounted) addLog(`[Bartleby] ${msg}`, type);
+                            });
+                            // CRITICAL: Tell DeviceRegistry to route SysEx to BartlebyAPI
+                            // DeviceRegistry owns onmidimessage, BartlebyAPI must NOT set it
+                            deviceRegistry.setBartlebyApi(bartlebyApi);
+                            setBartlebyConnected(true);
+
+                            // Initialize Bartleby session (forces MPE mode)
+                            await bartlebySession.initSession();
+                            await bartlebyDeviceInfo.fetchDeviceInfo();
+                        } catch (e) {
+                            addLog(`Bartleby init error: ${e.message}`, 'error');
+                        }
+                    }
+                });
+
+                // Bartleby disconnection callback
+                deviceRegistry.onBartlebyDisconnected(() => {
+                    if (!mounted) return;
+
+                    bartlebyApi.disconnect();
+                    setBartlebyConnected(false);
+                    bartlebySession.reset();
+                    bartlebyDeviceInfo.reset();
+                });
+
                 // Check if Candide already connected
                 const candideInput = deviceRegistry.getCandideInput();
                 const candideOutput = deviceRegistry.getCandideOutput();
@@ -898,6 +960,24 @@ function App() {
                     });
                     setIsLinked(deviceRegistry.isLinked());
                     completeConnection({ input: candideInput, output: candideOutput });
+                }
+
+                // Check if Bartleby already connected
+                const bartInput = deviceRegistry.getBartlebyInput();
+                const bartOutput = deviceRegistry.getBartlebyOutput();
+                if (bartInput && bartOutput && mounted) {
+                    try {
+                        bartlebyApi.connectToDevice(bartInput, bartOutput, (msg, type) => {
+                            if (mounted) addLog(`[Bartleby] ${msg}`, type);
+                        });
+                        // CRITICAL: Tell DeviceRegistry to route SysEx to BartlebyAPI
+                        deviceRegistry.setBartlebyApi(bartlebyApi);
+                        setBartlebyConnected(true);
+                        await bartlebySession.initSession();
+                        await bartlebyDeviceInfo.fetchDeviceInfo();
+                    } catch (e) {
+                        addLog(`Bartleby init error: ${e.message}`, 'error');
+                    }
                 }
 
             } catch (e) {
@@ -967,12 +1047,16 @@ function App() {
     // Firmware update handlers
     //------------------------------------------------------------------
 
-    const handleOpenFirmwareModal = async () => {
+    const handleOpenFirmwareModal = async (device = 'candide') => {
         setShowFirmwareModal(true);
+        setFirmwareDevice(device);
         setFirmwarePhase('confirm');
         setFirmwareProgress(0);
 
         // Discover firmware file in /firmware/ directory
+        // Candide: candide_x.x.x.bin, Bartleby: bartleby_x.x.x.bin
+        const prefix = device === 'bartleby' ? 'bartleby' : 'candide';
+
         try {
             const response = await fetch('/firmware/');
             if (!response.ok) {
@@ -980,15 +1064,17 @@ function App() {
             }
             const html = await response.text();
 
-            // Parse directory listing for .bin files
+            // Parse directory listing for .bin files matching the device
             const binMatches = html.match(/href="([^"]+\.bin)"/gi) || [];
-            const binFiles = binMatches.map(m => m.match(/href="([^"]+\.bin)"/i)[1]);
+            const binFiles = binMatches
+                .map(m => m.match(/href="([^"]+\.bin)"/i)[1])
+                .filter(f => f.toLowerCase().startsWith(prefix));
 
             if (binFiles.length === 0) {
-                throw new Error('No firmware .bin file found in /firmware/');
+                throw new Error(`No ${prefix}_*.bin file found in /firmware/`);
             }
             if (binFiles.length > 1) {
-                throw new Error(`Multiple firmware files found: ${binFiles.join(', ')}. Only one allowed.`);
+                throw new Error(`Multiple ${prefix} firmware files found: ${binFiles.join(', ')}. Only one allowed.`);
             }
 
             const firmwareFilename = binFiles[0];
@@ -998,23 +1084,26 @@ function App() {
             const versionMatch = firmwareFilename.match(/_(\d+\.\d+\.\d+)\.bin$/);
             if (versionMatch) {
                 setTargetFirmwareInfo({ filename: firmwareFilename, version: versionMatch[1] });
-                addLog(`Target firmware: v${versionMatch[1]}`);
+                addLog(`[${device}] Target firmware: v${versionMatch[1]}`);
             } else {
-                addLog(`Target firmware: ${firmwareFilename}`);
+                addLog(`[${device}] Target firmware: ${firmwareFilename}`);
             }
         } catch (e) {
-            addLog(`Firmware discovery error: ${e.message}`, 'error');
+            addLog(`[${device}] Firmware discovery error: ${e.message}`, 'error');
             setTargetFirmwareInfo(null);
         }
     };
 
     const handleStartFirmwareUpdate = async () => {
+        const deviceApi = firmwareDevice === 'bartleby' ? bartlebyApi : api;
+        const deviceLabel = firmwareDevice || 'candide';
+
         try {
             if (!targetFirmwareInfo?.filename) {
                 throw new Error('No firmware file discovered');
             }
 
-            addLog('Fetching firmware binary...');
+            addLog(`[${deviceLabel}] Fetching firmware binary...`);
 
             // Fetch firmware from backend (cache-bust to ensure latest)
             const response = await fetch(`/firmware/${targetFirmwareInfo.filename}?t=${Date.now()}`);
@@ -1022,39 +1111,42 @@ function App() {
                 throw new Error(`Failed to fetch firmware: ${response.status}`);
             }
             const firmware = new Uint8Array(await response.arrayBuffer());
-            addLog(`Firmware size: ${firmware.length} bytes`);
+            addLog(`[${deviceLabel}] Firmware size: ${firmware.length} bytes`);
 
             // Upload to device with progress callback
-            await api.uploadFirmware(firmware, ({ phase, percent, sector, total }) => {
+            await deviceApi.uploadFirmware(firmware, ({ phase, percent, sector, total }) => {
                 setFirmwarePhase(phase);
                 setFirmwareProgress(percent);
 
                 if (phase === 'erasing' && sector !== undefined) {
-                    addLog(`Erasing: sector ${sector}/${total} (${percent}%)`);
+                    addLog(`[${deviceLabel}] Erasing: sector ${sector}/${total} (${percent}%)`);
                 } else if (phase === 'transferring') {
-                    addLog(`Transferring: ${percent}%`);
+                    addLog(`[${deviceLabel}] Transferring: ${percent}%`);
                 }
             });
 
             setFirmwarePhase('ready');
-            addLog('Firmware written successfully');
+            addLog(`[${deviceLabel}] Firmware written successfully`);
         } catch (e) {
-            addLog(`Firmware update failed: ${e.message}`, 'error');
+            addLog(`[${deviceLabel}] Firmware update failed: ${e.message}`, 'error');
             setFirmwarePhase('confirm');
             setError(e.message);
         }
     };
 
     const handleRestartDevice = async () => {
+        const deviceApi = firmwareDevice === 'bartleby' ? bartlebyApi : api;
+        const deviceLabel = firmwareDevice || 'candide';
+
         setFirmwarePhase('restarting');
-        addLog('Restarting device...');
+        addLog(`[${deviceLabel}] Restarting device...`);
         try {
-            await api.restartDevice();
+            await deviceApi.restartDevice();
         } catch (e) {
             // "Device disconnected" is expected - the device restarted successfully
             // Only log unexpected errors
             if (!e.message.includes('disconnected')) {
-                addLog(`Restart error: ${e.message}`, 'error');
+                addLog(`[${deviceLabel}] Restart error: ${e.message}`, 'error');
             }
         }
         // Device will reconnect automatically via monitoring
@@ -1062,8 +1154,32 @@ function App() {
 
     const handleCancelFirmwareUpdate = () => {
         setShowFirmwareModal(false);
+        setFirmwareDevice(null);
         setFirmwarePhase(null);
         setFirmwareProgress(0);
+    };
+
+    //------------------------------------------------------------------
+    // Bartleby factory reset handler
+    //------------------------------------------------------------------
+
+    const handleBartlebyFactoryReset = async () => {
+        if (!confirm('Reset Bartleby to factory defaults?\n\nThis will erase all config and reboot the device.')) {
+            return;
+        }
+
+        try {
+            addLog('[Bartleby] Factory reset...');
+            await bartlebyApi.configReset();
+            addLog('[Bartleby] Reset complete, device rebooting...');
+        } catch (e) {
+            // "Device disconnected" is expected after reset
+            if (!e.message.includes('disconnected')) {
+                addLog(`[Bartleby] Reset error: ${e.message}`, 'error');
+            } else {
+                addLog('[Bartleby] Device rebooting...');
+            }
+        }
     };
 
     //------------------------------------------------------------------
@@ -1082,16 +1198,10 @@ function App() {
 
     return (
         <div className="app">
-            <TopNav
-                status={status}
-                saveStatus={saveStatus}
-                deviceInfo={deviceInfo}
-                onConnect={handleConnect}
-                onSave={handleSave}
-                onUpdateFirmware={handleOpenFirmwareModal}
-                commandPending={busy}
-            />
-            <DeviceStatus devices={deviceStates} isLinked={isLinked} />
+            {/* Row 1: Header + Connection Status */}
+            <TopNav devices={deviceStates} isLinked={isLinked} />
+
+            {/* Row 2: Log */}
             <div className={`log-section ${logCollapsed ? 'collapsed' : ''}`}>
                 <div className="log-header" onClick={() => setLogCollapsed(!logCollapsed)}>
                     <span className="log-toggle">{logCollapsed ? '\u25B6' : '\u25BC'}</span>
@@ -1099,12 +1209,24 @@ function App() {
                 </div>
                 {!logCollapsed && <LogDisplay logs={logs} />}
             </div>
+
+            {/* Row 3: MIDI Test Controls */}
             <MidiControlsRow
                 api={api}
                 isConnected={status === 'connected'}
                 velocity={velocity}
                 setVelocity={setVelocity}
                 addLog={addLog}
+            />
+
+            {/* Row 4: Candide Section */}
+            <CandideSectionHeader
+                status={status}
+                saveStatus={saveStatus}
+                deviceInfo={deviceInfo}
+                onSave={handleSave}
+                onUpdateFirmware={handleOpenFirmwareModal}
+                commandPending={busy}
             />
             <PatchesPanel
                 patches={patchListHook.patchList}
@@ -1139,6 +1261,20 @@ function App() {
             />
             <JsonViewer patch={currentPatch} />
 
+            {/* Row 5: Bartleby Section */}
+            {bartlebyConnected && (
+                <BartlebyEditor
+                    config={bartlebySession.config}
+                    onConfigChange={bartlebySession.updateConfig}
+                    onSave={bartlebySession.save}
+                    onUpdateFirmware={() => handleOpenFirmwareModal('bartleby')}
+                    onFactoryReset={handleBartlebyFactoryReset}
+                    disabled={bartlebySession.busy}
+                    saveStatus={bartlebySession.saveStatus}
+                    deviceInfo={bartlebyDeviceInfo.deviceInfo}
+                />
+            )}
+
             {showDeleteModal && (
                 <DeleteConfirmModal
                     patchName={patchListHook.patchList[deleteTargetIndex]?.name || 'Unknown'}
@@ -1151,7 +1287,8 @@ function App() {
                 <FirmwareUpdateModal
                     phase={firmwarePhase}
                     progress={firmwareProgress}
-                    deviceInfo={deviceInfo}
+                    deviceInfo={firmwareDevice === 'bartleby' ? bartlebyDeviceInfo.deviceInfo : deviceInfo}
+                    deviceName={firmwareDevice === 'bartleby' ? 'Bartleby' : 'Candide'}
                     targetFirmwareInfo={targetFirmwareInfo}
                     onConfirm={handleStartFirmwareUpdate}
                     onRestart={handleRestartDevice}
@@ -1176,19 +1313,37 @@ function App() {
 // UI COMPONENTS (unchanged)
 //======================================================================
 
-function TopNav({ status, saveStatus, deviceInfo, onConnect, onSave, onUpdateFirmware, commandPending }) {
+function TopNav({ devices, isLinked }) {
+    return (
+        <div className="top-nav">
+            <div className="top-nav-left">
+                <div className={`device-badge ${devices.bartleby.connected ? 'connected' : ''}`}>
+                    <span className="device-name">Bartleby</span>
+                    <span className="device-state">
+                        {devices.bartleby.connected ? 'Connected' : 'Not connected'}
+                    </span>
+                </div>
+                <div className={`device-badge ${devices.candide.connected ? 'connected' : ''}`}>
+                    <span className="device-name">Candide</span>
+                    <span className="device-state">
+                        {devices.candide.connected ? 'Connected' : 'Not connected'}
+                    </span>
+                </div>
+                {isLinked && (
+                    <div className="linked-badge">LINKED</div>
+                )}
+            </div>
+        </div>
+    );
+}
+
+//======================================================================
+// CANDIDE SECTION HEADER
+//======================================================================
+
+function CandideSectionHeader({ status, saveStatus, deviceInfo, onSave, onUpdateFirmware, commandPending }) {
     const isConnected = status === 'connected';
-    const isDisconnected = status === 'disconnected';
 
-    const statusText = {
-        'connected': 'Connected',
-        'connecting': 'Connecting...',
-        'waiting': 'Waiting for device...',
-        'disconnected': 'Disconnected',
-        'error': 'Error'
-    }[status] || status;
-
-    // Save button styling based on device-reported save status
     const saveButtonClass = {
         'saved': 'save-button-saved',
         'saving': 'save-button-saving',
@@ -1202,8 +1357,9 @@ function TopNav({ status, saveStatus, deviceInfo, onConnect, onSave, onUpdateFir
     }[saveStatus] || 'Saved';
 
     return (
-        <div className="top-nav">
-            <div className="top-nav-left">
+        <div className="section-header candide-section-header">
+            <h2>Candide</h2>
+            <div className="section-controls">
                 <button
                     onClick={onSave}
                     disabled={!isConnected || commandPending || saveStatus === 'saving'}
@@ -1211,53 +1367,16 @@ function TopNav({ status, saveStatus, deviceInfo, onConnect, onSave, onUpdateFir
                 >
                     {saveButtonText}
                 </button>
-                <span className={`status ${status}`}>
-                    {statusText}
-                </span>
                 {isConnected && deviceInfo && (
-                    <span className="device-version">
-                        {deviceInfo.project} v{deviceInfo.version}
-                    </span>
-                )}
-                {(isDisconnected || status === 'error') && (
-                    <button onClick={onConnect}>
-                        Reconnect
-                    </button>
+                    <span className="device-version">v{deviceInfo.version}</span>
                 )}
                 <button
                     onClick={onUpdateFirmware}
                     disabled={!isConnected || commandPending}
-                    title="Update device firmware"
                 >
                     Update Firmware
                 </button>
             </div>
-        </div>
-    );
-}
-
-//======================================================================
-// DEVICE STATUS DISPLAY
-//======================================================================
-
-function DeviceStatus({ devices, isLinked }) {
-    return (
-        <div className="device-status">
-            <div className={`device-badge ${devices.bartleby.connected ? 'connected' : ''}`}>
-                <span className="device-name">Bartleby</span>
-                <span className="device-state">
-                    {devices.bartleby.connected ? devices.bartleby.name : 'Not connected'}
-                </span>
-            </div>
-            <div className={`device-badge ${devices.candide.connected ? 'connected' : ''}`}>
-                <span className="device-name">Candide</span>
-                <span className="device-state">
-                    {devices.candide.connected ? devices.candide.name : 'Not connected'}
-                </span>
-            </div>
-            {isLinked && (
-                <div className="linked-badge">LINKED</div>
-            )}
         </div>
     );
 }
@@ -1371,9 +1490,27 @@ function MidiControlsRow({ api, isConnected, velocity, setVelocity, addLog }) {
     const playingRef = useRef(false);
 
     // MPE mode - each note gets its own channel for independent expression
-    const [mpeEnabled, setMpeEnabled] = useState(false);
+    // Default to true for per-note expression support
+    const [mpeEnabled, setMpeEnabled] = useState(true);
     const mpeAllocatorRef = useRef(new MpeChannelAllocator());
     const currentChannelRef = useRef(0);  // Track channel for current note
+    const mpeSentRef = useRef(false);  // Track if initial MPE config was sent
+
+    // Send MPE config when connected and MPE is enabled by default
+    useEffect(() => {
+        if (isConnected && api.midiOutput && mpeEnabled && !mpeSentRef.current) {
+            // Send MPE Configuration Message (CC#127 on ch0)
+            // Value: 15 = 15 member channels (channels 2-16)
+            const msg = new Uint8Array([0xB0, 0x7F, 15]);
+            api.midiOutput.send(msg);
+            addLog('TX: MPE Config [B0 7F 0F] - 15 member channels (default)');
+            mpeSentRef.current = true;
+        }
+        // Reset when disconnected
+        if (!isConnected) {
+            mpeSentRef.current = false;
+        }
+    }, [isConnected, api.midiOutput, mpeEnabled, addLog]);
 
     // Expression throttling (similar to Bartleby rate limiting)
     // Prevents flooding Candide with expression data during mouse movement
@@ -1755,13 +1892,14 @@ function ExitPromptModal({ onSaveAndExit, onExitWithoutSaving, onCancel }) {
     );
 }
 
-function FirmwareUpdateModal({ phase, progress, deviceInfo, targetFirmwareInfo, onConfirm, onRestart, onCancel }) {
+function FirmwareUpdateModal({ phase, progress, deviceInfo, deviceName, targetFirmwareInfo, onConfirm, onRestart, onCancel }) {
+    const name = deviceName || 'Device';
     return (
         <div className="progress-overlay">
             <div className="progress-modal firmware-modal">
                 {phase === 'confirm' && (
                     <>
-                        <h3>Update Firmware</h3>
+                        <h3>Update {name} Firmware</h3>
                         <div className="firmware-version-info">
                             <p>Current: {deviceInfo ? `v${deviceInfo.version}` : 'Unknown'}</p>
                             <p>Update to: {targetFirmwareInfo ? `v${targetFirmwareInfo.version}` : 'Unknown'}</p>

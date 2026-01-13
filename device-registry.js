@@ -41,7 +41,11 @@ class DeviceRegistry {
         };
         this._routingEnabled = false;
         this._onDeviceChange = null;
+        this._onBartlebyConnected = null;
+        this._onBartlebyDisconnected = null;
         this._logFn = null;
+        this._midiLoggingEnabled = false;  // Controlled by log panel expand/collapse
+        this._bartlebyApi = null;  // Reference for SysEx routing
     }
 
     //==================================================================
@@ -131,6 +135,58 @@ class DeviceRegistry {
         return this.devices.candide.input;
     }
 
+    /**
+     * Get Bartleby output port (for config commands)
+     * @returns {MIDIOutput|null}
+     */
+    getBartlebyOutput() {
+        return this.devices.bartleby.output;
+    }
+
+    /**
+     * Get Bartleby input port (for SysEx responses)
+     * @returns {MIDIInput|null}
+     */
+    getBartlebyInput() {
+        return this.devices.bartleby.input;
+    }
+
+    /**
+     * Set callback for Bartleby connection
+     * Called when Bartleby connects so app can initialize BartlebyAPI
+     * @param {Function} callback - Called with no args when Bartleby connects
+     */
+    onBartlebyConnected(callback) {
+        this._onBartlebyConnected = callback;
+    }
+
+    /**
+     * Set callback for Bartleby disconnection
+     * @param {Function} callback
+     */
+    onBartlebyDisconnected(callback) {
+        this._onBartlebyDisconnected = callback;
+    }
+
+    /**
+     * Enable/disable MIDI message logging
+     * When disabled, no logging happens in the hot path (zero latency)
+     * @param {boolean} enabled
+     */
+    setMidiLogging(enabled) {
+        this._midiLoggingEnabled = enabled;
+    }
+
+    /**
+     * Set the BartlebyAPI instance for SysEx routing
+     * CRITICAL: DeviceRegistry owns the MIDI input handler for Bartleby.
+     * BartlebyAPI must NOT set onmidimessage - DeviceRegistry routes SysEx to it.
+     * @param {BartlebyAPI} api
+     */
+    setBartlebyApi(api) {
+        this._bartlebyApi = api;
+    }
+
     //==================================================================
     // INTERNAL: Device Detection
     //==================================================================
@@ -183,6 +239,11 @@ class DeviceRegistry {
         this.devices[deviceId] = { input, output, name: input.name };
         this._updateRouting();
         this._onDeviceChange?.();
+
+        // Notify app if Bartleby connected (for BartlebyAPI initialization)
+        if (deviceId === 'bartleby') {
+            this._onBartlebyConnected?.();
+        }
     }
 
     /**
@@ -201,6 +262,11 @@ class DeviceRegistry {
                 // Disable routing if linked state broken
                 if (deviceId === 'bartleby' || deviceId === 'candide') {
                     this._routingEnabled = false;
+                }
+
+                // Notify app if Bartleby disconnected
+                if (deviceId === 'bartleby') {
+                    this._onBartlebyDisconnected?.();
                 }
 
                 this._onDeviceChange?.();
@@ -229,21 +295,75 @@ class DeviceRegistry {
         if (bart.input && cand.output && !this._routingEnabled) {
             this._log('Enabling MIDI routing: Bartleby -> Candide');
 
+            // Send "init" command to Bartleby to force MPE mode
+            // (Web MIDI API = MIDI 1.0, so Bartleby needs to convert MIDI 2.0 → MPE)
+            this._sendBartlebyInit();
+
             // LIGHTNING-FAST ROUTING HANDLER
             // This is the hot path - must be O(1) with no allocations
+            // Logging only happens when explicitly enabled (log panel expanded)
             bart.input.onmidimessage = (event) => {
                 const data = event.data;
 
-                // Fast path: Forward non-SysEx directly
+                // Fast path: Forward non-SysEx directly to Candide
                 // Check < 0xF0 to exclude all system messages (SysEx, timing, etc.)
                 if (data[0] < 0xF0) {
                     cand.output.send(data);
+
+                    // Optional logging (only when log panel expanded)
+                    if (this._midiLoggingEnabled && this._logFn) {
+                        this._logFn(`ROUTE: [${this._formatMidi(data)}] Bartleby -> Candide`, 'midi');
+                    }
+                } else {
+                    // SysEx and system messages: route to BartlebyAPI for config responses
+                    // CRITICAL: Do NOT forward to Candide - SysEx is for Bartleby config only
+                    if (this._bartlebyApi) {
+                        this._bartlebyApi.handleMidiMessage(event);
+                    }
                 }
-                // SysEx (0xF0+) not forwarded - will be used for Bartleby config later
             };
 
             this._routingEnabled = true;
             this._onDeviceChange?.();
+        }
+    }
+
+    //==================================================================
+    // INTERNAL: Bartleby Commands
+    //==================================================================
+
+    /**
+     * Send "init" command to Bartleby to force MPE mode
+     * This is needed because macOS completes MIDI 2.0 handshake but then
+     * converts to MIDI 1.0 for web browsers, dropping per-note pitch bend.
+     * @private
+     */
+    _sendBartlebyInit() {
+        const bart = this.devices.bartleby;
+        if (!bart.output) return;
+
+        // Build SysEx: F0 <json bytes> F7
+        const json = JSON.stringify({ cmd: 'init' });
+        const jsonBytes = new TextEncoder().encode(json);
+
+        // Validate JSON bytes are 7-bit clean (SysEx requirement)
+        for (let i = 0; i < jsonBytes.length; i++) {
+            if (jsonBytes[i] > 0x7F) {
+                this._log('Bartleby init failed: JSON contains non-7-bit chars', 'error');
+                return;
+            }
+        }
+
+        const sysex = new Uint8Array(jsonBytes.length + 2);
+        sysex[0] = 0xF0;  // SysEx start
+        sysex.set(jsonBytes, 1);
+        sysex[sysex.length - 1] = 0xF7;  // SysEx end
+
+        try {
+            bart.output.send(sysex);
+            this._log('Sent init to Bartleby (forcing MPE mode)');
+        } catch (e) {
+            this._log(`Bartleby init failed: ${e.message}`, 'error');
         }
     }
 
@@ -258,6 +378,28 @@ class DeviceRegistry {
     _log(message, type = 'info') {
         this._logFn?.(message, type);
         console.log(`[DeviceRegistry] ${message}`);
+    }
+
+    /**
+     * Format MIDI bytes as hex string with message type annotation
+     * @private
+     */
+    _formatMidi(data) {
+        const bytes = Array.from(data).map(b => b.toString(16).toUpperCase().padStart(2, '0')).join(' ');
+        const status = data[0] & 0xF0;
+        const ch = data[0] & 0x0F;
+        let type = '';
+        switch (status) {
+            case 0x80: type = `NoteOff ch${ch}`; break;
+            case 0x90: type = `NoteOn ch${ch}`; break;
+            case 0xA0: type = `PolyPres ch${ch}`; break;
+            case 0xB0: type = `CC ch${ch}`; break;
+            case 0xC0: type = `PgmChg ch${ch}`; break;
+            case 0xD0: type = `ChanPres ch${ch}`; break;
+            case 0xE0: type = `PitchBend ch${ch}`; break;
+            default: type = 'Unknown';
+        }
+        return `${bytes} (${type})`;
     }
 }
 
