@@ -1479,13 +1479,27 @@ const MELODY = [
     72, 69, 65, 62,  // Down
 ];
 
+// Color palette for polyphonic note display
+const NOTE_COLORS = [
+    '#ffb000',  // amber (original)
+    '#00ff88',  // green
+    '#ff4488',  // pink
+    '#44aaff',  // blue
+    '#ff8844',  // orange
+    '#aa44ff',  // purple
+    '#44ffff',  // cyan
+    '#ffff44',  // yellow
+];
+
 function MidiControlsRow({ api, isConnected, velocity, setVelocity, addLog }) {
     const canvasRef = useRef(null);
     // velocity and setVelocity are now passed from App (shared state)
-    const [isPlaying, setIsPlaying] = useState(false);
-    const [currentNote, setCurrentNote] = useState(60);
-    const [bendValue, setBendValue] = useState(0);
-    const [pressureValue, setPressureValue] = useState(0.5);
+
+    // Polyphonic note tracking: Map<channel, {note, bend, pressure, colorIndex}>
+    const [activeNotes, setActiveNotes] = useState(new Map());
+    const [hideCursor, setHideCursor] = useState(false);
+    const colorIndexRef = useRef(0);  // Track next color to assign
+
     const melodyIndexRef = useRef(0);
     const playingRef = useRef(false);
 
@@ -1554,8 +1568,22 @@ function MidiControlsRow({ api, isConnected, velocity, setVelocity, addLog }) {
         };
     }, [PAD_SIZE, CENTER, NEUTRAL_RADIUS]);
 
-    // Draw the expression pad
-    const drawPad = useCallback((x = null, y = null) => {
+    // Convert bend/pressure values to canvas position (reverse of positionToValues)
+    const valuesToPosition = useCallback((bend, pressure) => {
+        const x = ((bend + 1) / 2) * PAD_SIZE;
+        const y = pressure * PAD_SIZE;
+        return { x, y };
+    }, [PAD_SIZE]);
+
+    // Note name helper (moved here so drawPad can use it)
+    const noteNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+    const getNoteName = useCallback((note) => {
+        const octave = Math.floor(note / 12) - 1;
+        return `${noteNames[note % 12]}${octave}`;
+    }, []);
+
+    // Draw the expression pad with active notes
+    const drawPad = useCallback((notes = []) => {
         const canvas = canvasRef.current;
         if (!canvas) return;
         const ctx = canvas.getContext('2d');
@@ -1581,23 +1609,90 @@ function MidiControlsRow({ api, isConnected, velocity, setVelocity, addLog }) {
         ctx.arc(CENTER, CENTER, NEUTRAL_RADIUS, 0, Math.PI * 2);
         ctx.stroke();
 
-        // Draw position indicator if active
-        if (x !== null && y !== null) {
-            // Glow effect
-            ctx.shadowColor = '#ffb000';
+        // Draw each active note as text with glow
+        notes.forEach(({ note, bend, pressure, colorIndex }) => {
+            const { x, y } = valuesToPosition(bend, pressure);
+            const color = NOTE_COLORS[colorIndex % NOTE_COLORS.length];
+            const noteName = getNoteName(note);
+
+            ctx.shadowColor = color;
             ctx.shadowBlur = 15;
-            ctx.fillStyle = '#ffb000';
-            ctx.beginPath();
-            ctx.arc(x, y, 10, 0, Math.PI * 2);
-            ctx.fill();
+            ctx.fillStyle = color;
+            ctx.font = 'bold 16px monospace';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(noteName, x, y);
             ctx.shadowBlur = 0;
-        }
-    }, [PAD_SIZE, CENTER, NEUTRAL_RADIUS]);
+        });
+    }, [PAD_SIZE, CENTER, NEUTRAL_RADIUS, valuesToPosition, getNoteName]);
 
     // Initialize canvas
     useEffect(() => {
         drawPad();
     }, [drawPad]);
+
+    // Subscribe to incoming MIDI from Bartleby (via DeviceRegistry)
+    // Updates display to show what's being played on the controller
+    useEffect(() => {
+        const handleIncomingMidi = (data) => {
+            const status = data[0] & 0xF0;
+            const channel = data[0] & 0x0F;
+
+            if (status === 0x90 && data[2] > 0) {
+                // Note On - add to map with next color
+                setActiveNotes(prev => {
+                    const next = new Map(prev);
+                    const colorIndex = colorIndexRef.current++;
+                    next.set(channel, {
+                        note: data[1],
+                        bend: 0,
+                        pressure: 0.5,
+                        colorIndex
+                    });
+                    return next;
+                });
+            } else if (status === 0x80 || (status === 0x90 && data[2] === 0)) {
+                // Note Off - remove from map
+                setActiveNotes(prev => {
+                    const next = new Map(prev);
+                    next.delete(channel);
+                    return next;
+                });
+            } else if (status === 0xE0) {
+                // Pitch Bend - update existing note on this channel
+                const raw = data[1] | (data[2] << 7);
+                const bend = (raw - 8192) / 8192;
+                setActiveNotes(prev => {
+                    const existing = prev.get(channel);
+                    if (!existing) return prev;
+                    const next = new Map(prev);
+                    next.set(channel, { ...existing, bend });
+                    return next;
+                });
+            } else if (status === 0xD0) {
+                // Channel Pressure - update existing note on this channel
+                const pressure = data[1] / 127;
+                setActiveNotes(prev => {
+                    const existing = prev.get(channel);
+                    if (!existing) return prev;
+                    const next = new Map(prev);
+                    next.set(channel, { ...existing, pressure });
+                    return next;
+                });
+            }
+        };
+
+        deviceRegistry.onMidiThrough(handleIncomingMidi);
+        return () => deviceRegistry.onMidiThrough(null);
+    }, []);
+
+    // Redraw canvas when activeNotes change
+    useEffect(() => {
+        drawPad(Array.from(activeNotes.values()));
+    }, [activeNotes, drawPad]);
+
+    // Track mouse note for Note Off (since activeNotes is deleted first)
+    const mouseNoteRef = useRef(null);
 
     // Handle mouse down - start note
     const handleMouseDown = useCallback((e) => {
@@ -1610,16 +1705,22 @@ function MidiControlsRow({ api, isConnected, velocity, setVelocity, addLog }) {
         const { bend, pressure } = positionToValues(x, y);
         const note = getNextNote();
 
-        // Set state
-        setBendValue(bend);
-        setPressureValue(pressure);
-        setCurrentNote(note);
-        setIsPlaying(true);
-        playingRef.current = true;
-
         // Determine channel: MPE allocates per-note, otherwise use channel 0
         const channel = mpeEnabled ? mpeAllocatorRef.current.allocate(note) : 0;
         currentChannelRef.current = channel;
+        mouseNoteRef.current = note;
+        playingRef.current = true;
+
+        // Add to activeNotes for display
+        setActiveNotes(prev => {
+            const next = new Map(prev);
+            const colorIndex = colorIndexRef.current++;
+            next.set(channel, { note, bend, pressure, colorIndex });
+            return next;
+        });
+
+        // Hide cursor while dragging
+        setHideCursor(true);
 
         // Reset throttle state for new note
         lastSendTimeRef.current = performance.now();
@@ -1636,10 +1737,7 @@ function MidiControlsRow({ api, isConnected, velocity, setVelocity, addLog }) {
         const noteOnBytes = `${(0x90 | channel).toString(16).toUpperCase()} ${note.toString(16).toUpperCase().padStart(2, '0')} ${vel7.toString(16).toUpperCase().padStart(2, '0')}`;
         const mpeInfo = mpeEnabled ? ` [MPE ch${channel}]` : '';
         addLog(`TX: Note On [${noteOnBytes}] note=${note} vel=${vel7}${mpeInfo}`);
-
-        // Draw with indicator
-        drawPad(x, y);
-    }, [isConnected, velocity, positionToValues, getNextNote, drawPad, api, addLog, mpeEnabled]);
+    }, [isConnected, velocity, positionToValues, getNextNote, api, addLog, mpeEnabled]);
 
     // Handle mouse move - modulate while playing (with throttling)
     const handleMouseMove = useCallback((e) => {
@@ -1650,11 +1748,16 @@ function MidiControlsRow({ api, isConnected, velocity, setVelocity, addLog }) {
         const y = e.clientY - rect.top;
 
         const { bend, pressure } = positionToValues(x, y);
+        const channel = currentChannelRef.current;
 
-        // Always update visual state (responsive UI)
-        setBendValue(bend);
-        setPressureValue(pressure);
-        drawPad(x, y);
+        // Update activeNotes for display
+        setActiveNotes(prev => {
+            const existing = prev.get(channel);
+            if (!existing) return prev;
+            const next = new Map(prev);
+            next.set(channel, { ...existing, bend, pressure });
+            return next;
+        });
 
         // Throttle MIDI sends to prevent flooding Candide
         const now = performance.now();
@@ -1667,7 +1770,6 @@ function MidiControlsRow({ api, isConnected, velocity, setVelocity, addLog }) {
                           (bendDelta >= CHANGE_THRESHOLD || pressureDelta >= CHANGE_THRESHOLD);
 
         if (shouldSend) {
-            const channel = currentChannelRef.current;
             api.sendPitchBend(channel, bend);
             api.sendChannelPressure(channel, pressure);
 
@@ -1676,33 +1778,41 @@ function MidiControlsRow({ api, isConnected, velocity, setVelocity, addLog }) {
             lastBendRef.current = bend;
             lastPressureRef.current = pressure;
         }
-    }, [positionToValues, drawPad, api]);
+    }, [positionToValues, api]);
 
     // Handle mouse up - stop note (only on mouseup, not mouseleave)
-    // Bend/pressure values persist until next mouse down (avoids modulation snap during release phase)
     const handleMouseUp = useCallback(() => {
         if (!playingRef.current) return;
 
-        // Send note off on the same channel
         const channel = currentChannelRef.current;
-        api.sendNoteOff(channel, currentNote, 0);
+        const note = mouseNoteRef.current;
+
+        // Send note off on the same channel
+        api.sendNoteOff(channel, note, 0);
 
         // Release MPE channel back to pool
         if (mpeEnabled) {
-            mpeAllocatorRef.current.release(currentNote);
+            mpeAllocatorRef.current.release(note);
         }
 
+        // Remove from activeNotes
+        setActiveNotes(prev => {
+            const next = new Map(prev);
+            next.delete(channel);
+            return next;
+        });
+
+        // Show cursor again
+        setHideCursor(false);
+
         // Enhanced MIDI logging for troubleshooting
-        const noteOffBytes = `${(0x80 | channel).toString(16).toUpperCase()} ${currentNote.toString(16).toUpperCase().padStart(2, '0')} 00`;
+        const noteOffBytes = `${(0x80 | channel).toString(16).toUpperCase()} ${note.toString(16).toUpperCase().padStart(2, '0')} 00`;
         const mpeInfo = mpeEnabled ? ` [MPE ch${channel}]` : '';
-        addLog(`TX: Note Off [${noteOffBytes}] note=${currentNote}${mpeInfo}`);
+        addLog(`TX: Note Off [${noteOffBytes}] note=${note}${mpeInfo}`);
 
-        setIsPlaying(false);
         playingRef.current = false;
-
-        // Redraw without indicator
-        drawPad();
-    }, [currentNote, drawPad, api, addLog, mpeEnabled]);
+        mouseNoteRef.current = null;
+    }, [api, addLog, mpeEnabled]);
 
     // Add global mouseup listener for when user releases outside canvas
     useEffect(() => {
@@ -1715,13 +1825,6 @@ function MidiControlsRow({ api, isConnected, velocity, setVelocity, addLog }) {
         window.addEventListener('mouseup', handleGlobalMouseUp);
         return () => window.removeEventListener('mouseup', handleGlobalMouseUp);
     }, [handleMouseUp]);
-
-    // Note name helper
-    const noteNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
-    const getNoteName = (note) => {
-        const octave = Math.floor(note / 12) - 1;
-        return `${noteNames[note % 12]}${octave}`;
-    };
 
     return (
         <div className="midi-controls-row">
@@ -1775,17 +1878,19 @@ function MidiControlsRow({ api, isConnected, velocity, setVelocity, addLog }) {
                     className="expression-pad"
                     onMouseDown={handleMouseDown}
                     onMouseMove={handleMouseMove}
-                    style={{ cursor: isConnected ? 'crosshair' : 'not-allowed' }}
+                    style={{ cursor: hideCursor ? 'none' : (isConnected ? 'crosshair' : 'not-allowed') }}
                 />
                 <div className="pad-labels">
-                    <span className="pad-label-bend">Bend: {bendValue.toFixed(2)}</span>
-                    <span className="pad-label-pressure">Pres: {Math.round(pressureValue * 100)}%</span>
+                    <span className="pad-label-bend">Bend: {(Array.from(activeNotes.values())[0]?.bend ?? 0).toFixed(2)}</span>
+                    <span className="pad-label-pressure">Pres: {Math.round((Array.from(activeNotes.values())[0]?.pressure ?? 0.5) * 100)}%</span>
                 </div>
             </div>
 
             <div className="note-display">
-                {isPlaying ? (
-                    <span className="note-playing">{getNoteName(currentNote)}</span>
+                {activeNotes.size > 0 ? (
+                    <span className="note-playing">
+                        {Array.from(activeNotes.values()).map(n => getNoteName(n.note)).join(' ')}
+                    </span>
                 ) : (
                     <span className="note-waiting">Click pad</span>
                 )}

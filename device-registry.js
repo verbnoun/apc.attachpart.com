@@ -46,6 +46,7 @@ class DeviceRegistry {
         this._logFn = null;
         this._midiLoggingEnabled = false;  // Controlled by log panel expand/collapse
         this._bartlebyApi = null;  // Reference for SysEx routing
+        this._onMidiThrough = null;  // Callback for incoming MIDI display updates
     }
 
     //==================================================================
@@ -175,6 +176,15 @@ class DeviceRegistry {
      */
     setMidiLogging(enabled) {
         this._midiLoggingEnabled = enabled;
+    }
+
+    /**
+     * Set callback for incoming MIDI (called AFTER forwarding to Candide)
+     * Used by UI to display incoming notes/expression without affecting throughput
+     * @param {Function} callback - Called with MIDI data bytes
+     */
+    onMidiThrough(callback) {
+        this._onMidiThrough = callback;
     }
 
     /**
@@ -309,6 +319,9 @@ class DeviceRegistry {
                 // Check < 0xF0 to exclude all system messages (SysEx, timing, etc.)
                 if (data[0] < 0xF0) {
                     cand.output.send(data);
+
+                    // Notify UI for display update (after forwarding - throughput first)
+                    this._onMidiThrough?.(data);
 
                     // Optional logging (only when log panel expanded)
                     if (this._midiLoggingEnabled && this._logFn) {
