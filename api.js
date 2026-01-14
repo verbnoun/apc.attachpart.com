@@ -486,6 +486,8 @@ class CandideAPI {
 
     /** Get full patch data by index */
     async getPatch(index) {
+        console.log(`[API] getPatch(${index}) called`);
+        console.trace('getPatch call stack');
         return this._sendCommand({ cmd: 'get-patch', index });
     }
 
@@ -618,12 +620,14 @@ class CandideAPI {
         return new Promise((resolve, reject) => {
             // Gate: must be connected
             if (!this.midiOutput) {
+                console.log(`[API] _sendCommand(${cmdObj.cmd}) rejected: not connected`);
                 reject(new Error('Not connected'));
                 return;
             }
 
             // Gate: must be idle (one command at a time)
             if (this._pendingResolve) {
+                console.log(`[API] _sendCommand(${cmdObj.cmd}) rejected: busy with ${this._pendingCmd}`);
                 reject(new Error(`Busy: waiting for ${this._pendingCmd}`));
                 return;
             }
@@ -635,6 +639,7 @@ class CandideAPI {
 
             // Send command via direct SysEx (commands are small)
             const sysex = encodeJsonToSysEx(cmdObj);
+            console.log(`[API] _sendCommand sending: ${cmdObj.cmd}`);
             this.midiOutput.send(sysex);
             this._log(`TX: ${cmdObj.cmd}`, 'tx');
 
