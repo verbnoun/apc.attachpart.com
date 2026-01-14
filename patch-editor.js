@@ -397,8 +397,9 @@ function PatchEditorWindow({
             log('Wire Delete Confirmed', { source, target, param });
 
             // Delete the wire (disable modulation)
+            // API signature: toggleModulation(targetParam, sourceModule, enabled)
             if (onToggleModulation) {
-                onToggleModulation(target, param, source, false);
+                onToggleModulation(param, source, false);
             }
         }
 
@@ -442,7 +443,8 @@ function PatchEditorWindow({
             target: targetModule,
             param: targetParam
         });
-        onToggleModulation(targetModule, targetParam, wiringFrom.moduleId, true);
+        // API signature: toggleModulation(targetParam, sourceModule, enabled)
+        onToggleModulation(targetParam, wiringFrom.moduleId, true);
 
         // If this was a pending module drop, clear pending state
         if (pendingModule && pendingModule.moduleId === wiringFrom.moduleId) {
@@ -1749,7 +1751,6 @@ function NodeContextMenu({
                                     max="100"
                                     value={target.amount}
                                     onChange={(e) => onUpdateModAmount(
-                                        target.module,
                                         target.param,
                                         moduleId,
                                         parseInt(e.target.value)
@@ -1798,7 +1799,7 @@ function ParameterControl({ moduleId, param, onUpdate }) {
 
     const handleCommit = () => {
         if (onUpdate && localValue !== param.value) {
-            onUpdate(moduleId, param.key, localValue);
+            onUpdate(param.key, localValue);
         }
     };
 
@@ -1861,7 +1862,7 @@ function ModulationControl({ moduleId, param, moduleData, patch, onToggle, onAmo
                                 <input
                                     type="checkbox"
                                     checked={isActive}
-                                    onChange={(e) => onToggle(moduleId, param.key, source, e.target.checked)}
+                                    onChange={(e) => onToggle(param.key, source, e.target.checked)}
                                 />
                                 <span className="ap-mod-source-name" style={{ color: WIRE_COLORS[source] }}>
                                     {source.replace('_', ' ')}
@@ -1874,7 +1875,7 @@ function ModulationControl({ moduleId, param, moduleData, patch, onToggle, onAmo
                                     min="-100"
                                     max="100"
                                     value={amount}
-                                    onChange={(e) => onAmountChange(moduleId, param.key, source, parseInt(e.target.value))}
+                                    onChange={(e) => onAmountChange(param.key, source, parseInt(e.target.value))}
                                 />
                             )}
                         </div>

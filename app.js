@@ -356,7 +356,7 @@ function App() {
         }
 
         try {
-            await api.toggleModule(moduleName, enabled);
+            await api.toggleModule(currentPatchIndex, moduleName, enabled);
             addLog(`toggleModule success: ${moduleName}`, 'success');
             await loadPatch(currentPatchIndex);
         } catch (err) {
@@ -364,20 +364,29 @@ function App() {
         }
     };
 
-    const updateParam = async (moduleName, paramKey, value) => {
+    const updateParam = async (paramKey, value) => {
+        addLog(`updateParam: ${paramKey} → ${value}`, 'info');
         const api = candideApiRef.current;
-        if (!api || currentPatchIndex < 0) return;
+        if (!api) {
+            addLog(`updateParam failed: no API connection`, 'error');
+            return;
+        }
+        if (currentPatchIndex < 0) {
+            addLog(`updateParam failed: no patch selected (index=${currentPatchIndex})`, 'error');
+            return;
+        }
 
         try {
-            await api.updateParam(moduleName, paramKey, value);
+            await api.updateParam(currentPatchIndex, paramKey, value);
+            addLog(`updateParam success: ${paramKey}`, 'success');
             await loadPatch(currentPatchIndex);
         } catch (err) {
             addLog(`Failed to update param: ${err.message}`, 'error');
         }
     };
 
-    const toggleModulation = async (targetModule, targetParam, sourceModule, enabled) => {
-        addLog(`toggleModulation: ${sourceModule} → ${targetModule}.${targetParam} = ${enabled}`, 'info');
+    const toggleModulation = async (targetParam, sourceModule, enabled) => {
+        addLog(`toggleModulation: ${sourceModule} → ${targetParam} = ${enabled}`, 'info');
         const api = candideApiRef.current;
         if (!api) {
             addLog(`toggleModulation failed: no API connection`, 'error');
@@ -389,7 +398,7 @@ function App() {
         }
 
         try {
-            await api.toggleModulation(targetModule, targetParam, sourceModule, enabled);
+            await api.toggleModulation(currentPatchIndex, targetParam, sourceModule, enabled);
             addLog(`toggleModulation success`, 'success');
             await loadPatch(currentPatchIndex);
         } catch (err) {
@@ -397,12 +406,22 @@ function App() {
         }
     };
 
-    const updateModulationAmount = async (targetModule, targetParam, sourceModule, amount) => {
+    const updateModulationAmount = async (targetParam, sourceModule, amount) => {
+        const amountParam = `${targetParam}_${sourceModule}_AMOUNT`;
+        addLog(`updateModulationAmount: ${amountParam} → ${amount}`, 'info');
         const api = candideApiRef.current;
-        if (!api || currentPatchIndex < 0) return;
+        if (!api) {
+            addLog(`updateModulationAmount failed: no API connection`, 'error');
+            return;
+        }
+        if (currentPatchIndex < 0) {
+            addLog(`updateModulationAmount failed: no patch selected (index=${currentPatchIndex})`, 'error');
+            return;
+        }
 
         try {
-            await api.updateModulationAmount(targetModule, targetParam, sourceModule, amount);
+            await api.updateModulationAmount(currentPatchIndex, amountParam, amount);
+            addLog(`updateModulationAmount success`, 'success');
             await loadPatch(currentPatchIndex);
         } catch (err) {
             addLog(`Failed to update mod amount: ${err.message}`, 'error');
