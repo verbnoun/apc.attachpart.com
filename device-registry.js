@@ -43,6 +43,8 @@ class DeviceRegistry {
         this._onDeviceChange = null;
         this._onBartlebyConnected = null;
         this._onBartlebyDisconnected = null;
+        this._onCandideConnected = null;
+        this._onCandideDisconnected = null;
         this._logFn = null;
         this._midiLoggingEnabled = false;  // Controlled by log panel expand/collapse
         this._bartlebyApi = null;  // Reference for SysEx routing
@@ -170,6 +172,22 @@ class DeviceRegistry {
     }
 
     /**
+     * Set callback for Candide connection
+     * @param {Function} callback
+     */
+    onCandideConnected(callback) {
+        this._onCandideConnected = callback;
+    }
+
+    /**
+     * Set callback for Candide disconnection
+     * @param {Function} callback
+     */
+    onCandideDisconnected(callback) {
+        this._onCandideDisconnected = callback;
+    }
+
+    /**
      * Enable/disable MIDI message logging
      * When disabled, no logging happens in the hot path (zero latency)
      * @param {boolean} enabled
@@ -250,9 +268,11 @@ class DeviceRegistry {
         this._updateRouting();
         this._onDeviceChange?.();
 
-        // Notify app if Bartleby connected (for BartlebyAPI initialization)
+        // Notify app if device connected (for API initialization)
         if (deviceId === 'bartleby') {
             this._onBartlebyConnected?.();
+        } else if (deviceId === 'candide') {
+            this._onCandideConnected?.();
         }
     }
 
@@ -274,9 +294,11 @@ class DeviceRegistry {
                     this._routingEnabled = false;
                 }
 
-                // Notify app if Bartleby disconnected
+                // Notify app if device disconnected
                 if (deviceId === 'bartleby') {
                     this._onBartlebyDisconnected?.();
+                } else if (deviceId === 'candide') {
+                    this._onCandideDisconnected?.();
                 }
 
                 this._onDeviceChange?.();

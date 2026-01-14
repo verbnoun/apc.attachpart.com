@@ -3,7 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Attach Part</title>
+    <title>Attach Part Console</title>
+
+    <!-- Press Start 2P font for pixel aesthetic -->
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
 
     <!-- React 18 from CDN -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
@@ -16,12 +19,10 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <header class="app-header">
-        <h1>Attach Part</h1>
-    </header>
     <div id="root"></div>
 
-    <!-- Load in order: utilities, transport, connection, registry, API, app -->
+    <!-- Load in order: utilities, transport, connection, registry, API -->
+
     <!-- Candide transport + API -->
     <script src="transport.js"></script>
     <script src="chunked-transport.js"></script>
@@ -29,15 +30,17 @@
     <script src="device-registry.js"></script>
     <script src="api.js"></script>
 
-    <!-- Bartleby transport + API + hooks + UI -->
+    <!-- Bartleby transport + API + hooks -->
     <script src="bartleby-transport.js"></script>
     <script src="bartleby-chunked-transport.js"></script>
     <script src="bartleby-api.js"></script>
     <script type="text/babel" src="bartleby-hooks.js"></script>
-    <script type="text/babel" src="bartleby-editor.js"></script>
 
-    <!-- TEMPORARY: Hardcoded slider curves (see slider-config.js header for removal instructions) -->
-    <script src="slider-config.js"></script>
+    <!-- New UI layer -->
+    <script src="window-manager.js"></script>
+    <script type="text/babel" src="device-sidebar.js"></script>
+    <script type="text/babel" src="bartleby-config-window.js"></script>
+    <script type="text/babel" src="patch-editor.js"></script>
     <script type="text/babel" src="app.js"></script>
 </body>
 </html>
