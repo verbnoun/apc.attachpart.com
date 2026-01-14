@@ -256,11 +256,21 @@ function App() {
     //------------------------------------------------------------------
 
     const loadPatch = async (index) => {
+        addLog(`loadPatch(${index}) called`, 'info');
         const api = candideApiRef.current;
-        if (!api || index < 0) return null;
+        if (!api) {
+            addLog(`loadPatch(${index}) aborted: no API`, 'warning');
+            return null;
+        }
+        if (index < 0) {
+            addLog(`loadPatch(${index}) aborted: invalid index`, 'warning');
+            return null;
+        }
 
         try {
+            addLog(`loadPatch(${index}) sending get-patch...`, 'info');
             const patch = await api.getPatch(index);
+            addLog(`loadPatch(${index}) received patch data`, 'success');
             setCurrentPatch(patch);
             setCurrentPatchIndex(index);
             return patch;  // Return for immediate use by window openers
@@ -1529,14 +1539,11 @@ function LogWindow({ logs, onClear }) {
         }
     }, [logs]);
 
-    const getLogClass = (type) => {
-        switch (type) {
-            case 'success': return 'ap-log-success';
-            case 'error': return 'ap-log-error';
-            case 'warning': return 'ap-log-warning';
-            default: return 'ap-log-info';
-        }
-    };
+    // Format logs as plain text with timestamps
+    const logText = logs.map(log => {
+        const typeTag = log.type === 'info' ? '' : `[${log.type.toUpperCase()}] `;
+        return `[${log.timestamp}] ${typeTag}${log.message}`;
+    }).join('\n');
 
     return (
         <div className="ap-log-window">
@@ -1546,18 +1553,9 @@ function LogWindow({ logs, onClear }) {
                     CLEAR
                 </button>
             </div>
-            <div className="ap-log-scroll" ref={scrollRef}>
-                {logs.length === 0 ? (
-                    <div className="ap-log-empty">No log entries</div>
-                ) : (
-                    logs.map((log, i) => (
-                        <div key={i} className={`ap-log-entry ${getLogClass(log.type)}`}>
-                            <span className="ap-log-time">{log.time}</span>
-                            <span className="ap-log-message">{log.message}</span>
-                        </div>
-                    ))
-                )}
-            </div>
+            <pre className="ap-log-text" ref={scrollRef}>
+                {logs.length === 0 ? 'No log entries' : logText}
+            </pre>
         </div>
     );
 }
