@@ -1099,6 +1099,16 @@ function NodeWorkspace({
         }
     };
 
+    // Parse selected wire to get target info for highlighting
+    // wireKey format: "source:targetModule:targetParam"
+    // NOTE: Must be before conditional return to satisfy React hooks rules
+    const selectedWireTarget = useMemo(() => {
+        if (selection?.type !== 'wire' || !selection?.wireKey) return null;
+        const parts = selection.wireKey.split(':');
+        if (parts.length !== 3) return null;
+        return { module: parts[1], param: parts[2] };
+    }, [selection]);
+
     if (!currentPatch) {
         return (
             <div className="ap-node-workspace">
@@ -1108,15 +1118,6 @@ function NodeWorkspace({
             </div>
         );
     }
-
-    // Parse selected wire to get target info for highlighting
-    // wireKey format: "source:targetModule:targetParam"
-    const selectedWireTarget = useMemo(() => {
-        if (selection?.type !== 'wire' || !selection?.wireKey) return null;
-        const parts = selection.wireKey.split(':');
-        if (parts.length !== 3) return null;
-        return { module: parts[1], param: parts[2] };
-    }, [selection]);
 
     return (
         <div
