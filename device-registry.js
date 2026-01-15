@@ -406,46 +406,103 @@ class DeviceRegistry {
     }
 
     /**
-     * Process relay message from Candide
+     * Process relay message from Candide (transparent passthrough)
+     * Forwards raw SysEx to Bartleby - handles chunked transport protocol
      * @private
      */
     _processRelayFromCandide(sysex) {
-        const json = this._parseSysExJson(sysex);
-        if (!json) return;
+        // Validate 0x7D manufacturer ID
+        if (sysex[1] !== 0x7D) return;
 
-        const cmd = json.cmd;
-        if (cmd === 'get-control-surface' || cmd === 'assign') {
-            this._log(`Relay: Candide -> Bartleby: ${cmd}`);
-            this._sendJsonToBartleby(json);
+        // Log for debugging (try to parse, but forward regardless)
+        const json = this._parseSysExJson(sysex);
+        if (json && json.cmd) {
+            this._log(`Relay: Candide -> Bartleby: ${json.cmd}`);
+        } else {
+            this._log(`Relay: Candide -> Bartleby: [transport chunk ${sysex.length} bytes]`);
+        }
+
+        // Forward raw SysEx to Bartleby (transparent relay)
+        this._forwardRawSysExToBartleby(sysex);
+    }
+
+    /**
+     * Process relay message from Bartleby (transparent passthrough)
+     * Forwards raw SysEx to Candide - handles chunked transport protocol
+     * @private
+     */
+    _processRelayFromBartleby(sysex) {
+        // Validate 0x7D manufacturer ID
+        if (sysex[1] !== 0x7D) return;
+
+        // Log for debugging (try to parse, but forward regardless)
+        const json = this._parseSysExJson(sysex);
+        if (json && json.cmd) {
+            this._log(`Relay: Bartleby -> Candide: ${json.cmd}`);
+
+            // Cache control-surface for UI
+            if (json.cmd === 'control-surface') {
+                this._controllerCapabilities = json;
+            }
+
+            // Detect exchange complete
+            if (json.cmd === 'thanks') {
+                this._log('Relay: Exchange complete');
+                this._exchangeInProgress = false;
+            }
+        } else {
+            this._log(`Relay: Bartleby -> Candide: [transport chunk ${sysex.length} bytes]`);
+        }
+
+        // Forward raw SysEx to Candide (transparent relay)
+        this._forwardRawSysExToCandide(sysex);
+    }
+
+    /**
+     * Forward raw SysEx bytes to Bartleby
+     * @private
+     */
+    _forwardRawSysExToBartleby(sysex) {
+        if (this._useMockBartleby && this._mockBartleby) {
+            const json = this._parseSysExJson(sysex);
+            if (json) this._mockBartleby.handleCommand(json);
+            return;
+        }
+
+        const bart = this.devices.bartleby;
+        if (!bart.output) {
+            this._log('Cannot forward to Bartleby: not connected', 'error');
+            return;
+        }
+
+        try {
+            bart.output.send(sysex);
+        } catch (e) {
+            this._log(`Forward to Bartleby failed: ${e.message}`, 'error');
         }
     }
 
     /**
-     * Process relay message from Bartleby
+     * Forward raw SysEx bytes to Candide
      * @private
      */
-    _processRelayFromBartleby(sysex) {
-        const json = this._parseSysExJson(sysex);
-        if (!json) return;
+    _forwardRawSysExToCandide(sysex) {
+        if (this._useMockCandide && this._mockCandide) {
+            const json = this._parseSysExJson(sysex);
+            if (json) this._mockCandide.handleCommand(json);
+            return;
+        }
 
-        const cmd = json.cmd;
-        if (cmd === 'control-surface' || cmd === 'thanks') {
-            this._log(`Relay: Bartleby -> Candide: ${cmd}`);
+        const cand = this.devices.candide;
+        if (!cand.output) {
+            this._log('Cannot forward to Candide: not connected', 'error');
+            return;
+        }
 
-            // Cache control-surface for UI
-            if (cmd === 'control-surface') {
-                this._controllerCapabilities = json;
-            }
-
-            // Forward to Candide
-            this._sendJsonToCandide(json);
-
-            // Exchange complete on 'thanks'
-            if (cmd === 'thanks') {
-                this._log('Relay: Exchange complete');
-                this._exchangeInProgress = false;
-                // Keep relay enabled for future patch switches
-            }
+        try {
+            cand.output.send(sysex);
+        } catch (e) {
+            this._log(`Forward to Candide failed: ${e.message}`, 'error');
         }
     }
 
