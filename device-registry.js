@@ -18,11 +18,13 @@
 const DEVICE_CONFIGS = {
     bartleby: {
         searchTerms: ['bartleby', 'pico'],
+        preferredPortName: 'Bartleby MPE',  // Prefer MPE port for sysex communication
         type: 'controller',
         displayName: 'Bartleby'
     },
     candide: {
         searchTerms: ['candide', 'daisy', 'seed'],
+        preferredPortName: 'Candide MPE',   // Prefer MPE port for sysex communication
         type: 'synth',
         displayName: 'Candide'
     }
@@ -49,6 +51,17 @@ class DeviceRegistry {
         this._midiLoggingEnabled = false;  // Controlled by log panel expand/collapse
         this._bartlebyApi = null;  // Reference for SysEx routing
         this._onMidiThrough = null;  // Callback for incoming MIDI display updates
+
+        // Controller exchange relay state
+        this._relayEnabled = false;
+        this._exchangeInProgress = false;
+        this._controllerCapabilities = null;
+
+        // Mock device support
+        this._mockBartleby = null;
+        this._mockCandide = null;
+        this._useMockBartleby = false;
+        this._useMockCandide = false;
     }
 
     //==================================================================
@@ -216,6 +229,227 @@ class DeviceRegistry {
     }
 
     //==================================================================
+    // MOCK DEVICE API (for testing without hardware)
+    //==================================================================
+
+    /**
+     * Enable mock Bartleby for testing Candide
+     * Use when testing Candide without real Bartleby hardware
+     */
+    enableMockBartleby() {
+        this._useMockBartleby = true;
+        this._mockBartleby = new MockBartleby((json) => {
+            // Mock sends response - route to Candide
+            this._sendJsonToCandide(json);
+        });
+        this._log('Mock Bartleby enabled');
+    }
+
+    /**
+     * Enable mock Candide for testing Bartleby
+     * Use when testing Bartleby without real Candide hardware
+     */
+    enableMockCandide() {
+        this._useMockCandide = true;
+        this._mockCandide = new MockCandide((json) => {
+            // Mock sends response - route to Bartleby
+            this._sendJsonToBartleby(json);
+        });
+        this._log('Mock Candide enabled');
+    }
+
+    /**
+     * Disable all mock devices
+     */
+    disableMocks() {
+        this._useMockBartleby = false;
+        this._useMockCandide = false;
+        this._mockBartleby = null;
+        this._mockCandide = null;
+        this._log('Mocks disabled');
+    }
+
+    //==================================================================
+    // CONTROLLER EXCHANGE RELAY
+    //==================================================================
+
+    /**
+     * Manually trigger controller exchange
+     * Call when both devices are connected to start the exchange flow
+     */
+    triggerControllerExchange() {
+        if (this._exchangeInProgress) {
+            this._log('Exchange already in progress', 'warn');
+            return;
+        }
+
+        this._exchangeInProgress = true;
+        this._relayEnabled = true;
+
+        if (this._useMockCandide && this._mockCandide) {
+            // Trigger mock Candide
+            this._log('Triggering MockCandide exchange');
+            this._mockCandide.handleCommand({ cmd: 'controller-available' });
+        } else if (this.devices.candide.output) {
+            // Trigger real Candide
+            this._log('Triggering Candide exchange');
+            this._sendJsonToCandide({ cmd: 'controller-available' });
+        } else {
+            this._log('Cannot trigger exchange: Candide not connected', 'error');
+            this._exchangeInProgress = false;
+            this._relayEnabled = false;
+        }
+    }
+
+    /**
+     * Get cached controller capabilities (from last exchange)
+     * @returns {Object|null}
+     */
+    getControllerCapabilities() {
+        return this._controllerCapabilities;
+    }
+
+    //==================================================================
+    // INTERNAL: SysEx Relay Helpers
+    //==================================================================
+
+    /**
+     * Send JSON to Candide as SysEx (via MIDI or mock)
+     * @private
+     */
+    _sendJsonToCandide(json) {
+        if (this._useMockCandide && this._mockCandide) {
+            this._mockCandide.handleCommand(json);
+            return;
+        }
+
+        const cand = this.devices.candide;
+        if (!cand.output) {
+            this._log('Cannot send to Candide: not connected', 'error');
+            return;
+        }
+
+        const sysex = this._buildSysEx(json);
+        try {
+            cand.output.send(sysex);
+            this._log(`Relay -> Candide: ${json.cmd}`);
+        } catch (e) {
+            this._log(`Relay -> Candide failed: ${e.message}`, 'error');
+        }
+    }
+
+    /**
+     * Send JSON to Bartleby as SysEx (via MIDI or mock)
+     * @private
+     */
+    _sendJsonToBartleby(json) {
+        if (this._useMockBartleby && this._mockBartleby) {
+            this._mockBartleby.handleCommand(json);
+            return;
+        }
+
+        const bart = this.devices.bartleby;
+        if (!bart.output) {
+            this._log('Cannot send to Bartleby: not connected', 'error');
+            return;
+        }
+
+        const sysex = this._buildSysEx(json);
+        try {
+            bart.output.send(sysex);
+            this._log(`Relay -> Bartleby: ${json.cmd}`);
+        } catch (e) {
+            this._log(`Relay -> Bartleby failed: ${e.message}`, 'error');
+        }
+    }
+
+    /**
+     * Build SysEx message from JSON
+     * @private
+     */
+    _buildSysEx(json) {
+        const jsonStr = JSON.stringify(json);
+        const jsonBytes = new TextEncoder().encode(jsonStr);
+        const encoded = mcoded7Encode(jsonBytes);
+
+        const sysex = new Uint8Array(3 + encoded.length + 1);
+        sysex[0] = 0xF0;     // SysEx start
+        sysex[1] = 0x7D;     // Manufacturer ID
+        sysex[2] = 0x00;     // Device ID
+        sysex.set(encoded, 3);
+        sysex[sysex.length - 1] = 0xF7;  // SysEx end
+
+        return sysex;
+    }
+
+    /**
+     * Parse SysEx to JSON (if valid 0x7D message)
+     * @private
+     */
+    _parseSysExJson(sysex) {
+        // Validate: F0 7D 00 [payload] F7
+        if (sysex[0] !== 0xF0 || sysex[1] !== 0x7D || sysex[2] !== 0x00) {
+            return null;
+        }
+        if (sysex[sysex.length - 1] !== 0xF7) {
+            return null;
+        }
+
+        try {
+            const payload = sysex.slice(3, -1);
+            const decoded = mcoded7Decode(payload);
+            const jsonStr = new TextDecoder().decode(decoded);
+            return JSON.parse(jsonStr);
+        } catch (e) {
+            return null;
+        }
+    }
+
+    /**
+     * Process relay message from Candide
+     * @private
+     */
+    _processRelayFromCandide(sysex) {
+        const json = this._parseSysExJson(sysex);
+        if (!json) return;
+
+        const cmd = json.cmd;
+        if (cmd === 'get-control-surface' || cmd === 'assign') {
+            this._log(`Relay: Candide -> Bartleby: ${cmd}`);
+            this._sendJsonToBartleby(json);
+        }
+    }
+
+    /**
+     * Process relay message from Bartleby
+     * @private
+     */
+    _processRelayFromBartleby(sysex) {
+        const json = this._parseSysExJson(sysex);
+        if (!json) return;
+
+        const cmd = json.cmd;
+        if (cmd === 'control-surface' || cmd === 'thanks') {
+            this._log(`Relay: Bartleby -> Candide: ${cmd}`);
+
+            // Cache control-surface for UI
+            if (cmd === 'control-surface') {
+                this._controllerCapabilities = json;
+            }
+
+            // Forward to Candide
+            this._sendJsonToCandide(json);
+
+            // Exchange complete on 'thanks'
+            if (cmd === 'thanks') {
+                this._log('Relay: Exchange complete');
+                this._exchangeInProgress = false;
+                // Keep relay enabled for future patch switches
+            }
+        }
+    }
+
+    //==================================================================
     // INTERNAL: Device Detection
     //==================================================================
 
@@ -227,31 +461,60 @@ class DeviceRegistry {
         const inputs = Array.from(this.midiAccess.inputs.values());
         const outputs = Array.from(this.midiAccess.outputs.values());
 
+        // Log available ports for debugging
+        this._log(`Scanning ${inputs.length} inputs, ${outputs.length} outputs...`);
+        if (inputs.length > 0) {
+            this._log(`  Inputs: ${inputs.map(i => i.name).join(', ')}`);
+        }
+        if (outputs.length > 0) {
+            this._log(`  Outputs: ${outputs.map(o => o.name).join(', ')}`);
+        }
+
         for (const deviceId in DEVICE_CONFIGS) {
             // Skip if already connected
             if (this.devices[deviceId].input) continue;
 
             const config = DEVICE_CONFIGS[deviceId];
-            const result = this._detectDevice(inputs, outputs, config.searchTerms);
+            const result = this._detectDevice(inputs, outputs, config.searchTerms, config.preferredPortName);
 
             if (result) {
                 this._connectDevice(deviceId, result.input, result.output);
-                this._log(`${config.displayName} connected: ${result.input.name}`);
+                // Log which strategy matched
+                if (result.matchedBy === 'preferred') {
+                    this._log(`✓ ${config.displayName}: Selected preferred port "${result.input.name}"`);
+                } else {
+                    this._log(`✓ ${config.displayName}: Matched by search term "${result.matchedTerm}" → "${result.input.name}"`);
+                }
             }
         }
     }
 
     /**
-     * Detect a device by search terms
+     * Detect a device by preferred port name, then search terms
      * @private
+     * @returns {Object|null} { input, output, matchedBy, matchedTerm }
+     *   - matchedBy: 'preferred' or 'search'
+     *   - matchedTerm: the port name or search term that matched
      */
-    _detectDevice(inputs, outputs, searchTerms) {
+    _detectDevice(inputs, outputs, searchTerms, preferredPortName = null) {
+        // Strategy 1: Look for preferred port name (exact match)
+        if (preferredPortName) {
+            const input = inputs.find(i => i.name === preferredPortName);
+            if (input) {
+                const output = outputs.find(o => o.name === preferredPortName);
+                if (output) {
+                    return { input, output, matchedBy: 'preferred', matchedTerm: preferredPortName };
+                }
+            }
+        }
+
+        // Strategy 2: Fall back to search terms
         for (const term of searchTerms) {
             for (const input of inputs) {
                 if (input.name?.toLowerCase().includes(term)) {
                     const output = outputs.find(o => o.name === input.name);
                     if (output) {
-                        return { input, output, matchedTerm: term };
+                        return { input, output, matchedBy: 'search', matchedTerm: term };
                     }
                 }
             }
@@ -292,6 +555,11 @@ class DeviceRegistry {
                 // Disable routing if linked state broken
                 if (deviceId === 'bartleby' || deviceId === 'candide') {
                     this._routingEnabled = false;
+
+                    // Reset relay state
+                    this._relayEnabled = false;
+                    this._exchangeInProgress = false;
+                    this._log('Relay disabled - device disconnected');
                 }
 
                 // Notify app if device disconnected
@@ -331,14 +599,12 @@ class DeviceRegistry {
             // (Web MIDI API = MIDI 1.0, so Bartleby needs to convert MIDI 2.0 → MPE)
             this._sendBartlebyInit();
 
-            // LIGHTNING-FAST ROUTING HANDLER
-            // This is the hot path - must be O(1) with no allocations
-            // Logging only happens when explicitly enabled (log panel expanded)
+            // BARTLEBY INPUT HANDLER
+            // Handles MIDI routing and relay SysEx
             bart.input.onmidimessage = (event) => {
                 const data = event.data;
 
                 // Fast path: Forward non-SysEx directly to Candide
-                // Check < 0xF0 to exclude all system messages (SysEx, timing, etc.)
                 if (data[0] < 0xF0) {
                     cand.output.send(data);
 
@@ -350,16 +616,36 @@ class DeviceRegistry {
                         this._logFn(`ROUTE: [${this._formatMidi(data)}] Bartleby -> Candide`, 'midi');
                     }
                 } else {
-                    // SysEx and system messages: route to BartlebyAPI for config responses
-                    // CRITICAL: Do NOT forward to Candide - SysEx is for Bartleby config only
+                    // SysEx: check for relay, then route to BartlebyAPI
+                    if (this._relayEnabled && data[0] === 0xF0) {
+                        this._processRelayFromBartleby(data);
+                    }
+                    // Also route to BartlebyAPI for config responses
                     if (this._bartlebyApi) {
                         this._bartlebyApi.handleMidiMessage(event);
                     }
                 }
             };
 
+            // CANDIDE INPUT HANDLER (for relay SysEx)
+            cand.input.onmidimessage = (event) => {
+                const data = event.data;
+
+                // Only process SysEx for relay
+                if (data[0] === 0xF0 && this._relayEnabled) {
+                    this._processRelayFromCandide(data);
+                }
+            };
+
             this._routingEnabled = true;
             this._onDeviceChange?.();
+
+            // Auto-trigger exchange when both devices connected
+            if (!this._exchangeInProgress) {
+                this._log('Both devices connected - triggering controller exchange');
+                // Small delay to let devices stabilize
+                setTimeout(() => this.triggerControllerExchange(), 500);
+            }
         }
     }
 
@@ -443,3 +729,10 @@ class DeviceRegistry {
 //======================================================================
 
 const deviceRegistry = new DeviceRegistry();
+
+// Expose to window for console testing:
+//   deviceRegistry.enableMockBartleby()  - Test Candide without Bartleby
+//   deviceRegistry.enableMockCandide()   - Test Bartleby without Candide
+//   deviceRegistry.disableMocks()        - Use real devices
+//   deviceRegistry.triggerControllerExchange() - Manually trigger exchange
+window.deviceRegistry = deviceRegistry;
