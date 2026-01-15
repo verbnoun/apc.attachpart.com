@@ -1,10 +1,12 @@
 /**
- * Candide API - Thin Client Command Interface
+ * Unified Device API - Capability-Based Device Communication
  *
- * Single point of contact for all device communication.
- * Uses existing transport.js, chunked-transport.js, and midi-connection.js.
+ * Single API class for all AttachPart devices (Candide, Bartleby, etc.)
+ * Device capabilities are discovered via get-device-info and determine
+ * which commands are available.
  *
  * Design: Thin client - device is authority, no local state storage.
+ * Principle: "Host leads the dance" - we initiate all discovery.
  */
 
 //======================================================================
@@ -14,16 +16,21 @@
 const API_TIMEOUT_MS = 15000;  // 15 seconds for command timeout
 
 //======================================================================
-// CANDIDE API CLASS
+// UNIFIED DEVICE API CLASS
 //======================================================================
 
-class CandideAPI {
+class UnifiedDeviceAPI {
     constructor() {
-        // Connection state
-        this.midiAccess = null;
-        this.midiInput = null;
-        this.midiOutput = null;
+        // Registry reference (API uses registry for all I/O)
+        this._registry = null;
+        this._portName = null;
+
+        // Transport for chunked messages
         this.transport = null;
+
+        // Device info (populated after discovery)
+        this.deviceInfo = null;
+        this.capabilities = [];
 
         // Command state (single command at a time)
         this._pendingResolve = null;
@@ -45,185 +52,126 @@ class CandideAPI {
         // Log callback
         this._logFn = null;
 
-        // Connection monitoring callbacks
-        this._onDeviceFound = null;
-        this._onDeviceDisconnected = null;
-
-        // Save status callback (for auto-save UI updates)
+        // Callbacks
         this._onSaveStatusChanged = null;
-
-        // External patch change callback (encoder/console while in EDITOR mode)
         this._onExternalPatchChange = null;
+
+        // Incoming command handler (for controller role)
+        this._onIncomingCommand = null;
     }
 
     //======================================================================
-    // PUBLIC: Connection
+    // PUBLIC: Connection & Discovery
     //======================================================================
 
     /**
-     * Start monitoring for device connection (call on page load)
-     * Will auto-detect device and call onDeviceFound when available.
-     *
-     * @param {Function} logFn - Log callback(message, type)
-     * @param {Object} callbacks - { onDeviceFound, onDeviceDisconnected }
-     * @returns {Promise<Object|null>} - Device info if already connected, null if waiting
+     * Set registry and port name for this API
+     * API uses registry for all MIDI I/O - never touches ports directly.
+     * @param {DeviceRegistry} registry
+     * @param {string} portName
      */
-    async startMonitoring(logFn, callbacks) {
-        this._logFn = logFn || ((msg, type) => console.log(`[${type}] ${msg}`));
-        this._onDeviceFound = callbacks.onDeviceFound;
-        this._onDeviceDisconnected = callbacks.onDeviceDisconnected;
+    setRegistry(registry, portName) {
+        this._registry = registry;
+        this._portName = portName;
 
-        this._log('Requesting Web MIDI access...');
-
-        // Get MIDI access and check for device
-        const result = await connectToCandide();
-        this.midiAccess = result.midiAccess;
-
-        // Start monitoring for connect/disconnect events
-        startDeviceMonitoring(this.midiAccess, {
-            onDeviceFound: (deviceResult) => {
-                // Only trigger if not already connected
-                if (!this.isConnected()) {
-                    this._log(`Device detected: ${deviceResult.input.name}`);
-                    callbacks.onDeviceFound?.(deviceResult);
-                }
-            },
-            onDeviceDisconnected: ({ portName }) => {
-                this._log(`Device disconnected: ${portName}`);
-                this._handleDeviceDisconnected();
-                callbacks.onDeviceDisconnected?.({ portName });
-            }
-        }, this.midiInput?.name || null);
-
-        // If device already present, return it for immediate connection
-        if (result.input && result.output) {
-            this._log(`Device already present: ${result.input.name}`);
-            return result;
-        }
-
-        this._log('Waiting for device...');
-        return null;
-    }
-
-    /**
-     * Connect to a detected device
-     * Called after startMonitoring detects a device.
-     *
-     * @param {Object} deviceResult - { input, output } from device detection
-     */
-    connectToDevice(deviceResult) {
-        const { input, output } = deviceResult;
-
-        this.midiInput = input;
-        this.midiOutput = output;
-
-        // Set up MIDI input handler
-        this.midiInput.onmidimessage = (event) => this._handleMidiMessage(event);
-
-        // Initialize chunked transport
+        // Initialize chunked transport (sends via registry)
         this.transport = new ChunkedTransport(
-            (sysexData) => { this.midiOutput.send(sysexData); return true; },
+            (sysexData) => { this._registry.send(this._portName, sysexData); return true; },
             (data, success) => this._handleTransportComplete(data, success),
             () => Date.now(),
             (msg, type) => this._log(msg, type)
         );
 
-        // Update monitoring to track this specific port for disconnect and reconnect
-        if (this.midiAccess) {
-            startDeviceMonitoring(this.midiAccess, {
-                onDeviceFound: (deviceResult) => {
-                    // Only trigger if not already connected (handles reconnect after disconnect)
-                    if (!this.isConnected()) {
-                        this._log(`Device detected: ${deviceResult.input.name}`);
-                        this._onDeviceFound?.(deviceResult);
-                    }
-                },
-                onDeviceDisconnected: ({ portName }) => {
-                    this._log(`Device disconnected: ${portName}`);
-                    this._handleDeviceDisconnected();
-                    this._onDeviceDisconnected?.({ portName });
-                }
-            }, input.name);
-        }
-
-        this._log(`Connected to ${input.name}`);
+        this._log(`API configured for ${portName}`);
     }
 
     /**
-     * Handle device disconnection (internal cleanup)
-     * @private
+     * Discover device capabilities
+     * Sends get-device-info and parses capabilities array.
+     * @returns {Promise<boolean>} - true if discovery succeeded
      */
-    _handleDeviceDisconnected() {
-        // Cancel any pending command
-        if (this._pendingReject) {
-            const reject = this._pendingReject;
-            this._clearPending();
-            reject(new Error('Device disconnected'));
-        }
+    async discover() {
+        this._log('Discovering device capabilities...', 'info');
 
-        // Clean up connection state without closing ports (they're already gone)
-        if (this.transport) {
-            this.transport.abort();
-            this.transport = null;
-        }
+        try {
+            const info = await this._sendCommand({ cmd: 'get-device-info' });
 
-        if (this.midiInput) {
-            this.midiInput.onmidimessage = null;
-            this.midiInput = null;
-        }
+            if (!info) {
+                this._log('Discovery failed: no response', 'error');
+                return false;
+            }
 
-        this.midiOutput = null;
-    }
+            if (info.status === 'error' || info.error) {
+                this._log(`Discovery failed: ${info.error || info.message}`, 'error');
+                return false;
+            }
 
-    /**
-     * Connect to Candide device (legacy method for backwards compatibility)
-     * @param {Function} logFn - Optional log callback(message, type)
-     * @deprecated Use startMonitoring() and connectToDevice() instead
-     */
-    async connect(logFn) {
-        this._logFn = logFn || ((msg, type) => console.log(`[${type}] ${msg}`));
+            this.deviceInfo = info;
 
-        this._log('Requesting Web MIDI access...');
-
-        // Connect via midi-connection.js
-        const result = await connectToCandide();
-
-        if (!result.input || !result.output) {
-            // Build detailed error message
-            const diag = result.diagnostics;
-            let errorMsg = 'Candide device not found. Make sure it is connected via USB.\n\n';
-            errorMsg += `Searched for ports containing: ${diag.searchTerms.join(', ')}\n\n`;
-            if (diag.availableInputs.length === 0) {
-                errorMsg += 'No MIDI input ports found.\n';
+            // Extract capabilities - handle both old and new formats
+            if (info.capabilities && Array.isArray(info.capabilities)) {
+                this.capabilities = info.capabilities;
+                this._log(`Device: ${info.name || info.project} v${info.version}`, 'success');
+                this._log(`Capabilities: [${this.capabilities.join(', ')}]`, 'info');
             } else {
-                errorMsg += `Available MIDI inputs (${diag.availableInputs.length}):\n`;
-                diag.availableInputs.forEach(i => {
-                    errorMsg += `  - ${i.name} (${i.manufacturer || 'unknown'})\n`;
-                });
+                // Legacy device - no capabilities array
+                this.capabilities = [];
+                const name = info.name || info.project || 'Unknown';
+                this._log(`Device: ${name} v${info.version} (no capabilities declared)`, 'warning');
+                this._log('Assuming legacy mode - update firmware for full protocol support', 'warning');
             }
-            throw new Error(errorMsg);
+
+            return true;
+        } catch (err) {
+            this._log(`Discovery failed: ${err.message}`, 'error');
+            return false;
         }
-
-        this.midiAccess = result.midiAccess;
-        this.midiInput = result.input;
-        this.midiOutput = result.output;
-
-        // Set up MIDI input handler
-        this.midiInput.onmidimessage = (event) => this._handleMidiMessage(event);
-
-        // Initialize chunked transport
-        this.transport = new ChunkedTransport(
-            (sysexData) => { this.midiOutput.send(sysexData); return true; },
-            (data, success) => this._handleTransportComplete(data, success),
-            () => Date.now(),
-            (msg, type) => this._log(msg, type)
-        );
-
-        this._log(`Connected to ${result.input.name}`);
     }
 
     /**
-     * Disconnect from device
+     * Check if device has a specific capability
+     * @param {string} cap - Capability name from CAPABILITIES
+     * @returns {boolean}
+     */
+    hasCapability(cap) {
+        return this.capabilities.includes(cap);
+    }
+
+    /**
+     * Check capability with logging (for debugging)
+     * @param {string} cap - Capability name
+     * @returns {boolean}
+     */
+    checkCapability(cap) {
+        const has = this.hasCapability(cap);
+        if (!has) {
+            const name = this.deviceInfo?.name || this.deviceInfo?.project || 'device';
+            this._log(`Capability '${cap}' not available on ${name}`, 'warning');
+        }
+        return has;
+    }
+
+    /**
+     * Get device name
+     * @returns {string}
+     */
+    getDeviceName() {
+        return this.deviceInfo?.name || this.deviceInfo?.project || 'Unknown';
+    }
+
+    /**
+     * Check if connected (registry is set and port is connected)
+     * @returns {boolean}
+     */
+    isConnected() {
+        return this._registry !== null &&
+               this._portName !== null &&
+               this._registry.isConnected(this._portName);
+    }
+
+    /**
+     * Reset API state (called when device disconnects)
+     * Note: API doesn't manage ports - registry does
      */
     disconnect() {
         if (this._timeoutHandle) {
@@ -236,18 +184,10 @@ class CandideAPI {
             this.transport = null;
         }
 
-        if (this.midiInput) {
-            this.midiInput.onmidimessage = null;
-            this.midiInput.close();
-            this.midiInput = null;
-        }
-
-        if (this.midiOutput) {
-            this.midiOutput.close();
-            this.midiOutput = null;
-        }
-
-        this.midiAccess = null;
+        this._registry = null;
+        this._portName = null;
+        this.deviceInfo = null;
+        this.capabilities = [];
         this._pendingResolve = null;
         this._pendingReject = null;
         this._pendingCmd = null;
@@ -255,83 +195,233 @@ class CandideAPI {
         this._log('Disconnected');
     }
 
-    /**
-     * Check if connected
-     */
-    isConnected() {
-        return this.midiOutput !== null;
-    }
+    //======================================================================
+    // PUBLIC: Callbacks
+    //======================================================================
 
-    /**
-     * Get pending command name (for UI busy indicator)
-     */
-    getPendingCommand() {
-        return this._pendingCmd;
-    }
-
-    /**
-     * Register callback for save status changes
-     * Device sends 'unsaved', 'saving', 'saved' status updates for auto-save
-     * @param {Function} callback - Called with status string
-     */
     onSaveStatusChanged(callback) {
         this._onSaveStatusChanged = callback;
     }
 
-    /**
-     * Register callback for external patch changes
-     * Device sends patch change notifications when encoder/console changes patch in EDITOR mode
-     * @param {Function} callback - Called with {status, op, index, current_index}
-     */
     onExternalPatchChange(callback) {
         this._onExternalPatchChange = callback;
     }
 
-    //======================================================================
-    // PUBLIC: Lifecycle Commands
-    //======================================================================
-
-    /** Enter editor mode */
-    async init() {
-        return this._sendCommand({ cmd: 'init' });
-    }
-
-    /** Exit editor mode without saving */
-    async eject() {
-        return this._sendCommand({ cmd: 'eject' });
-    }
-
-    /** Save patches to QSPI */
-    async save() {
-        return this._sendCommand({ cmd: 'save' });
-    }
-
-    /** Save patches and exit editor mode */
-    async saveAndExit() {
-        return this._sendCommand({ cmd: 'save-and-exit' });
+    /**
+     * Set handler for incoming commands (controller role)
+     * When a synth sends get-control-surface or set-patch, this callback is invoked.
+     * @param {Function} callback - (cmd, portName) => response object or null
+     */
+    onIncomingCommand(callback) {
+        this._onIncomingCommand = callback;
     }
 
     //======================================================================
-    // PUBLIC: Firmware Update Commands
+    // PUBLIC: IDENTITY Commands (all devices)
+    //======================================================================
+
+    async getDeviceInfo() {
+        return this._sendCommand({ cmd: 'get-device-info' });
+    }
+
+    //======================================================================
+    // PUBLIC: CONTROLLER Commands
+    //======================================================================
+
+    async getControlSurface() {
+        this._requireCapability(CAPABILITIES.CONTROLLER, 'get-control-surface');
+        return this._sendCommand({ cmd: 'get-control-surface' });
+    }
+
+    /**
+     * Send patch data to controller (AP Protocol v3.0)
+     * @param {string} name - Patch name
+     * @param {Array} controls - Array of {input, label, cc}
+     * @returns {Promise<Object>} - { status: "ok", op: "set-patch" }
+     */
+    async setPatch(name, controls) {
+        this._requireCapability(CAPABILITIES.CONTROLLER, 'set-patch');
+        return this._sendCommand({ cmd: 'set-patch', name, controls });
+    }
+
+    //======================================================================
+    // PUBLIC: CONFIG Commands
+    //======================================================================
+
+    async getConfig() {
+        this._requireCapability(CAPABILITIES.CONFIG, 'config-get');
+        return this._sendCommand({ cmd: 'config-get' });
+    }
+
+    //======================================================================
+    // PUBLIC: PATCHES Commands
+    //======================================================================
+
+    async listPatches() {
+        this._requireCapability(CAPABILITIES.PATCHES, 'list-patches');
+        return this._sendCommand({ cmd: 'list-patches' });
+    }
+
+    async getPatch(index) {
+        this._requireCapability(CAPABILITIES.PATCHES, 'get-patch');
+        return this._sendCommand({ cmd: 'get-patch', index });
+    }
+
+    async selectPatch(index) {
+        this._requireCapability(CAPABILITIES.PATCHES, 'select-patch');
+        return this._sendCommand({ cmd: 'select-patch', index });
+    }
+
+    async createPatch(name) {
+        this._requireCapability(CAPABILITIES.PATCHES, 'create-patch');
+        return this._sendCommand({ cmd: 'create-patch', name });
+    }
+
+    async deletePatch(index) {
+        this._requireCapability(CAPABILITIES.PATCHES, 'delete-patch');
+        return this._sendCommand({ cmd: 'delete-patch', index });
+    }
+
+    async renamePatch(index, name) {
+        this._requireCapability(CAPABILITIES.PATCHES, 'rename-patch');
+        return this._sendCommand({ cmd: 'rename-patch', index, name });
+    }
+
+    async movePatch(from, to) {
+        this._requireCapability(CAPABILITIES.PATCHES, 'move-patch');
+        // Using fromIdx/toIdx to avoid macOS CoreMIDI bug with certain byte patterns
+        return this._sendCommand({ cmd: 'move-patch', fromIdx: from, toIdx: to });
+    }
+
+    //======================================================================
+    // PUBLIC: CONFIG Commands
     //======================================================================
 
     /**
-     * Upload firmware binary to device
-     * Async protocol:
-     *   1. Send upload-firmware command
-     *   2. Device immediately ACKs with "erasing" status
-     *   3. Device sends erase-progress updates during erase
-     *   4. Device sends ready-for-firmware when erase complete
-     *   5. Send segments via transport
-     *   6. Device sends segment-done after each
-     *   7. Device sends firmware-ready when all done
-     *
-     * @param {Uint8Array} firmwareBin - Firmware binary data
-     * @param {Function} progressCallback - Progress callback({phase, percent, sector?, total?})
-     * @returns {Promise} Resolves when firmware is written and ready
+     * Initialize editor session (for devices with CONFIG capability)
+     * Transitions device to EDITOR state.
+     * Polls every 1s until device responds (device may ignore during HANDSHAKE).
+     * @returns {Promise<Object>} - { status: "editor-active", config: {...} }
      */
+    async init() {
+        this._requireCapability(CAPABILITIES.CONFIG, 'init');
+
+        const POLL_INTERVAL_MS = 1000;
+
+        while (true) {
+            if (!this.isConnected()) {
+                throw new Error('Not connected to device');
+            }
+
+            const responsePromise = this._sendCommand({ cmd: 'init' });
+
+            const result = await Promise.race([
+                responsePromise.then(r => ({ type: 'response', data: r })),
+                new Promise(r => setTimeout(() => r({ type: 'poll' }), POLL_INTERVAL_MS))
+            ]);
+
+            if (result.type === 'response') {
+                return result.data;
+            }
+
+            this._clearPending();
+            this._log('Init: polling...', 'info');
+        }
+    }
+
+    /**
+     * Exit editor session without saving
+     * @returns {Promise<Object>} - { status: "editor-inactive" }
+     */
+    async eject() {
+        this._requireCapability(CAPABILITIES.CONFIG, 'eject');
+        return this._sendCommand({ cmd: 'eject' });
+    }
+
+    /**
+     * Save config and exit editor session
+     * @returns {Promise<Object>}
+     */
+    async saveAndExit() {
+        this._requireCapability(CAPABILITIES.CONFIG, 'save-and-exit');
+        return this._sendCommand({ cmd: 'save-and-exit' });
+    }
+
+    async getConfig() {
+        this._requireCapability(CAPABILITIES.CONFIG, 'config-get');
+        return this._sendCommand({ cmd: 'config-get' });
+    }
+
+    async setConfig(config) {
+        this._requireCapability(CAPABILITIES.CONFIG, 'config-set');
+        return this._sendCommand({ cmd: 'config-set', ...config });
+    }
+
+    async configReset() {
+        this._requireCapability(CAPABILITIES.CONFIG, 'config-reset');
+        return this._sendCommand({ cmd: 'config-reset' });
+    }
+
+    //======================================================================
+    // PUBLIC: SAVE Command (works with PATCHES or CONFIG)
+    //======================================================================
+
+    async save() {
+        // Save works if device has either PATCHES or CONFIG capability
+        if (!this.hasCapability(CAPABILITIES.PATCHES) && !this.hasCapability(CAPABILITIES.CONFIG)) {
+            const name = this.getDeviceName();
+            throw new Error(`Command 'save' requires PATCHES or CONFIG capability (${name} has neither)`);
+        }
+        return this._sendCommand({ cmd: 'save' });
+    }
+
+    //======================================================================
+    // PUBLIC: PARAMS Commands (real-time patch editing)
+    //======================================================================
+
+    async updateParam(index, param, value) {
+        this._requireCapability(CAPABILITIES.PARAMS, 'update-param');
+        return this._sendCommand({ cmd: 'update-param', index, param, value });
+    }
+
+    async updateRange(index, param, min, max) {
+        this._requireCapability(CAPABILITIES.PARAMS, 'update-range');
+        return this._sendCommand({ cmd: 'update-range', index, param, min, max });
+    }
+
+    async toggleModule(index, module, enabled) {
+        this._requireCapability(CAPABILITIES.PARAMS, 'toggle-module');
+        return this._sendCommand({ cmd: 'toggle-module', index, module, enabled });
+    }
+
+    async toggleModulation(index, target, source, enabled) {
+        this._requireCapability(CAPABILITIES.PARAMS, 'toggle-modulation');
+        return this._sendCommand({ cmd: 'toggle-modulation', index, target, source, enabled });
+    }
+
+    async updateModulationAmount(index, param, value) {
+        this._requireCapability(CAPABILITIES.PARAMS, 'update-modulation-amount');
+        return this._sendCommand({ cmd: 'update-modulation-amount', index, param, value });
+    }
+
+    async toggleCC(index, param, enabled) {
+        this._requireCapability(CAPABILITIES.PARAMS, 'toggle-cc');
+        return this._sendCommand({ cmd: 'toggle-cc', index, param, enabled });
+    }
+
+    async moveModule(index, fromModule, toModule) {
+        this._requireCapability(CAPABILITIES.PARAMS, 'move-module');
+        return this._sendCommand({ cmd: 'move-module', index, fromModule, toModule });
+    }
+
+    //======================================================================
+    // PUBLIC: FIRMWARE Commands
+    //======================================================================
+
     async uploadFirmware(firmwareBin, progressCallback) {
-        const SEGMENT_SIZE = 32768;  // 32KB (matches device rx_buffer)
+        this._requireCapability(CAPABILITIES.FIRMWARE, 'upload-firmware');
+
+        const SEGMENT_SIZE = 32768;  // 32KB
         const totalSize = firmwareBin.length;
         const totalSegments = Math.ceil(totalSize / SEGMENT_SIZE);
 
@@ -339,10 +429,9 @@ class CandideAPI {
         this._firmwareProgressCallback = progressCallback;
 
         // Step 1: Send command and wait for erase to complete
-        // This is async - device immediately ACKs, then sends progress, then ready-for-firmware
         const readyResponse = await this._waitForFirmwareReady(totalSize);
 
-        this._log(`Device ready: segment_size=${readyResponse.segment_size}, total_segments=${readyResponse.total_segments}`);
+        this._log(`Device ready: segment_size=${readyResponse.segment_size || SEGMENT_SIZE}`);
 
         if (progressCallback) {
             progressCallback({ phase: 'transferring', percent: 0 });
@@ -356,8 +445,6 @@ class CandideAPI {
             this._log(`Sending segment ${i + 1}/${totalSegments} (${segment.length} bytes)`);
 
             await this._sendFirmwareSegment(segment, i, totalSegments);
-
-            // Progress is reported by device via segment-done message
         }
 
         // Step 3: Wait for firmware-ready (final verification complete)
@@ -365,7 +452,6 @@ class CandideAPI {
             this._firmwareResolve = resolve;
             this._firmwareReject = reject;
 
-            // Timeout for final verification (30 seconds)
             this._timeoutHandle = setTimeout(() => {
                 this._firmwareProgressCallback = null;
                 this._firmwareResolve = null;
@@ -375,233 +461,78 @@ class CandideAPI {
         });
     }
 
-    /**
-     * Send upload-firmware command and wait for ready-for-firmware
-     * Handles async erase: erasing -> erase-progress -> ready-for-firmware
-     * @private
-     */
-    _waitForFirmwareReady(totalSize) {
-        return new Promise((resolve, reject) => {
-            this._firmwareReadyResolve = resolve;
-            this._firmwareReadyReject = reject;
-
-            // Extended timeout for erase (2 minutes for large firmware)
-            this._eraseTimeoutHandle = setTimeout(() => {
-                this._firmwareReadyResolve = null;
-                this._firmwareReadyReject = null;
-                reject(new Error('Firmware erase timeout'));
-            }, 120000);
-
-            // Send command - device immediately responds with "erasing"
-            const cmdObj = { cmd: 'upload-firmware', size: totalSize };
-            const sysex = encodeJsonToSysEx(cmdObj);
-            this.midiOutput.send(sysex);
-            this._log(`TX: upload-firmware (size=${totalSize})`, 'tx');
-        });
-    }
-
-    /**
-     * Send a single firmware segment via transport
-     * @private
-     */
-    _sendFirmwareSegment(segment, index, totalSegments) {
-        return new Promise((resolve, reject) => {
-            this._segmentResolve = resolve;
-            this._segmentReject = reject;
-            this._currentSegmentIndex = index;
-
-            // Timeout for this segment (60 seconds)
-            this._segmentTimeoutHandle = setTimeout(() => {
-                this._segmentResolve = null;
-                this._segmentReject = null;
-                reject(new Error(`Segment ${index} timeout`));
-            }, 60000);
-
-            // Send segment via transport
-            if (!this.transport.send(segment)) {
-                clearTimeout(this._segmentTimeoutHandle);
-                this._segmentResolve = null;
-                this._segmentReject = null;
-                reject(new Error('Transport busy'));
-            }
-        });
-    }
-
-    /**
-     * Restart device after firmware update
-     * Connection will be lost after this call.
-     */
     async restartDevice() {
-        await this._sendCommand({ cmd: 'restart-device' });
-        // Device will restart, connection will be lost
-    }
-
-    /**
-     * Get device information including firmware version
-     * @returns {Promise} Device info object {project, version}
-     */
-    async getDeviceInfo() {
-        return this._sendCommand({ cmd: 'get-device-info' });
+        this._requireCapability(CAPABILITIES.FIRMWARE, 'restart-device');
+        return this._sendCommand({ cmd: 'restart-device' });
     }
 
     //======================================================================
-    // PUBLIC: Patch List Commands
+    // PUBLIC: MIDI Helpers (for synths)
     //======================================================================
 
-    /** Get list of patch names and current index */
-    async listPatches() {
-        return this._sendCommand({ cmd: 'list-patches' });
-    }
-
-    /** Select patch by index */
-    async selectPatch(index) {
-        return this._sendCommand({ cmd: 'select-patch', index });
-    }
-
-    /** Create new patch with name */
-    async createPatch(name) {
-        return this._sendCommand({ cmd: 'create-patch', name });
-    }
-
-    /** Delete patch by index */
-    async deletePatch(index) {
-        return this._sendCommand({ cmd: 'delete-patch', index });
-    }
-
-    /** Rename patch */
-    async renamePatch(index, name) {
-        return this._sendCommand({ cmd: 'rename-patch', index, name });
-    }
-
-    /** Move patch from one index to another */
-    async movePatch(from, to) {
-        // NOTE: Using fromIdx/toIdx instead of from/to to avoid a macOS CoreMIDI bug
-        // where certain byte patterns in mcoded7 encoding cause 15-second delays
-        return this._sendCommand({ cmd: 'move-patch', fromIdx: from, toIdx: to });
-    }
-
-    //======================================================================
-    // PUBLIC: Patch Data Commands
-    //======================================================================
-
-    /** Get full patch data by index */
-    async getPatch(index) {
-        console.log(`[API] getPatch(${index}) called`);
-        console.trace('getPatch call stack');
-        return this._sendCommand({ cmd: 'get-patch', index });
-    }
-
-    //======================================================================
-    // PUBLIC: Parameter Commands (granular updates)
-    //======================================================================
-
-    /** Update single parameter value */
-    async updateParam(index, param, value) {
-        return this._sendCommand({ cmd: 'update-param', index, param, value });
-    }
-
-    /** Update parameter range (min/max) */
-    async updateRange(index, param, min, max) {
-        return this._sendCommand({ cmd: 'update-range', index, param, min, max });
-    }
-
-    /** Toggle module enable/disable */
-    async toggleModule(index, module, enabled) {
-        return this._sendCommand({ cmd: 'toggle-module', index, module, enabled });
-    }
-
-    /** Toggle modulation routing enable/disable */
-    async toggleModulation(index, target, source, enabled) {
-        return this._sendCommand({ cmd: 'toggle-modulation', index, target, source, enabled });
-    }
-
-    /** Update modulation amount */
-    async updateModulationAmount(index, param, value) {
-        return this._sendCommand({ cmd: 'update-modulation-amount', index, param, value });
-    }
-
-    /**
-     * Toggle MIDI CC control for a parameter
-     * @param {number} index - Patch index
-     * @param {string} param - Parameter name
-     * @param {boolean} enabled - Enable or disable CC
-     * @returns {Promise} Response with {enabled, cc} - cc is assigned number when enabled
-     */
-    async toggleCC(index, param, enabled) {
-        return this._sendCommand({ cmd: 'toggle-cc', index, param, enabled });
-    }
-
-    /**
-     * Move module within patch (reorder for priority)
-     * @param {number} index - Patch index
-     * @param {string} fromModule - Module name to move
-     * @param {string} toModule - Module name to move to (swap positions)
-     * @returns {Promise} Response
-     */
-    async moveModule(index, fromModule, toModule) {
-        return this._sendCommand({ cmd: 'move-module', index, fromModule, toModule });
-    }
-
-    //======================================================================
-    // PUBLIC: MIDI Note helpers (for testing synth)
-    //======================================================================
-
-    /** Send MIDI note on */
     sendNoteOn(channel, note, velocity) {
-        if (!this.midiOutput) return;
+        if (!this._registry) return;
         const msg = buildMidi1NoteOn(channel, note, velocity);
-        this.midiOutput.send(msg);
-        this._log(`TX: Note On ch=${channel} note=${note} vel=${Math.round(velocity * 127)}`, 'tx');
+        this._registry.send(this._portName, msg);
     }
 
-    /** Send MIDI note off */
     sendNoteOff(channel, note, velocity = 0) {
-        if (!this.midiOutput) return;
+        if (!this._registry) return;
         const msg = buildMidi1NoteOff(channel, note, velocity);
-        this.midiOutput.send(msg);
-        this._log(`TX: Note Off ch=${channel} note=${note}`, 'tx');
+        this._registry.send(this._portName, msg);
     }
 
-    /** Send MIDI channel pressure */
     sendChannelPressure(channel, pressure) {
-        if (!this.midiOutput) return;
+        if (!this._registry) return;
         const msg = buildMidi1ChannelPressure(channel, pressure);
-        this.midiOutput.send(msg);
-        // Don't log continuously during drag to avoid spam
+        this._registry.send(this._portName, msg);
     }
 
-    /** Send MIDI pitch bend */
     sendPitchBend(channel, bend) {
-        if (!this.midiOutput) return;
+        if (!this._registry) return;
         const msg = buildMidi1PitchBend(channel, bend);
-        this.midiOutput.send(msg);
-        // Don't log continuously during drag to avoid spam
+        this._registry.send(this._portName, msg);
     }
 
-    /**
-     * Send MIDI Control Change
-     * @param {number} channel - MIDI channel (0-15)
-     * @param {number} cc - Controller number (0-127)
-     * @param {number} value - Normalized value (0.0-1.0), converted to 0-127
-     */
     sendCC(channel, cc, value) {
-        if (!this.midiOutput) return;
-        // Convert normalized 0.0-1.0 to MIDI 7-bit value 0-127
+        if (!this._registry) return;
         const value7 = Math.round(Math.max(0, Math.min(1, value)) * 127);
         const msg = new Uint8Array([
-            0xB0 | (channel & 0x0F),  // Control Change status
-            cc & 0x7F,                 // Controller number
-            value7 & 0x7F              // Value
+            0xB0 | (channel & 0x0F),
+            cc & 0x7F,
+            value7 & 0x7F
         ]);
-        this.midiOutput.send(msg);
-        // Don't log continuously during drag to avoid spam
+        this._registry.send(this._portName, msg);
+    }
+
+    /**
+     * Send raw MIDI data (for special messages like MPE config)
+     * @param {Uint8Array|Array} data - Raw MIDI bytes
+     */
+    sendRaw(data) {
+        if (!this._registry) return;
+        this._registry.send(this._portName, data);
+    }
+
+    /**
+     * Send a response (for controller role)
+     * Used when APC acts as controller and needs to respond to synth commands.
+     * @param {Object} response - JSON response object
+     */
+    sendResponse(response) {
+        if (!this._registry || !this._portName) {
+            this._log('Cannot send response: not connected', 'error');
+            return;
+        }
+        const sysex = encodeJsonToSysEx(response);
+        this._registry.send(this._portName, sysex);
+        this._log(`Response: ${response.op || response.status || 'unknown'}`, 'tx');
     }
 
     //======================================================================
     // PUBLIC: Transport task (call periodically)
     //======================================================================
 
-    /** Process transport timeouts - call from setInterval */
     task() {
         if (this.transport) {
             this.transport.task();
@@ -609,41 +540,52 @@ class CandideAPI {
     }
 
     //======================================================================
+    // PUBLIC: Handle MIDI message (for external routing)
+    //======================================================================
+
+    handleMidiMessage(event) {
+        this._handleMidiMessage(event);
+    }
+
+    //======================================================================
+    // PRIVATE: Capability Guard
+    //======================================================================
+
+    _requireCapability(cap, cmd) {
+        if (!this.hasCapability(cap)) {
+            const name = this.getDeviceName();
+            const err = `Command '${cmd}' requires capability '${cap}' (${name} doesn't have it)`;
+            this._log(err, 'error');
+            throw new Error(err);
+        }
+    }
+
+    //======================================================================
     // PRIVATE: Command handling
     //======================================================================
 
-    /**
-     * Send command and wait for response
-     * @private
-     */
     _sendCommand(cmdObj) {
         return new Promise((resolve, reject) => {
-            // Gate: must be connected
-            if (!this.midiOutput) {
-                console.log(`[API] _sendCommand(${cmdObj.cmd}) rejected: not connected`);
+            if (!this._registry || !this._portName) {
+                this._log(`${cmdObj.cmd} rejected: not connected`, 'error');
                 reject(new Error('Not connected'));
                 return;
             }
 
-            // Gate: must be idle (one command at a time)
             if (this._pendingResolve) {
-                console.log(`[API] _sendCommand(${cmdObj.cmd}) rejected: busy with ${this._pendingCmd}`);
+                this._log(`${cmdObj.cmd} rejected: busy with ${this._pendingCmd}`, 'error');
                 reject(new Error(`Busy: waiting for ${this._pendingCmd}`));
                 return;
             }
 
-            // Store promise callbacks
             this._pendingResolve = resolve;
             this._pendingReject = reject;
             this._pendingCmd = cmdObj.cmd;
 
-            // Send command via direct SysEx (commands are small)
             const sysex = encodeJsonToSysEx(cmdObj);
-            console.log(`[API] _sendCommand sending: ${cmdObj.cmd}`);
-            this.midiOutput.send(sysex);
-            this._log(`TX: ${cmdObj.cmd}`, 'tx');
+            this._registry.send(this._portName, sysex);
+            this._log(cmdObj.cmd, 'tx');
 
-            // Set timeout
             this._timeoutHandle = setTimeout(() => {
                 const cmd = this._pendingCmd;
                 this._clearPending();
@@ -652,10 +594,6 @@ class CandideAPI {
         });
     }
 
-    /**
-     * Resolve pending command with response
-     * @private
-     */
     _resolve(data) {
         if (this._pendingResolve) {
             const resolve = this._pendingResolve;
@@ -664,10 +602,6 @@ class CandideAPI {
         }
     }
 
-    /**
-     * Reject pending command with error
-     * @private
-     */
     _reject(error) {
         if (this._pendingReject) {
             const reject = this._pendingReject;
@@ -676,10 +610,6 @@ class CandideAPI {
         }
     }
 
-    /**
-     * Clear pending command state
-     * @private
-     */
     _clearPending() {
         if (this._timeoutHandle) {
             clearTimeout(this._timeoutHandle);
@@ -691,30 +621,65 @@ class CandideAPI {
     }
 
     //======================================================================
+    // PRIVATE: Firmware upload helpers
+    //======================================================================
+
+    _waitForFirmwareReady(totalSize) {
+        return new Promise((resolve, reject) => {
+            this._firmwareReadyResolve = resolve;
+            this._firmwareReadyReject = reject;
+
+            this._eraseTimeoutHandle = setTimeout(() => {
+                this._firmwareReadyResolve = null;
+                this._firmwareReadyReject = null;
+                reject(new Error('Firmware erase timeout'));
+            }, 120000);
+
+            const cmdObj = { cmd: 'upload-firmware', size: totalSize };
+            const sysex = encodeJsonToSysEx(cmdObj);
+            this._registry.send(this._portName, sysex);
+            this._log(`upload-firmware (size=${totalSize})`, 'tx');
+        });
+    }
+
+    _sendFirmwareSegment(segment, index, totalSegments) {
+        return new Promise((resolve, reject) => {
+            this._segmentResolve = resolve;
+            this._segmentReject = reject;
+            this._currentSegmentIndex = index;
+
+            this._segmentTimeoutHandle = setTimeout(() => {
+                this._segmentResolve = null;
+                this._segmentReject = null;
+                reject(new Error(`Segment ${index} timeout`));
+            }, 60000);
+
+            if (!this.transport.send(segment)) {
+                clearTimeout(this._segmentTimeoutHandle);
+                this._segmentResolve = null;
+                this._segmentReject = null;
+                reject(new Error('Transport busy'));
+            }
+        });
+    }
+
+    //======================================================================
     // PRIVATE: MIDI message handling
     //======================================================================
 
-    /**
-     * Handle incoming MIDI message
-     * @private
-     */
     _handleMidiMessage(event) {
         const data = Array.from(event.data);
 
-        // Check for SysEx start (F0)
         if (data[0] === 0xF0) {
             this._sysexBuffer = data;
 
-            // Check if complete in single packet
             if (data[data.length - 1] === 0xF7) {
                 this._processSysEx(this._sysexBuffer);
                 this._sysexBuffer = [];
             }
         } else if (this._sysexBuffer.length > 0) {
-            // Continue buffering
             this._sysexBuffer.push(...data);
 
-            // Check if complete
             if (data[data.length - 1] === 0xF7) {
                 this._processSysEx(this._sysexBuffer);
                 this._sysexBuffer = [];
@@ -722,18 +687,12 @@ class CandideAPI {
         }
     }
 
-    /**
-     * Process complete SysEx message
-     * @private
-     */
     _processSysEx(data) {
         try {
-            // Check if from Candide
             if (!isCandideSysEx(data)) {
                 return;
             }
 
-            // Extract and decode payload
             const payload = data.slice(3, -1);
             const decoded = mcoded7Decode(payload);
 
@@ -742,7 +701,7 @@ class CandideAPI {
                 return;
             }
 
-            // Check if transport protocol message (0x01-0x07)
+            // Transport protocol message
             if (decoded[0] >= 0x01 && decoded[0] <= 0x07) {
                 if (this.transport) {
                     this.transport.receive(decoded);
@@ -750,7 +709,7 @@ class CandideAPI {
                 return;
             }
 
-            // Otherwise it's JSON - decode and route
+            // JSON response
             const json = decodeSysExToJson(data);
             if (!json) {
                 this._log('Failed to decode JSON', 'error');
@@ -765,14 +724,9 @@ class CandideAPI {
         }
     }
 
-    /**
-     * Handle transport completion
-     * @private
-     */
     _handleTransportComplete(data, success) {
         if (!success) {
             this._log('Transport transfer failed', 'error');
-            // Check if this was a segment transfer
             if (this._segmentReject) {
                 clearTimeout(this._segmentTimeoutHandle);
                 this._segmentTimeoutHandle = null;
@@ -786,13 +740,10 @@ class CandideAPI {
             return;
         }
 
-        // If no data, this was acknowledgment of our send (e.g., firmware segment)
-        // The actual response comes via separate JSON message
         if (!data || data.length === 0) {
             return;
         }
 
-        // Decode as JSON
         try {
             const jsonStr = new TextDecoder().decode(data);
             const json = JSON.parse(jsonStr);
@@ -804,10 +755,6 @@ class CandideAPI {
         }
     }
 
-    /**
-     * Classify response type from JSON content
-     * @private
-     */
     _classifyResponse(json) {
         if (json.error) return 'error';
         if (json.status === 'editor-active') return 'editor-active';
@@ -823,39 +770,31 @@ class CandideAPI {
         if (json.status === 'firmware-ready') return 'firmware-ready';
         if (json.status === 'firmware-validated') return 'firmware-validated';
         if (json.status === 'restarting') return 'restarting';
-        if (json.status === 'device-info') return 'device-info';
+        if (json.status === 'device-info' || json.status === 'ok' && json.op === 'device-info') return 'device-info';
+        if (json.status === 'ok' && json.op === 'config') return 'config';
+        if (json.status === 'ok' && json.op === 'control-surface') return 'control-surface';
         if (json.patches && Array.isArray(json.patches)) return 'list-patches';
         if (json.index !== undefined && json.name && !json.status) return 'get-patch';
         if (json.status === 'ok') return 'mutation-ack';
         return 'unknown';
     }
 
-    /**
-     * Check if response type matches the pending command
-     * @private
-     */
     _responseMatchesCommand(responseType, pendingCmd, json) {
-        // Error responses match any command
         if (responseType === 'error') return true;
-
-        // Specific response types for specific commands
         if (responseType === 'editor-active') return pendingCmd === 'init';
         if (responseType === 'editor-inactive') return pendingCmd === 'eject';
-
-        // Save status messages are handled separately (not via pending command)
         if (responseType === 'save-status') return false;
         if (responseType === 'list-patches') return pendingCmd === 'list-patches';
         if (responseType === 'get-patch') return pendingCmd === 'get-patch';
         if (responseType === 'ready-for-firmware') return pendingCmd === 'upload-firmware';
         if (responseType === 'restarting') return pendingCmd === 'restart-device';
         if (responseType === 'device-info') return pendingCmd === 'get-device-info';
-
-        // Firmware progress/completion are handled separately (not via pending command)
+        if (responseType === 'config') return pendingCmd === 'config-get' || pendingCmd === 'config-set';
+        if (responseType === 'control-surface') return pendingCmd === 'get-control-surface';
         if (responseType === 'flashing-progress') return false;
         if (responseType === 'firmware-ready') return false;
         if (responseType === 'firmware-validated') return false;
 
-        // Mutation ACKs - check op field matches command
         if (responseType === 'mutation-ack') {
             return json.op === pendingCmd;
         }
@@ -863,16 +802,24 @@ class CandideAPI {
         return false;
     }
 
-    /**
-     * Route response to appropriate handler
-     * Validates that response matches pending command before resolving
-     * @private
-     */
     _routeResponse(json) {
-        // Classify the response
+        // Check for incoming commands (controller role)
+        // Incoming commands have a 'cmd' field and come from synths
+        if (json.cmd && this._onIncomingCommand) {
+            const cmd = json.cmd;
+            if (cmd === 'get-control-surface' || cmd === 'set-patch') {
+                this._log(`Incoming command: ${cmd}`, 'rx');
+                const response = this._onIncomingCommand(json, this._portName);
+                if (response) {
+                    this.sendResponse(response);
+                }
+                return;
+            }
+        }
+
         const responseType = this._classifyResponse(json);
 
-        // Handle save status updates (unsaved, saving, saved)
+        // Save status updates
         if (responseType === 'save-status') {
             this._log(`Save status: ${json.status}`);
             if (this._onSaveStatusChanged) {
@@ -881,7 +828,7 @@ class CandideAPI {
             return;
         }
 
-        // Handle erasing acknowledgment (firmware upload started)
+        // Firmware update responses
         if (responseType === 'erasing') {
             this._log(`Erase started: ${json.sectors} sectors`);
             if (this._firmwareProgressCallback) {
@@ -894,7 +841,6 @@ class CandideAPI {
             return;
         }
 
-        // Handle erase progress
         if (responseType === 'erase-progress') {
             this._log(`Erase: ${json.sector}/${json.total} (${json.percent}%)`);
             if (this._firmwareProgressCallback) {
@@ -908,7 +854,6 @@ class CandideAPI {
             return;
         }
 
-        // Handle ready-for-firmware (erase complete)
         if (responseType === 'ready-for-firmware') {
             this._log(`Erase complete, device ready`);
             if (this._firmwareReadyResolve) {
@@ -922,7 +867,6 @@ class CandideAPI {
             return;
         }
 
-        // Handle segment completion (during firmware upload)
         if (responseType === 'segment-done') {
             this._log(`Segment ${json.segment} done, progress: ${json.progress}%`);
             if (this._segmentResolve) {
@@ -939,7 +883,6 @@ class CandideAPI {
             return;
         }
 
-        // Handle firmware progress (during firmware upload, no pending command)
         if (responseType === 'flashing-progress') {
             this._log(`Flashing: ${json.progress}%`);
             if (this._firmwareProgressCallback) {
@@ -948,7 +891,6 @@ class CandideAPI {
             return;
         }
 
-        // Handle firmware write complete (legacy: firmware-ready)
         if (responseType === 'firmware-ready') {
             this._log('Firmware written successfully');
             if (this._firmwareProgressCallback) {
@@ -966,7 +908,6 @@ class CandideAPI {
             return;
         }
 
-        // Handle firmware validated (new flow: separate restart step)
         if (responseType === 'firmware-validated') {
             this._log('Firmware validated, awaiting restart');
             if (this._firmwareProgressCallback) {
@@ -984,20 +925,17 @@ class CandideAPI {
             return;
         }
 
-        // Handle firmware error (during erase or transfer)
+        // Firmware error
         if (responseType === 'error' && (this._firmwareReadyReject || this._firmwareReject)) {
             this._log(`Firmware error: ${json.error}`, 'error');
-            // Clear erase timeout if active
             if (this._eraseTimeoutHandle) {
                 clearTimeout(this._eraseTimeoutHandle);
                 this._eraseTimeoutHandle = null;
             }
-            // Clear final timeout if active
             if (this._timeoutHandle) {
                 clearTimeout(this._timeoutHandle);
                 this._timeoutHandle = null;
             }
-            // Reject whichever promise is pending
             const reject = this._firmwareReadyReject || this._firmwareReject;
             this._firmwareReadyResolve = null;
             this._firmwareReadyReject = null;
@@ -1008,8 +946,7 @@ class CandideAPI {
             return;
         }
 
-        // Handle external patch change (encoder/console while in EDITOR mode)
-        // This is an unsolicited notification, not a response to our command
+        // External patch change
         if (json.op === 'select-patch' && !this._pendingCmd) {
             this._log(`External patch change: index=${json.current_index}`);
             if (this._onExternalPatchChange) {
@@ -1020,39 +957,30 @@ class CandideAPI {
 
         const pending = this._pendingCmd;
 
-        // No pending command - unexpected response
         if (!pending) {
             this._log(`Response with no pending command: ${JSON.stringify(json)}`, 'warn');
             return;
         }
 
-        // Handle errors immediately
         if (responseType === 'error') {
             this._log(`Error: ${json.error}`, 'error');
             this._reject(new Error(json.error));
             return;
         }
 
-        // Handle save progress (don't resolve, just log)
         if (responseType === 'saving-progress') {
             this._log(`Saving: ${json.progress}%`);
             return;
         }
 
-        // Verify response matches pending command
         if (!this._responseMatchesCommand(responseType, pending, json)) {
             this._log(`Mismatched response: got ${responseType}/${json.op || ''} but pending=${pending}`, 'warn');
             return;
         }
 
-        // Response matches - resolve
         this._resolve(json);
     }
 
-    /**
-     * Log helper
-     * @private
-     */
     _log(msg, type = 'info') {
         if (this._logFn) {
             this._logFn(msg, type);
@@ -1060,5 +988,6 @@ class CandideAPI {
     }
 }
 
-// Export for use in app.js (global scope for browser)
-window.CandideAPI = CandideAPI;
+// Keep CandideAPI as an alias for backwards compatibility during transition
+window.CandideAPI = UnifiedDeviceAPI;
+window.UnifiedDeviceAPI = UnifiedDeviceAPI;

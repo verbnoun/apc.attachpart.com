@@ -1189,6 +1189,56 @@ html, body {
     box-shadow: 0 0 8px var(--ap-accent-yellow);
 }
 
+/* KEYMOD node - combined VELOCITY/PRESSURE/BEND */
+.ap-node-keymod {
+    min-width: 120px;
+}
+
+.ap-keymod-outputs {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px;
+}
+
+.ap-keymod-output {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 4px 8px;
+    background: var(--ap-bg-secondary);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.ap-keymod-output:hover {
+    background: var(--ap-accent-purple);
+}
+
+.ap-keymod-output.wiring-source {
+    background: var(--ap-accent-yellow);
+}
+
+.ap-keymod-output-label {
+    font-size: 10px;
+    color: var(--ap-text);
+}
+
+.ap-keymod-output .ap-output-port {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--ap-accent-purple);
+    border: 2px solid var(--ap-border-light);
+    transition: transform 0.15s, background 0.15s;
+}
+
+.ap-keymod-output:hover .ap-output-port {
+    transform: scale(1.2);
+    background: var(--ap-accent-yellow);
+}
+
 /* Modulation wire styling */
 .ap-mod-wire {
     pointer-events: auto;
@@ -1846,4 +1896,195 @@ html, body {
 .ap-node-workspace.wiring .ap-node-port-param-in {
     background: var(--ap-accent-blue);
     transform: scale(1.5);
+}
+
+/* ============================================================
+   LOADING OVERLAY
+   ============================================================ */
+
+/* Container for workspace + loading overlay */
+.ap-workspace-container {
+    position: relative;
+    flex: 1;
+    display: flex;
+    min-width: 0;
+}
+
+/* Loading overlay - positioned over workspace */
+.ap-loading-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.95);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;  /* Allow drag events to pass through when hidden */
+    transition: opacity 0.3s ease-out, visibility 0.3s ease-out;
+}
+
+.ap-loading-overlay.visible {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;  /* Block interactions when loading */
+}
+
+.ap-loading-content {
+    text-align: center;
+}
+
+.ap-loading-text {
+    font-family: var(--ap-font-family);
+    font-size: var(--ap-font-size-lg);
+    color: var(--ap-text-primary);
+    letter-spacing: 2px;
+    /* Fixed width to prevent layout shift from animated dots */
+    display: inline-block;
+    min-width: 180px;
+    text-align: left;
+}
+
+/* Patch list item disabled state during loading */
+.ap-patch-item.loading-disabled {
+    cursor: wait;
+    opacity: 0.6;
+}
+
+.ap-patch-item.loading-disabled:hover {
+    background: transparent;
+}
+
+.ap-patch-item.loading-disabled.selected {
+    opacity: 1;
+}
+
+
+/* ============================================================
+   PAD SLIDER (Virtual Controller)
+   ============================================================ */
+
+.ap-pad-slider {
+    width: 100%;
+    max-width: 200px;
+    margin-top: var(--ap-spacing-md);
+    padding: var(--ap-spacing-sm);
+    background: var(--ap-bg-secondary);
+    border: 2px solid var(--ap-bg-tertiary);
+}
+
+.ap-slider-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--ap-spacing-xs);
+}
+
+.ap-slider-label {
+    font-size: var(--ap-font-size-xs);
+    color: var(--ap-text-primary);
+}
+
+.ap-slider-cc {
+    font-size: 7px;
+    color: var(--ap-text-muted);
+}
+
+.ap-pad-slider .ap-slider {
+    width: 100%;
+    margin-bottom: var(--ap-spacing-xs);
+}
+
+.ap-slider-value {
+    display: block;
+    text-align: center;
+    font-size: var(--ap-font-size-xs);
+    color: var(--ap-accent-yellow);
+}
+
+.ap-pad-slider .ap-slider:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.ap-pad-slider .ap-slider:disabled + .ap-slider-value {
+    color: var(--ap-text-muted);
+}
+
+/* ============================================================
+   PATCH TESTER WINDOW
+   ============================================================ */
+
+.ap-patch-tester {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ap-spacing-md);
+    height: 100%;
+}
+
+.ap-patch-tester-row {
+    display: flex;
+    align-items: center;
+    gap: var(--ap-spacing-md);
+}
+
+.ap-patch-tester-row label {
+    font-size: var(--ap-font-size-sm);
+    color: var(--ap-text-secondary);
+    min-width: 80px;
+}
+
+.ap-patch-tester-row select {
+    flex: 1;
+    font-family: var(--ap-font-family);
+    font-size: var(--ap-font-size-xs);
+    padding: var(--ap-spacing-sm);
+    background: var(--ap-bg-secondary);
+    color: var(--ap-text-primary);
+    border: 2px solid var(--ap-text-secondary);
+}
+
+.ap-patch-tester-row select:focus {
+    outline: none;
+    border-color: var(--ap-accent-blue);
+}
+
+.ap-patch-tester-divider {
+    height: 2px;
+    background: var(--ap-bg-tertiary);
+    margin: var(--ap-spacing-xs) 0;
+}
+
+.ap-patch-tester-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ap-spacing-sm);
+}
+
+.ap-patch-tester-buttons .ap-btn {
+    width: 100%;
+    text-align: left;
+    padding: var(--ap-spacing-sm) var(--ap-spacing-md);
+}
+
+.ap-patch-tester-status {
+    margin-top: auto;
+    padding: var(--ap-spacing-sm);
+    background: var(--ap-bg-secondary);
+    border: 2px solid var(--ap-bg-tertiary);
+}
+
+.ap-patch-tester-status .ap-status-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: var(--ap-font-size-xs);
+    padding: var(--ap-spacing-xs) 0;
+}
+
+.ap-patch-tester-status .ap-status-row:first-child {
+    border-bottom: 1px solid var(--ap-bg-tertiary);
 }

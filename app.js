@@ -1,15 +1,18 @@
 /**
- * Attach Part Console - Main Application (New UI)
+ * Attach Part Console - Main Application (Unified Protocol)
  *
  * Architecture:
  * - Device Sidebar (left rail): shows devices + tools
  * - Workspace (main area): where windows open
  * - Status Bar (bottom): connection status
  *
- * Backend layer (unchanged):
- * - CandideAPI, BartlebyAPI
- * - DeviceRegistry
- * - Transport layers
+ * Backend layer:
+ * - UnifiedDeviceAPI (capability-based device communication)
+ * - DeviceRegistry (generic MIDI port management)
+ * - Transport layers (chunked SysEx)
+ *
+ * Device discovery: get-device-info returns capabilities array
+ * All devices handled identically - capabilities determine features
  */
 
 const { useState, useEffect, useCallback, useRef, useMemo } = React;
@@ -19,36 +22,51 @@ const { useState, useEffect, useCallback, useRef, useMemo } = React;
 //======================================================================
 
 function App() {
-    // Device connection state
-    const [deviceStates, setDeviceStates] = useState({
-        bartleby: { connected: false, name: null },
-        candide: { connected: false, name: null }
-    });
+    // Device state - indexed by port name
+    // { 'Candide MPE': { status, deviceInfo, api, ... }, ... }
+    const [devices, setDevices] = useState({});
 
-    // API instances
-    const candideApiRef = useRef(null);
-    const bartlebyApiRef = useRef(null);
+    // Device APIs - indexed by port name
+    const deviceApisRef = useRef({});
     const deviceRegistryRef = useRef(null);
 
-    // Candide state
-    const [candideStatus, setCandideStatus] = useState('disconnected');
-    const [candideDeviceInfo, setCandideDeviceInfo] = useState(null);
-    const [canideSaveStatus, setCanideSaveStatus] = useState('saved');
+    // Patch state (for devices with PATCHES capability)
     const [patchList, setPatchList] = useState([]);
     const [currentPatchIndex, setCurrentPatchIndex] = useState(-1);
     const [currentPatch, setCurrentPatch] = useState(null);
+    const [topology, setTopology] = useState(null);
 
-    // Bartleby state
-    const [bartlebyConfig, setBartlebyConfig] = useState(null);
-    const [bartlebySaveStatus, setBartlebySaveStatus] = useState('saved');
-    const [bartlebyDeviceInfo, setBartlebyDeviceInfo] = useState(null);
+    // Config state (for devices with CONFIG capability)
+    const [configByDevice, setConfigByDevice] = useState({});
+
+    // Track which device has which role
+    const [synthPortName, setSynthPortName] = useState(null);
+    const [controllerPortName, setControllerPortName] = useState(null);
+
+    // Virtual devices for protocol testing
+    const virtualSynthRef = useRef(null);
+    const virtualControllerRef = useRef(null);
+    const [virtualControllerPatch, setVirtualControllerPatch] = useState(null);
+
+    // Initialize virtual devices
+    useEffect(() => {
+        // Virtual synth (acts as synth role)
+        virtualSynthRef.current = new VirtualSynth();
+        virtualSynthRef.current.setLogFn(addLog);
+
+        // Virtual controller (acts as controller role)
+        virtualControllerRef.current = new VirtualController((patch) => {
+            setVirtualControllerPatch(patch);
+            addLog(`Virtual Controller received patch: "${patch.name}"`, 'success');
+        });
+        virtualControllerRef.current.setLogFn(addLog);
+    }, []);
 
     // Logs
     const [logs, setLogs] = useState([]);
 
     const addLog = useCallback((message, type = 'info') => {
         const timestamp = new Date().toLocaleTimeString();
-        console.log(`[${type}] ${message}`);  // Also log to console for debugging
         setLogs(prev => [...prev.slice(-99), { message, type, timestamp }]);
     }, []);
 
@@ -56,72 +74,22 @@ function App() {
     // DEVICE REGISTRY SETUP
     //------------------------------------------------------------------
 
-    // Update device states from registry
-    const updateDeviceStates = useCallback(() => {
-        const registry = deviceRegistryRef.current;
-        if (!registry) return;
-
-        const bartlebyStatus = registry.getDeviceStatus('bartleby');
-        const candideStatus = registry.getDeviceStatus('candide');
-
-        setDeviceStates({
-            bartleby: bartlebyStatus,
-            candide: candideStatus
-        });
-    }, []);
-
     useEffect(() => {
         const registry = new DeviceRegistry();
         deviceRegistryRef.current = registry;
 
-        registry.onDeviceChange(() => {
-            updateDeviceStates();
+        registry.onDeviceConnected((portName) => {
+            addLog(`Device connected: ${portName}`, 'success');
+            initDevice(portName);
         });
 
-        registry.onBartlebyConnected(() => {
-            addLog('Bartleby connected', 'success');
-            updateDeviceStates();
-            initBartleby();
+        registry.onDeviceDisconnected((portName) => {
+            addLog(`Device disconnected: ${portName}`, 'warning');
+            cleanupDevice(portName);
         });
 
-        registry.onBartlebyDisconnected(() => {
-            addLog('Bartleby disconnected', 'warning');
-            cleanupBartleby();
-            updateDeviceStates();
-        });
-
-        registry.onCandideConnected(() => {
-            addLog('Candide connected', 'success');
-            updateDeviceStates();
-            initCandide();
-        });
-
-        registry.onCandideDisconnected(() => {
-            addLog('Candide disconnected', 'warning');
-            cleanupCandide();
-            updateDeviceStates();
-        });
-
-        registry.init().then(() => {
+        registry.init(addLog).then(() => {
             addLog('Device registry initialized', 'info');
-
-            // Check device status after init
-            const bartStatus = registry.getDeviceStatus('bartleby');
-            const candiStatus = registry.getDeviceStatus('candide');
-            addLog(`Devices: Bart=${bartStatus.connected}, Candi=${candiStatus.connected}`, 'info');
-
-            setDeviceStates({
-                bartleby: bartStatus,
-                candide: candiStatus
-            });
-
-            // Initialize connected devices
-            if (candiStatus.connected) {
-                initCandide();
-            }
-            if (bartStatus.connected) {
-                initBartleby();
-            }
         }).catch(err => {
             console.error('Registry init failed:', err);
             addLog(`Registry init failed: ${err.message}`, 'error');
@@ -133,31 +101,38 @@ function App() {
     }, []);
 
     //------------------------------------------------------------------
-    // CANDIDE INITIALIZATION
+    // DEVICE INITIALIZATION (Generic)
     //------------------------------------------------------------------
 
-    const initCandide = async () => {
-        // Already initialized - prevent duplicate init
-        if (candideApiRef.current !== null) {
-            return;
-        }
-
+    const initDevice = async (portName) => {
         const registry = deviceRegistryRef.current;
         if (!registry) return;
 
-        const input = registry.getCandideInput();
-        const output = registry.getCandideOutput();
-        if (!input || !output) return;
+        // Update status to connecting
+        setDevices(prev => ({
+            ...prev,
+            [portName]: { ...prev[portName], status: 'connecting' }
+        }));
 
-        setCandideStatus('connecting');
-        addLog('Connecting to Candide...', 'info');
+        addLog(`Initializing ${portName}...`, 'info');
 
         try {
-            const api = new CandideAPI();
-            candideApiRef.current = api;
+            const api = new UnifiedDeviceAPI();
+            api._logFn = addLog;
+
+            // Configure API with registry (API uses registry for all I/O)
+            api.setRegistry(registry, portName);
+
+            // Register with registry for SysEx routing
+            registry.registerApi(portName, api);
+
+            deviceApisRef.current[portName] = api;
 
             api.onSaveStatusChanged((status) => {
-                setCanideSaveStatus(status);
+                setDevices(prev => ({
+                    ...prev,
+                    [portName]: { ...prev[portName], saveStatus: status }
+                }));
             });
 
             api.onExternalPatchChange((index) => {
@@ -165,90 +140,124 @@ function App() {
                 loadPatch(index);
             });
 
-            await api.connectToDevice({ input, output });
-            await api.init();
+            // Handle incoming commands (controller role)
+            // When physical synth sends commands to APC, route to virtual controller
+            api.onIncomingCommand((cmdObj, fromPort) => {
+                if (!virtualControllerRef.current) {
+                    addLog(`Incoming ${cmdObj.cmd} but no virtual controller`, 'warning');
+                    return null;
+                }
 
-            const info = await api.getDeviceInfo();
-            setCandideDeviceInfo(info);
+                if (cmdObj.cmd === 'get-control-surface') {
+                    addLog(`Incoming: get-control-surface from ${fromPort}`, 'info');
+                    return virtualControllerRef.current.getControlSurface();
+                }
 
-            const patches = await api.listPatches();
-            console.log('Patches response:', patches);
-            const patchNames = patches.patches || [];
-            addLog(`Loaded ${patchNames.length} patches`, 'info');
-            setPatchList(patchNames);
+                if (cmdObj.cmd === 'set-patch') {
+                    addLog(`Incoming: set-patch "${cmdObj.name}" from ${fromPort}`, 'info');
+                    return virtualControllerRef.current.handleSetPatch(cmdObj);
+                }
 
-            setCandideStatus('connected');
-            addLog('Candide connected and initialized', 'success');
-        } catch (err) {
-            addLog(`Candide connection failed: ${err.message}`, 'error');
-            setCandideStatus('error');
-        }
-    };
-
-    const cleanupCandide = () => {
-        candideApiRef.current = null;
-        setCandideStatus('disconnected');
-        setCandideDeviceInfo(null);
-        setPatchList([]);
-        setCurrentPatchIndex(-1);
-        setCurrentPatch(null);
-    };
-
-    //------------------------------------------------------------------
-    // BARTLEBY INITIALIZATION
-    //------------------------------------------------------------------
-
-    const initBartleby = async () => {
-        // Already initialized - prevent duplicate init
-        if (bartlebyApiRef.current !== null) {
-            return;
-        }
-
-        const registry = deviceRegistryRef.current;
-        if (!registry) return;
-
-        const input = registry.getBartlebyInput();
-        const output = registry.getBartlebyOutput();
-        if (!input || !output) return;
-
-        addLog('Initializing Bartleby...', 'info');
-
-        try {
-            const api = new BartlebyAPI();
-            bartlebyApiRef.current = api;
-
-            // Let registry route SysEx to Bartleby
-            registry.setBartlebyApi(api);
-
-            api.onSaveStatusChanged((status) => {
-                setBartlebySaveStatus(status);
+                return null;
             });
 
-            await api.connectToDevice(input, output);
-            const result = await api.init();
-
-            if (result.config) {
-                setBartlebyConfig(result.config);
+            // Discover capabilities
+            const discovered = await api.discover();
+            if (!discovered) {
+                throw new Error('Device discovery failed');
             }
 
-            const info = await api.getDeviceInfo();
-            setBartlebyDeviceInfo(info);
+            const deviceInfo = api.deviceInfo;
+            const capabilities = api.capabilities;
 
-            addLog('Bartleby initialized', 'success');
+            // Set device roles based on capabilities
+            if (capabilities.includes(CAPABILITIES.CONTROLLER)) {
+                registry.setControllerDevice(portName);
+                setControllerPortName(portName);
+            }
+            if (capabilities.includes(CAPABILITIES.SYNTH)) {
+                registry.setSynthDevice(portName);
+                setSynthPortName(portName);
+            }
+
+            // Load capability-specific data
+            if (capabilities.includes(CAPABILITIES.CONFIG)) {
+                const config = await api.getConfig();
+                // Synth config has modules/mod_targets (used by patch editor)
+                if (config.modules && config.mod_targets) {
+                    setTopology(config);
+                    addLog(`Loaded config: ${Object.keys(config.mod_targets || {}).length} mod sources`, 'info');
+                }
+                // Controller config has keyboard/pots (stored separately)
+                if (config.keyboard || config.pots) {
+                    setConfigByDevice(prev => ({
+                        ...prev,
+                        [portName]: config
+                    }));
+                }
+            }
+
+            if (capabilities.includes(CAPABILITIES.PATCHES)) {
+                const patches = await api.listPatches();
+                const patchNames = patches.patches || [];
+                const deviceCurrentIndex = patches.current_index ?? 0;
+                addLog(`Loaded ${patchNames.length} patches (device on patch ${deviceCurrentIndex})`, 'info');
+                setPatchList(patchNames);
+                setCurrentPatchIndex(deviceCurrentIndex);
+            }
+
+            // Update device state
+            setDevices(prev => ({
+                ...prev,
+                [portName]: {
+                    status: 'connected',
+                    deviceInfo,
+                    capabilities,
+                    saveStatus: 'saved'
+                }
+            }));
+
+            addLog(`${deviceInfo.name || portName} initialized`, 'success');
         } catch (err) {
-            addLog(`Bartleby init failed: ${err.message}`, 'error');
+            addLog(`${portName} init failed: ${err.message}`, 'error');
+            setDevices(prev => ({
+                ...prev,
+                [portName]: { ...prev[portName], status: 'error' }
+            }));
         }
     };
 
-    const cleanupBartleby = () => {
+    const cleanupDevice = (portName) => {
         const registry = deviceRegistryRef.current;
         if (registry) {
-            registry.setBartlebyApi(null);
+            registry.unregisterApi(portName);
         }
-        bartlebyApiRef.current = null;
-        setBartlebyConfig(null);
-        setBartlebyDeviceInfo(null);
-        setBartlebySaveStatus('saved');
+
+        delete deviceApisRef.current[portName];
+
+        // Clear role if this device had one
+        if (synthPortName === portName) {
+            setSynthPortName(null);
+            setTopology(null);
+            setPatchList([]);
+            setCurrentPatchIndex(-1);
+            setCurrentPatch(null);
+        }
+        if (controllerPortName === portName) {
+            setControllerPortName(null);
+        }
+
+        setConfigByDevice(prev => {
+            const next = { ...prev };
+            delete next[portName];
+            return next;
+        });
+
+        setDevices(prev => {
+            const next = { ...prev };
+            delete next[portName];
+            return next;
+        });
     };
 
     //------------------------------------------------------------------
@@ -256,24 +265,16 @@ function App() {
     //------------------------------------------------------------------
 
     const loadPatch = async (index) => {
-        addLog(`loadPatch(${index}) called`, 'info');
-        const api = candideApiRef.current;
-        if (!api) {
-            addLog(`loadPatch(${index}) aborted: no API`, 'warning');
-            return null;
-        }
-        if (index < 0) {
-            addLog(`loadPatch(${index}) aborted: invalid index`, 'warning');
-            return null;
-        }
+        if (!synthPortName) return null;
+        const api = deviceApisRef.current[synthPortName];
+        if (!api) return null;
+        if (index < 0) return null;
 
         try {
-            addLog(`loadPatch(${index}) sending get-patch...`, 'info');
             const patch = await api.getPatch(index);
-            addLog(`loadPatch(${index}) received patch data`, 'success');
             setCurrentPatch(patch);
             setCurrentPatchIndex(index);
-            return patch;  // Return for immediate use by window openers
+            return patch;
         } catch (err) {
             addLog(`Failed to load patch: ${err.message}`, 'error');
             return null;
@@ -281,7 +282,8 @@ function App() {
     };
 
     const selectPatch = async (index) => {
-        const api = candideApiRef.current;
+        if (!synthPortName) return;
+        const api = deviceApisRef.current[synthPortName];
         if (!api) return;
 
         try {
@@ -293,7 +295,8 @@ function App() {
     };
 
     const createPatch = async () => {
-        const api = candideApiRef.current;
+        if (!synthPortName) return;
+        const api = deviceApisRef.current[synthPortName];
         if (!api) return;
 
         try {
@@ -308,7 +311,8 @@ function App() {
     };
 
     const deletePatch = async (index) => {
-        const api = candideApiRef.current;
+        if (!synthPortName) return;
+        const api = deviceApisRef.current[synthPortName];
         if (!api) return;
 
         try {
@@ -323,7 +327,8 @@ function App() {
     };
 
     const renamePatch = async (index, newName) => {
-        const api = candideApiRef.current;
+        if (!synthPortName) return;
+        const api = deviceApisRef.current[synthPortName];
         if (!api) return;
 
         try {
@@ -336,7 +341,8 @@ function App() {
     };
 
     const movePatch = async (from, to) => {
-        const api = candideApiRef.current;
+        if (!synthPortName) return;
+        const api = deviceApisRef.current[synthPortName];
         if (!api) return;
 
         try {
@@ -354,20 +360,12 @@ function App() {
     //------------------------------------------------------------------
 
     const toggleModule = async (moduleName, enabled) => {
-        addLog(`toggleModule: ${moduleName} → ${enabled}`, 'info');
-        const api = candideApiRef.current;
-        if (!api) {
-            addLog(`toggleModule failed: no API connection`, 'error');
-            return;
-        }
-        if (currentPatchIndex < 0) {
-            addLog(`toggleModule failed: no patch selected (index=${currentPatchIndex})`, 'error');
-            return;
-        }
+        if (!synthPortName) return;
+        const api = deviceApisRef.current[synthPortName];
+        if (!api || currentPatchIndex < 0) return;
 
         try {
             await api.toggleModule(currentPatchIndex, moduleName, enabled);
-            addLog(`toggleModule success: ${moduleName}`, 'success');
             await loadPatch(currentPatchIndex);
         } catch (err) {
             addLog(`Failed to toggle module: ${err.message}`, 'error');
@@ -375,20 +373,12 @@ function App() {
     };
 
     const updateParam = async (paramKey, value) => {
-        addLog(`updateParam: ${paramKey} → ${value}`, 'info');
-        const api = candideApiRef.current;
-        if (!api) {
-            addLog(`updateParam failed: no API connection`, 'error');
-            return;
-        }
-        if (currentPatchIndex < 0) {
-            addLog(`updateParam failed: no patch selected (index=${currentPatchIndex})`, 'error');
-            return;
-        }
+        if (!synthPortName) return;
+        const api = deviceApisRef.current[synthPortName];
+        if (!api || currentPatchIndex < 0) return;
 
         try {
             await api.updateParam(currentPatchIndex, paramKey, value);
-            addLog(`updateParam success: ${paramKey}`, 'success');
             await loadPatch(currentPatchIndex);
         } catch (err) {
             addLog(`Failed to update param: ${err.message}`, 'error');
@@ -396,20 +386,12 @@ function App() {
     };
 
     const toggleModulation = async (targetParam, sourceModule, enabled) => {
-        addLog(`toggleModulation: ${sourceModule} → ${targetParam} = ${enabled}`, 'info');
-        const api = candideApiRef.current;
-        if (!api) {
-            addLog(`toggleModulation failed: no API connection`, 'error');
-            return;
-        }
-        if (currentPatchIndex < 0) {
-            addLog(`toggleModulation failed: no patch selected (index=${currentPatchIndex})`, 'error');
-            return;
-        }
+        if (!synthPortName) return;
+        const api = deviceApisRef.current[synthPortName];
+        if (!api || currentPatchIndex < 0) return;
 
         try {
             await api.toggleModulation(currentPatchIndex, targetParam, sourceModule, enabled);
-            addLog(`toggleModulation success`, 'success');
             await loadPatch(currentPatchIndex);
         } catch (err) {
             addLog(`Failed to toggle modulation: ${err.message}`, 'error');
@@ -417,21 +399,13 @@ function App() {
     };
 
     const updateModulationAmount = async (targetParam, sourceModule, amount) => {
-        const amountParam = `${targetParam}_${sourceModule}_AMOUNT`;
-        addLog(`updateModulationAmount: ${amountParam} → ${amount}`, 'info');
-        const api = candideApiRef.current;
-        if (!api) {
-            addLog(`updateModulationAmount failed: no API connection`, 'error');
-            return;
-        }
-        if (currentPatchIndex < 0) {
-            addLog(`updateModulationAmount failed: no patch selected (index=${currentPatchIndex})`, 'error');
-            return;
-        }
+        if (!synthPortName) return;
+        const api = deviceApisRef.current[synthPortName];
+        if (!api || currentPatchIndex < 0) return;
 
+        const amountParam = `${targetParam}_${sourceModule}_AMOUNT`;
         try {
             await api.updateModulationAmount(currentPatchIndex, amountParam, amount);
-            addLog(`updateModulationAmount success`, 'success');
             await loadPatch(currentPatchIndex);
         } catch (err) {
             addLog(`Failed to update mod amount: ${err.message}`, 'error');
@@ -439,57 +413,56 @@ function App() {
     };
 
     //------------------------------------------------------------------
-    // BARTLEBY CONFIG OPERATIONS
+    // CONFIG OPERATIONS
     //------------------------------------------------------------------
 
-    const updateBartlebyConfig = async (partialConfig) => {
-        const api = bartlebyApiRef.current;
+    const updateConfig = async (portName, partialConfig) => {
+        const api = deviceApisRef.current[portName];
         if (!api) return;
 
         try {
             const result = await api.setConfig(partialConfig);
             if (result.config) {
-                setBartlebyConfig(result.config);
+                setConfigByDevice(prev => ({
+                    ...prev,
+                    [portName]: result.config
+                }));
             }
         } catch (err) {
-            addLog(`Failed to update Bartleby config: ${err.message}`, 'error');
+            addLog(`Failed to update config: ${err.message}`, 'error');
         }
     };
 
-    const saveBartleby = async () => {
-        const api = bartlebyApiRef.current;
+    const saveDevice = async (portName) => {
+        const api = deviceApisRef.current[portName];
         if (!api) return;
 
         try {
             await api.save();
         } catch (err) {
-            addLog(`Failed to save Bartleby config: ${err.message}`, 'error');
+            addLog(`Failed to save: ${err.message}`, 'error');
         }
     };
 
     //------------------------------------------------------------------
-    // DEVICE ACTION HANDLERS
+    // DEVICE ACTION HANDLERS (Capability-Driven)
     //------------------------------------------------------------------
 
-    const handleDeviceAction = (device, action) => {
-        addLog(`Action: ${device} → ${action}`, 'info');
+    const handleDeviceAction = (portName, action) => {
+        addLog(`Action: ${portName} -> ${action}`, 'info');
+        const device = devices[portName];
+        if (!device) return;
 
-        if (device === 'bartleby') {
-            if (action === 'config') {
-                openBartlebyConfig();
-            } else if (action === 'firmware') {
-                openFirmwareWindow('bartleby');
-            } else if (action === 'language') {
-                openLanguageWindow('bartleby');
-            }
-        } else if (device === 'candide') {
-            if (action === 'patches') {
-                openPatchEditor();
-            } else if (action === 'firmware') {
-                openFirmwareWindow('candide');
-            } else if (action === 'language') {
-                openLanguageWindow('candide');
-            }
+        const capabilities = device.capabilities || [];
+
+        if (action === 'config' && capabilities.includes(CAPABILITIES.CONFIG)) {
+            openConfigWindow(portName);
+        } else if (action === 'patches' && capabilities.includes(CAPABILITIES.PATCHES)) {
+            openPatchEditor(portName);
+        } else if (action === 'firmware' && capabilities.includes(CAPABILITIES.FIRMWARE)) {
+            openFirmwareWindow(portName);
+        } else if (action === 'language') {
+            openLanguageWindow(portName);
         }
     };
 
@@ -498,6 +471,8 @@ function App() {
 
         if (tool === 'expression') {
             openExpressionPad();
+        } else if (tool === 'patch') {
+            openPatchTester();
         } else if (tool === 'log') {
             openLogWindow();
         }
@@ -509,29 +484,35 @@ function App() {
 
     const windowContainersRef = useRef({});
 
-    // Re-render Bartleby config window when state changes
+    // Re-render Config window when state changes
     useEffect(() => {
-        const container = windowContainersRef.current['bartleby-config'];
-        if (container && WindowManager.exists('bartleby-config')) {
-            ReactDOM.render(
-                <BartlebyConfigWindow
-                    config={bartlebyConfig}
-                    saveStatus={bartlebySaveStatus}
-                    deviceInfo={bartlebyDeviceInfo}
-                    onConfigChange={updateBartlebyConfig}
-                    onSave={saveBartleby}
-                />,
-                container
-            );
+        for (const portName of Object.keys(configByDevice)) {
+            const containerId = `config-${portName}`;
+            const container = windowContainersRef.current[containerId];
+            if (container && WindowManager.exists(containerId)) {
+                const device = devices[portName];
+                ReactDOM.render(
+                    <BartlebyConfigWindow
+                        config={configByDevice[portName]}
+                        saveStatus={device?.saveStatus || 'saved'}
+                        deviceInfo={device?.deviceInfo}
+                        onConfigChange={(cfg) => updateConfig(portName, cfg)}
+                        onSave={() => saveDevice(portName)}
+                    />,
+                    container
+                );
+            }
         }
-    }, [bartlebyConfig, bartlebySaveStatus, bartlebyDeviceInfo]);
+    }, [configByDevice, devices]);
 
     // Re-render Patch editor window when state changes
     useEffect(() => {
         const container = windowContainersRef.current['patch-editor'];
         if (container && WindowManager.exists('patch-editor')) {
+            const synthDevice = synthPortName ? devices[synthPortName] : null;
             ReactDOM.render(
                 <PatchEditorWindow
+                    topology={topology}
                     patchList={patchList}
                     currentIndex={currentPatchIndex}
                     currentPatch={currentPatch}
@@ -544,13 +525,13 @@ function App() {
                     onUpdateParam={updateParam}
                     onToggleModulation={toggleModulation}
                     onUpdateModAmount={updateModulationAmount}
-                    isConnected={candideStatus === 'connected'}
+                    isConnected={synthDevice?.status === 'connected'}
                     addLog={addLog}
                 />,
                 container
             );
         }
-    }, [patchList, currentPatchIndex, currentPatch, candideStatus, addLog]);
+    }, [topology, patchList, currentPatchIndex, currentPatch, synthPortName, devices, addLog]);
 
     // Re-render Log window when logs change
     useEffect(() => {
@@ -563,43 +544,47 @@ function App() {
         }
     }, [logs]);
 
-    // Re-render Expression Pad when connection or API changes
+    // Re-render Expression Pad when connection or virtual controller changes
     useEffect(() => {
         const container = windowContainersRef.current['expression-pad'];
         if (container && WindowManager.exists('expression-pad')) {
+            const synthDevice = synthPortName ? devices[synthPortName] : null;
+            const synthApi = synthPortName ? deviceApisRef.current[synthPortName] : null;
             ReactDOM.render(
                 <ExpressionPadWindow
-                    candideApi={candideApiRef.current}
-                    isConnected={candideStatus === 'connected'}
+                    candideApi={synthApi}
+                    isConnected={synthDevice?.status === 'connected'}
                     deviceRegistry={deviceRegistryRef.current}
                     addLog={addLog}
+                    virtualController={virtualControllerRef.current}
+                    virtualControllerPatch={virtualControllerPatch}
                 />,
                 container
             );
         }
-    }, [candideStatus, addLog]);
+    }, [synthPortName, devices, addLog, virtualControllerPatch]);
 
     //------------------------------------------------------------------
     // WINDOW OPENERS
     //------------------------------------------------------------------
 
-    const openBartlebyConfig = async () => {
-        if (WindowManager.exists('bartleby-config')) {
-            WindowManager.focus('bartleby-config');
+    const openConfigWindow = async (portName) => {
+        const windowId = `config-${portName}`;
+        if (WindowManager.exists(windowId)) {
+            WindowManager.focus(windowId);
             return;
         }
 
-        // STANDARDIZED PATTERN: Ensure data is ready before creating window
-        let initialConfig = bartlebyConfig;
+        const api = deviceApisRef.current[portName];
+        let initialConfig = configByDevice[portName];
 
-        if (initialConfig === null && bartlebyApiRef.current) {
-            // Config not loaded yet - fetch it
-            addLog('Loading Bartleby config...', 'info');
+        if (initialConfig === undefined && api) {
+            addLog(`Loading config from ${portName}...`, 'info');
             try {
-                const result = await bartlebyApiRef.current.getConfig();
+                const result = await api.getConfig();
                 if (result.config) {
                     initialConfig = result.config;
-                    setBartlebyConfig(result.config);
+                    setConfigByDevice(prev => ({ ...prev, [portName]: result.config }));
                 }
             } catch (err) {
                 addLog(`Failed to load config: ${err.message}`, 'error');
@@ -607,60 +592,54 @@ function App() {
         }
 
         const container = document.createElement('div');
-        windowContainersRef.current['bartleby-config'] = container;
+        windowContainersRef.current[windowId] = container;
+
+        const device = devices[portName];
+        const deviceName = device?.deviceInfo?.name || portName;
 
         WindowManager.create({
-            id: 'bartleby-config',
-            title: 'Bartleby Config',
+            id: windowId,
+            title: `${deviceName} Config`,
             x: 100,
             y: 50,
             width: 450,
             height: 400,
             content: container,
             onClose: () => {
-                delete windowContainersRef.current['bartleby-config'];
+                delete windowContainersRef.current[windowId];
             }
         });
 
-        // Render with loaded data (not stale closure values)
         ReactDOM.render(
             <BartlebyConfigWindow
                 config={initialConfig}
-                saveStatus={bartlebySaveStatus}
-                deviceInfo={bartlebyDeviceInfo}
-                onConfigChange={updateBartlebyConfig}
-                onSave={saveBartleby}
+                saveStatus={device?.saveStatus || 'saved'}
+                deviceInfo={device?.deviceInfo}
+                onConfigChange={(cfg) => updateConfig(portName, cfg)}
+                onSave={() => saveDevice(portName)}
             />,
             container
         );
     };
 
-    const openPatchEditor = async () => {
+    const openPatchEditor = async (portName) => {
         if (WindowManager.exists('patch-editor')) {
             WindowManager.focus('patch-editor');
             return;
         }
 
-        // STANDARDIZED PATTERN: Ensure data is ready before creating window
-        // This guarantees the window has valid data on first render
-        let initialPatch = currentPatch;
-        let initialIndex = currentPatchIndex;
-
-        if (initialPatch === null && patchList.length > 0) {
-            // No patch loaded yet - load the first one
-            const firstIndex = typeof patchList[0] === 'object' ? patchList[0].index : 0;
-            addLog(`Loading patch ${firstIndex}...`, 'info');
-            initialPatch = await loadPatch(firstIndex);
-            initialIndex = firstIndex;
-        }
+        const initialIndex = currentPatchIndex >= 0 ? currentPatchIndex : 0;
 
         const container = document.createElement('div');
         container.style.height = '100%';
         windowContainersRef.current['patch-editor'] = container;
 
+        const device = devices[portName];
+        const deviceName = device?.deviceInfo?.name || portName;
+
         WindowManager.create({
             id: 'patch-editor',
-            title: 'Candide Patches',
+            title: `${deviceName} Patches`,
             x: 120,
             y: 70,
             width: 1280,
@@ -671,12 +650,12 @@ function App() {
             }
         });
 
-        // Render with loaded data (not stale closure values)
         ReactDOM.render(
             <PatchEditorWindow
+                topology={topology}
                 patchList={patchList}
                 currentIndex={initialIndex}
-                currentPatch={initialPatch}
+                currentPatch={currentPatch}
                 onSelectPatch={selectPatch}
                 onCreatePatch={createPatch}
                 onDeletePatch={deletePatch}
@@ -686,24 +665,31 @@ function App() {
                 onUpdateParam={updateParam}
                 onToggleModulation={toggleModulation}
                 onUpdateModAmount={updateModulationAmount}
-                isConnected={candideStatus === 'connected'}
+                isConnected={device?.status === 'connected'}
                 addLog={addLog}
             />,
             container
         );
+
+        if (currentPatch === null && patchList.length > 0) {
+            loadPatch(initialIndex);
+        }
     };
 
-    const openFirmwareWindow = (device) => {
-        const id = `firmware-${device}`;
-        if (WindowManager.exists(id)) {
-            WindowManager.focus(id);
+    const openFirmwareWindow = (portName) => {
+        const windowId = `firmware-${portName}`;
+        if (WindowManager.exists(windowId)) {
+            WindowManager.focus(windowId);
             return;
         }
 
         const container = document.createElement('div');
+        const device = devices[portName];
+        const deviceName = device?.deviceInfo?.name || portName;
+
         WindowManager.create({
-            id,
-            title: `${device} Firmware`,
+            id: windowId,
+            title: `${deviceName} Firmware`,
             x: 200,
             y: 100,
             width: 350,
@@ -714,27 +700,30 @@ function App() {
 
         ReactDOM.render(
             <FirmwareWindow
-                device={device}
-                deviceInfo={device === 'bartleby' ? bartlebyDeviceInfo : candideDeviceInfo}
-                api={device === 'bartleby' ? bartlebyApiRef.current : candideApiRef.current}
-                onClose={() => WindowManager.close(id)}
+                device={portName}
+                deviceInfo={device?.deviceInfo}
+                api={deviceApisRef.current[portName]}
+                onClose={() => WindowManager.close(windowId)}
                 addLog={addLog}
             />,
             container
         );
     };
 
-    const openLanguageWindow = (device) => {
-        const id = `language-${device}`;
-        if (WindowManager.exists(id)) {
-            WindowManager.focus(id);
+    const openLanguageWindow = (portName) => {
+        const windowId = `language-${portName}`;
+        if (WindowManager.exists(windowId)) {
+            WindowManager.focus(windowId);
             return;
         }
 
         const container = document.createElement('div');
+        const device = devices[portName];
+        const deviceName = device?.deviceInfo?.name || portName;
+
         WindowManager.create({
-            id,
-            title: `${device} Language`,
+            id: windowId,
+            title: `${deviceName} Language`,
             x: 250,
             y: 150,
             width: 300,
@@ -745,10 +734,10 @@ function App() {
 
         ReactDOM.render(
             <LanguageWindow
-                device={device}
-                api={device === 'bartleby' ? bartlebyApiRef.current : candideApiRef.current}
-                deviceInfo={device === 'bartleby' ? bartlebyDeviceInfo : candideDeviceInfo}
-                onClose={() => WindowManager.close(id)}
+                device={portName}
+                api={deviceApisRef.current[portName]}
+                deviceInfo={device?.deviceInfo}
+                onClose={() => WindowManager.close(windowId)}
                 addLog={addLog}
             />,
             container
@@ -778,12 +767,17 @@ function App() {
             }
         });
 
+        const synthDevice = synthPortName ? devices[synthPortName] : null;
+        const synthApi = synthPortName ? deviceApisRef.current[synthPortName] : null;
+
         ReactDOM.render(
             <ExpressionPadWindow
-                candideApi={candideApiRef.current}
-                isConnected={candideStatus === 'connected'}
+                candideApi={synthApi}
+                isConnected={synthDevice?.status === 'connected'}
                 deviceRegistry={deviceRegistryRef.current}
                 addLog={addLog}
+                virtualController={virtualControllerRef.current}
+                virtualControllerPatch={virtualControllerPatch}
             />,
             container
         );
@@ -818,16 +812,66 @@ function App() {
         );
     };
 
+    const openPatchTester = () => {
+        if (WindowManager.exists('patch-tester')) {
+            WindowManager.focus('patch-tester');
+            return;
+        }
+
+        const container = document.createElement('div');
+        container.style.height = '100%';
+        windowContainersRef.current['patch-tester'] = container;
+
+        WindowManager.create({
+            id: 'patch-tester',
+            title: 'Patch Tester',
+            x: 200,
+            y: 100,
+            width: 380,
+            height: 320,
+            content: container,
+            onClose: () => {
+                delete windowContainersRef.current['patch-tester'];
+            }
+        });
+
+        ReactDOM.render(
+            <PatchTesterWindow
+                devices={devices}
+                deviceApis={deviceApisRef.current}
+                virtualSynth={virtualSynthRef.current}
+                virtualController={virtualControllerRef.current}
+                addLog={addLog}
+            />,
+            container
+        );
+    };
+
     //------------------------------------------------------------------
     // RENDER
     //------------------------------------------------------------------
 
-    const isLinked = deviceStates.bartleby.connected && deviceStates.candide.connected;
+    // Build device states for sidebar (compatibility layer)
+    const deviceStatesForSidebar = useMemo(() => {
+        const result = {};
+        for (const [portName, device] of Object.entries(devices)) {
+            result[portName] = {
+                connected: device.status === 'connected',
+                name: device.deviceInfo?.name || portName,
+                capabilities: device.capabilities || []
+            };
+        }
+        return result;
+    }, [devices]);
+
+    const isLinked = controllerPortName && synthPortName &&
+                     devices[controllerPortName]?.status === 'connected' &&
+                     devices[synthPortName]?.status === 'connected';
 
     return (
         <div className="ap-container">
             <DeviceSidebar
-                deviceStates={deviceStates}
+                devices={deviceStatesForSidebar}
                 onDeviceAction={handleDeviceAction}
                 onToolClick={handleToolClick}
             />
@@ -837,8 +881,7 @@ function App() {
             </div>
 
             <StatusBar
-                bartlebyConnected={deviceStates.bartleby.connected}
-                candideConnected={deviceStates.candide.connected}
+                devices={devices}
                 isLinked={isLinked}
             />
         </div>
@@ -849,17 +892,21 @@ function App() {
 // STATUS BAR
 //======================================================================
 
-function StatusBar({ bartlebyConnected, candideConnected, isLinked }) {
+function StatusBar({ devices, isLinked }) {
     return (
         <div className="ap-status-bar">
-            <div className="ap-status-item">
-                <span className={`ap-status-led ${bartlebyConnected ? 'connected' : ''}`}></span>
-                <span>BARTLEBY</span>
-            </div>
-            <div className="ap-status-item">
-                <span className={`ap-status-led ${candideConnected ? 'connected' : ''}`}></span>
-                <span>CANDIDE</span>
-            </div>
+            {Object.entries(devices).map(([portName, device]) => (
+                <div key={portName} className="ap-status-item">
+                    <span className={`ap-status-led ${device.status === 'connected' ? 'connected' : ''}`}></span>
+                    <span>{device.deviceInfo?.name || portName}</span>
+                </div>
+            ))}
+            {Object.keys(devices).length === 0 && (
+                <div className="ap-status-item">
+                    <span className="ap-status-led"></span>
+                    <span>No devices</span>
+                </div>
+            )}
             {isLinked && (
                 <span className="ap-status-linked">LINKED</span>
             )}
@@ -871,11 +918,8 @@ function StatusBar({ bartlebyConnected, candideConnected, isLinked }) {
 // FIRMWARE WINDOW
 //======================================================================
 
-// BartlebyConfigWindow is now in bartleby-config-window.js
-// PatchEditorWindow is now in patch-editor.js
-
 function FirmwareWindow({ device, deviceInfo, api, onClose, addLog }) {
-    const [step, setStep] = useState('select'); // select, uploading, complete, error
+    const [step, setStep] = useState('select');
     const [progress, setProgress] = useState({ phase: '', percent: 0 });
     const [selectedFile, setSelectedFile] = useState(null);
     const [error, setError] = useState(null);
@@ -897,13 +941,11 @@ function FirmwareWindow({ device, deviceInfo, api, onClose, addLog }) {
         setError(null);
 
         try {
-            // Read file as ArrayBuffer
             const arrayBuffer = await selectedFile.arrayBuffer();
             const firmwareBin = new Uint8Array(arrayBuffer);
 
             addLog(`Starting firmware upload: ${firmwareBin.length} bytes`, 'info');
 
-            // Upload with progress callback
             await api.uploadFirmware(firmwareBin, (prog) => {
                 setProgress(prog);
                 addLog(`Firmware: ${prog.phase} ${prog.percent}%`, 'info');
@@ -942,16 +984,14 @@ function FirmwareWindow({ device, deviceInfo, api, onClose, addLog }) {
         }
     };
 
+    const deviceName = deviceInfo?.name || device;
+
     return (
         <div className="ap-firmware-window">
             <div className="ap-firmware-device">
-                <span className="ap-firmware-device-name">
-                    {device === 'bartleby' ? 'BARTLEBY' : 'CANDIDE'}
-                </span>
+                <span className="ap-firmware-device-name">{deviceName.toUpperCase()}</span>
                 {deviceInfo && (
-                    <span className="ap-firmware-version">
-                        v{deviceInfo.version}
-                    </span>
+                    <span className="ap-firmware-version">v{deviceInfo.version}</span>
                 )}
             </div>
 
@@ -1074,7 +1114,6 @@ function LanguageWindow({ device, api, deviceInfo, onClose, addLog }) {
     const [selectedLang, setSelectedLang] = useState('en');
     const [applying, setApplying] = useState(false);
 
-    // Get current language from device info (if available)
     const currentLang = deviceInfo?.language || 'en';
 
     useEffect(() => {
@@ -1088,11 +1127,7 @@ function LanguageWindow({ device, api, deviceInfo, onClose, addLog }) {
         addLog(`Setting language to ${selectedLang}...`, 'info');
 
         try {
-            // Note: Language API not yet implemented
-            // When available: await api.setLanguage(selectedLang);
             addLog('Language API not yet implemented', 'warning');
-
-            // For now, just close
             setTimeout(() => {
                 setApplying(false);
                 onClose();
@@ -1103,12 +1138,12 @@ function LanguageWindow({ device, api, deviceInfo, onClose, addLog }) {
         }
     };
 
+    const deviceName = deviceInfo?.name || device;
+
     return (
         <div className="ap-language-window">
             <div className="ap-language-device">
-                <span className="ap-language-device-name">
-                    {device === 'bartleby' ? 'BARTLEBY' : 'CANDIDE'}
-                </span>
+                <span className="ap-language-device-name">{deviceName.toUpperCase()}</span>
             </div>
 
             <div className="ap-language-list">
@@ -1155,23 +1190,23 @@ function LanguageWindow({ device, api, deviceInfo, onClose, addLog }) {
 
 // Melody sequence for expression pad
 const MELODY = [
-    60, 64, 67, 72,  // C major arpeggio up
-    71, 67, 64, 60,  // Down with leading tone
-    62, 65, 69, 74,  // D minor arpeggio up
-    72, 69, 65, 62,  // Down
+    60, 64, 67, 72,
+    71, 67, 64, 60,
+    62, 65, 69, 74,
+    72, 69, 65, 62,
 ];
 
 // Color palette for polyphonic note display
 const NOTE_COLORS = [
-    '#ffb000',  // amber
-    '#00ff88',  // green
-    '#ff4488',  // pink
-    '#44aaff',  // blue
-    '#ff8844',  // orange
-    '#aa44ff',  // purple
+    '#ffb000',
+    '#00ff88',
+    '#ff4488',
+    '#44aaff',
+    '#ff8844',
+    '#aa44ff',
 ];
 
-function ExpressionPadWindow({ candideApi, isConnected, deviceRegistry, addLog }) {
+function ExpressionPadWindow({ candideApi, isConnected, deviceRegistry, addLog, virtualController, virtualControllerPatch }) {
     const canvasRef = useRef(null);
     const [velocity, setVelocity] = useState(0.8);
     const [activeNotes, setActiveNotes] = useState(new Map());
@@ -1180,21 +1215,22 @@ function ExpressionPadWindow({ candideApi, isConnected, deviceRegistry, addLog }
     const melodyIndexRef = useRef(0);
     const playingRef = useRef(false);
 
-    // MPE mode
     const [mpeEnabled, setMpeEnabled] = useState(true);
     const mpeAllocatorRef = useRef(new MpeChannelAllocator());
     const currentChannelRef = useRef(0);
     const mouseNoteRef = useRef(null);
     const mpeSentRef = useRef(false);
 
-    // Throttling
     const lastSendTimeRef = useRef(0);
     const lastBendRef = useRef(0);
     const lastPressureRef = useRef(0.5);
     const THROTTLE_INTERVAL_MS = 50;
     const CHANGE_THRESHOLD = 0.02;
 
-    // Canvas dimensions
+    // Slider state (from virtual controller patch)
+    const [sliderValue, setSliderValue] = useState(0);
+    const sliderState = virtualController?.getSliderState() || { label: 'Slider', cc: null, enabled: false };
+
     const PAD_SIZE = 200;
     const CENTER = PAD_SIZE / 2;
     const NEUTRAL_RADIUS = 30;
@@ -1242,7 +1278,6 @@ function ExpressionPadWindow({ candideApi, isConnected, deviceRegistry, addLog }
         ctx.fillStyle = '#1a1a2e';
         ctx.fillRect(0, 0, PAD_SIZE, PAD_SIZE);
 
-        // Crosshairs
         ctx.strokeStyle = '#333';
         ctx.lineWidth = 1;
         ctx.beginPath();
@@ -1252,14 +1287,12 @@ function ExpressionPadWindow({ candideApi, isConnected, deviceRegistry, addLog }
         ctx.lineTo(PAD_SIZE, CENTER);
         ctx.stroke();
 
-        // Neutral circle
         ctx.strokeStyle = '#444';
         ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.arc(CENTER, CENTER, NEUTRAL_RADIUS, 0, Math.PI * 2);
         ctx.stroke();
 
-        // Draw active notes
         notes.forEach(({ note, bend, pressure, colorIndex }) => {
             const { x, y } = valuesToPosition(bend, pressure);
             const color = NOTE_COLORS[colorIndex % NOTE_COLORS.length];
@@ -1276,21 +1309,18 @@ function ExpressionPadWindow({ candideApi, isConnected, deviceRegistry, addLog }
         });
     }, [PAD_SIZE, CENTER, NEUTRAL_RADIUS, valuesToPosition, getNoteName]);
 
-    // Initialize canvas
     useEffect(() => {
         drawPad();
     }, [drawPad]);
 
-    // Redraw when notes change
     useEffect(() => {
         drawPad(Array.from(activeNotes.values()));
     }, [activeNotes, drawPad]);
 
-    // Send MPE config when connected
     useEffect(() => {
-        if (isConnected && candideApi?.midiOutput && mpeEnabled && !mpeSentRef.current) {
+        if (isConnected && candideApi?.isConnected() && mpeEnabled && !mpeSentRef.current) {
             const msg = new Uint8Array([0xB0, 0x7F, 15]);
-            candideApi.midiOutput.send(msg);
+            candideApi.sendRaw(msg);
             addLog('TX: MPE Config [B0 7F 0F] - 15 member channels');
             mpeSentRef.current = true;
         }
@@ -1299,7 +1329,6 @@ function ExpressionPadWindow({ candideApi, isConnected, deviceRegistry, addLog }
         }
     }, [isConnected, candideApi, mpeEnabled, addLog]);
 
-    // Subscribe to incoming MIDI from Bartleby
     useEffect(() => {
         if (!deviceRegistry) return;
 
@@ -1444,7 +1473,6 @@ function ExpressionPadWindow({ candideApi, isConnected, deviceRegistry, addLog }
         mouseNoteRef.current = null;
     }, [candideApi, mpeEnabled, addLog]);
 
-    // Global mouseup listener
     useEffect(() => {
         const handleGlobalMouseUp = () => {
             if (playingRef.current) {
@@ -1482,10 +1510,10 @@ function ExpressionPadWindow({ candideApi, isConnected, deviceRegistry, addLog }
                             const enabled = e.target.checked;
                             setMpeEnabled(enabled);
                             mpeAllocatorRef.current.reset();
-                            if (candideApi?.midiOutput) {
+                            if (candideApi?.isConnected()) {
                                 const value = enabled ? 15 : 0;
                                 const msg = new Uint8Array([0xB0, 0x7F, value]);
-                                candideApi.midiOutput.send(msg);
+                                candideApi.sendRaw(msg);
                                 addLog(`TX: MPE Config - ${enabled ? 'enabled' : 'disabled'}`);
                             }
                         }}
@@ -1521,6 +1549,32 @@ function ExpressionPadWindow({ candideApi, isConnected, deviceRegistry, addLog }
                     <span className="ap-note-waiting">{isConnected ? 'Click pad' : 'Not connected'}</span>
                 )}
             </div>
+
+            {/* Virtual Controller Slider */}
+            <div className="ap-pad-slider">
+                <div className="ap-slider-header">
+                    <span className="ap-slider-label">{sliderState.label}</span>
+                    {sliderState.cc !== null && (
+                        <span className="ap-slider-cc">CC{sliderState.cc}</span>
+                    )}
+                </div>
+                <input
+                    type="range"
+                    className="ap-slider"
+                    min="0"
+                    max="127"
+                    value={sliderValue}
+                    onChange={(e) => {
+                        const val = parseInt(e.target.value);
+                        setSliderValue(val);
+                        if (virtualController && sliderState.enabled) {
+                            virtualController.setSliderValue(val);
+                        }
+                    }}
+                    disabled={!sliderState.enabled}
+                />
+                <span className="ap-slider-value">{sliderValue}</span>
+            </div>
         </div>
     );
 }
@@ -1532,14 +1586,12 @@ function ExpressionPadWindow({ candideApi, isConnected, deviceRegistry, addLog }
 function LogWindow({ logs, onClear }) {
     const scrollRef = useRef(null);
 
-    // Auto-scroll to bottom when new logs arrive
     useEffect(() => {
         if (scrollRef.current) {
             scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
         }
     }, [logs]);
 
-    // Format logs as plain text with timestamps
     const logText = logs.map(log => {
         const typeTag = log.type === 'info' ? '' : `[${log.type.toUpperCase()}] `;
         return `[${log.timestamp}] ${typeTag}${log.message}`;
@@ -1556,6 +1608,207 @@ function LogWindow({ logs, onClear }) {
             <pre className="ap-log-text" ref={scrollRef}>
                 {logs.length === 0 ? 'No log entries' : logText}
             </pre>
+        </div>
+    );
+}
+
+//======================================================================
+// PATCH TESTER WINDOW
+//======================================================================
+
+function PatchTesterWindow({ devices, deviceApis, virtualSynth, virtualController, addLog }) {
+    const [selectedSynth, setSelectedSynth] = useState('');
+    const [selectedController, setSelectedController] = useState('');
+    const [controllerHID, setControllerHID] = useState(null);
+    const [exchangeState, setExchangeState] = useState('idle'); // idle, hid-fetched, patch-sent
+
+    // Build synth options (physical synths + virtual)
+    const synthOptions = useMemo(() => {
+        const options = [{ id: '', name: '-- Select Synth --' }];
+        for (const [portName, device] of Object.entries(devices)) {
+            if (device.status === 'connected' && device.capabilities?.includes('SYNTH')) {
+                options.push({ id: portName, name: device.deviceInfo?.name || portName });
+            }
+        }
+        options.push({ id: 'virtual', name: 'Virtual Synth' });
+        return options;
+    }, [devices]);
+
+    // Build controller options (physical controllers + virtual)
+    const controllerOptions = useMemo(() => {
+        const options = [{ id: '', name: '-- Select Controller --' }];
+        for (const [portName, device] of Object.entries(devices)) {
+            if (device.status === 'connected' && device.capabilities?.includes('CONTROLLER')) {
+                options.push({ id: portName, name: device.deviceInfo?.name || portName });
+            }
+        }
+        options.push({ id: 'virtual', name: 'Pad+ (Virtual)' });
+        return options;
+    }, [devices]);
+
+    // Get controller API for the selected controller
+    const getControllerAPI = useCallback(() => {
+        if (selectedController === 'virtual') {
+            // Create mock API that delegates to virtualController
+            return {
+                getControlSurface: async () => virtualController.getControlSurface(),
+                setPatch: async (name, controls) => virtualController.handleSetPatch({ name, controls })
+            };
+        } else if (selectedController && deviceApis[selectedController]) {
+            return deviceApis[selectedController];
+        }
+        return null;
+    }, [selectedController, deviceApis, virtualController]);
+
+    // Handle Control Surface button
+    const handleGetControlSurface = async () => {
+        if (!selectedController) {
+            addLog('Error: No controller selected', 'error');
+            return;
+        }
+
+        const api = getControllerAPI();
+        if (!api) {
+            addLog('Error: Controller API not available', 'error');
+            return;
+        }
+
+        addLog(`Requesting control-surface from ${selectedController}...`, 'info');
+
+        try {
+            const response = await api.getControlSurface();
+            if (response.error) {
+                addLog(`Error: ${response.error}`, 'error');
+                return;
+            }
+
+            setControllerHID(response);
+            setExchangeState('hid-fetched');
+            addLog(`Control surface received: ${response.device}`, 'success');
+            addLog(`  Controls: ${JSON.stringify(response.controls)}`, 'info');
+            addLog(`  Labeled: ${response.labeled}`, 'info');
+        } catch (err) {
+            addLog(`Error: ${err.message}`, 'error');
+        }
+    };
+
+    // Handle Set Patch button
+    const handleSetPatch = async () => {
+        if (!selectedController) {
+            addLog('Error: No controller selected', 'error');
+            return;
+        }
+
+        if (!controllerHID) {
+            addLog('Error: Must fetch control-surface first!', 'error');
+            return;
+        }
+
+        const api = getControllerAPI();
+        if (!api) {
+            addLog('Error: Controller API not available', 'error');
+            return;
+        }
+
+        // Get patch data from synth
+        let patchData;
+        if (selectedSynth === 'virtual') {
+            patchData = virtualSynth.currentPatch;
+        } else {
+            // For now, use a test patch for physical synths
+            patchData = {
+                name: 'Test Patch',
+                controls: [
+                    { input: 'FILTER_FREQUENCY', label: 'Filter', cc: 74 },
+                    { input: 'OSC1_LEVEL', label: 'Osc 1', cc: 70 }
+                ]
+            };
+        }
+
+        addLog(`Sending set-patch: "${patchData.name}"...`, 'info');
+        addLog(`  Controls: ${patchData.controls.length}`, 'info');
+
+        try {
+            const response = await api.setPatch(patchData.name, patchData.controls);
+            if (response.error) {
+                addLog(`Error: ${response.error}`, 'error');
+                return;
+            }
+
+            setExchangeState('patch-sent');
+            addLog(`Patch sent successfully`, 'success');
+        } catch (err) {
+            addLog(`Error: ${err.message}`, 'error');
+        }
+    };
+
+    // Reset state when selections change
+    useEffect(() => {
+        setControllerHID(null);
+        setExchangeState('idle');
+    }, [selectedSynth, selectedController]);
+
+    return (
+        <div className="ap-patch-tester">
+            <div className="ap-patch-tester-row">
+                <label>Synth</label>
+                <select
+                    value={selectedSynth}
+                    onChange={(e) => setSelectedSynth(e.target.value)}
+                >
+                    {synthOptions.map(opt => (
+                        <option key={opt.id || 'none'} value={opt.id}>{opt.name}</option>
+                    ))}
+                </select>
+            </div>
+
+            <div className="ap-patch-tester-row">
+                <label>Controller</label>
+                <select
+                    value={selectedController}
+                    onChange={(e) => setSelectedController(e.target.value)}
+                >
+                    {controllerOptions.map(opt => (
+                        <option key={opt.id || 'none'} value={opt.id}>{opt.name}</option>
+                    ))}
+                </select>
+            </div>
+
+            <div className="ap-patch-tester-divider" />
+
+            <div className="ap-patch-tester-buttons">
+                <button
+                    className="ap-btn"
+                    onClick={handleGetControlSurface}
+                    disabled={!selectedController}
+                >
+                    1. CONTROL SURFACE
+                </button>
+                <button
+                    className="ap-btn"
+                    onClick={handleSetPatch}
+                    disabled={!selectedController}
+                >
+                    2. SET PATCH
+                </button>
+            </div>
+
+            <div className="ap-patch-tester-status">
+                <div className="ap-status-row">
+                    <span>HID:</span>
+                    <span className={controllerHID ? 'ap-text-success' : 'ap-text-muted'}>
+                        {controllerHID ? controllerHID.device : 'Not fetched'}
+                    </span>
+                </div>
+                <div className="ap-status-row">
+                    <span>State:</span>
+                    <span className={exchangeState !== 'idle' ? 'ap-text-success' : 'ap-text-muted'}>
+                        {exchangeState === 'idle' && 'Ready'}
+                        {exchangeState === 'hid-fetched' && 'HID fetched'}
+                        {exchangeState === 'patch-sent' && 'Patch sent'}
+                    </span>
+                </div>
+            </div>
         </div>
     );
 }
