@@ -7,7 +7,10 @@
 // CONFIGURATION
 //======================================================================
 
-// Device detection search terms - update when device name changes
+// Device detection - prefer MPE port for sysex communication
+const PREFERRED_PORT_NAME = 'Candide MPE';
+
+// Fallback search terms - update when device name changes
 // Order matters: first match wins (most specific first)
 const DEVICE_SEARCH_TERMS = ['candide', 'daisy', 'seed'];
 
@@ -64,14 +67,26 @@ function detectCandideDevice(midiAccess) {
             manufacturer: o.manufacturer,
             state: o.state
         })),
+        preferredPortName: PREFERRED_PORT_NAME,
         searchTerms: DEVICE_SEARCH_TERMS,
         matchedTerm: null
     };
 
-    // Strategy 1: Look for "Candide" in port name (most reliable)
+    // Strategy 1: Look for preferred port name (exact match)
+    const preferredInput = inputs.find(i => i.name === PREFERRED_PORT_NAME);
+    if (preferredInput) {
+        const preferredOutput = outputs.find(o => o.name === PREFERRED_PORT_NAME);
+        if (preferredOutput) {
+            diagnostics.matchedTerm = PREFERRED_PORT_NAME;
+            diagnostics.matchedInput = preferredInput.name;
+            diagnostics.matchedOutput = preferredOutput.name;
+            return { input: preferredInput, output: preferredOutput, diagnostics };
+        }
+    }
+
+    // Strategy 2: Look for "Candide" in port name (fallback)
     for (const input of inputs) {
         if (input.name && input.name.toLowerCase().includes('candide')) {
-            // Find matching output port
             const output = outputs.find(o => o.name === input.name);
             if (output) {
                 diagnostics.matchedTerm = 'candide';
@@ -82,7 +97,7 @@ function detectCandideDevice(midiAccess) {
         }
     }
 
-    // Strategy 2: Look for "Daisy" as fallback (less specific)
+    // Strategy 3: Look for "Daisy" as fallback (less specific)
     for (const input of inputs) {
         if (input.name && input.name.toLowerCase().includes('daisy')) {
             const output = outputs.find(o => o.name === input.name);
@@ -95,7 +110,7 @@ function detectCandideDevice(midiAccess) {
         }
     }
 
-    // Strategy 3: Look for "Seed" as fallback
+    // Strategy 4: Look for "Seed" as fallback
     for (const input of inputs) {
         if (input.name && input.name.toLowerCase().includes('seed')) {
             const output = outputs.find(o => o.name === input.name);

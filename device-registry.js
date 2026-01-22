@@ -32,6 +32,11 @@ class DeviceRegistry {
         // Logging
         this._logFn = null;
         this._midiLoggingEnabled = false;
+
+        // Exchange relay state
+        this._exchangeRelayActive = false;
+        this._exchangeSynthPort = null;
+        this._exchangeControllerPort = null;
     }
 
     //==================================================================
@@ -170,6 +175,41 @@ class DeviceRegistry {
     }
 
     //==================================================================
+    // PUBLIC: Exchange Relay
+    //==================================================================
+
+    /**
+     * Enable exchange relay between synth and controller
+     * When active, exchange SysEx is routed between devices
+     * @param {string} synthPort
+     * @param {string} controllerPort
+     */
+    enableExchangeRelay(synthPort, controllerPort) {
+        this._exchangeRelayActive = true;
+        this._exchangeSynthPort = synthPort;
+        this._exchangeControllerPort = controllerPort;
+        this._log(`Exchange relay enabled: ${synthPort} ⇄ ${controllerPort}`);
+    }
+
+    /**
+     * Disable exchange relay
+     */
+    disableExchangeRelay() {
+        this._exchangeRelayActive = false;
+        this._exchangeSynthPort = null;
+        this._exchangeControllerPort = null;
+        this._log('Exchange relay disabled');
+    }
+
+    /**
+     * Check if exchange relay is active
+     * @returns {boolean}
+     */
+    isExchangeRelayActive() {
+        return this._exchangeRelayActive;
+    }
+
+    //==================================================================
     // PUBLIC: Queries
     //==================================================================
 
@@ -256,6 +296,12 @@ class DeviceRegistry {
                     this._synthPortName = null;
                 }
 
+                // Disable exchange relay if this port was involved
+                if (this._exchangeRelayActive &&
+                    (portName === this._exchangeSynthPort || portName === this._exchangeControllerPort)) {
+                    this.disableExchangeRelay();
+                }
+
                 // Unregister API
                 this.unregisterApi(portName);
 
@@ -277,17 +323,32 @@ class DeviceRegistry {
 
     /**
      * Handle incoming MIDI message
-     * Routes SysEx to registered API, forwards non-SysEx for controller->synth
+     * Routes SysEx to registered API (and relays during exchange)
+     * Forwards non-SysEx for controller->synth
      * @private
      */
     _handleMessage(portName, event) {
         const data = event.data;
 
-        // SysEx: route to registered API
+        // SysEx handling
         if (data[0] === 0xF0) {
+            // Always route to device's own API for local handling/logging
             const api = this._apis[portName];
             if (api?.handleMidiMessage) {
                 api.handleMidiMessage(event);
+            }
+
+            // Exchange relay: forward SysEx between synth and controller
+            if (this._exchangeRelayActive) {
+                if (portName === this._exchangeSynthPort && this._exchangeControllerPort) {
+                    // Synth → Controller
+                    this._log(`RELAY: Synth → Controller (${data.length} bytes)`, 'midi');
+                    this.send(this._exchangeControllerPort, data);
+                } else if (portName === this._exchangeControllerPort && this._exchangeSynthPort) {
+                    // Controller → Synth
+                    this._log(`RELAY: Controller → Synth (${data.length} bytes)`, 'midi');
+                    this.send(this._exchangeSynthPort, data);
+                }
             }
             return;
         }

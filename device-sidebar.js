@@ -102,9 +102,9 @@ function DeviceSidebar({ devices, onDeviceAction, onToolClick }) {
                     onClick={handleToolClick}
                 />
                 <SidebarTool
-                    id="patch"
-                    label="PATCH"
-                    icon="P"
+                    id="sync"
+                    label="SYNC"
+                    icon="⇄"
                     onClick={handleToolClick}
                 />
                 <SidebarTool

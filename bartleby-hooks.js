@@ -1,5 +1,7 @@
 /**
- * Bartleby React Hooks - State Management Layer
+ * Config Device React Hooks - State Management Layer
+ *
+ * Works with any device that has CONFIG capability via UnifiedDeviceAPI.
  *
  * PURE LOGIC - No display/UI code
  *
@@ -17,9 +19,9 @@ const { useState, useCallback, useEffect, useRef } = React;
 //======================================================================
 
 /**
- * Manage Bartleby EDITOR session state
+ * Manage EDITOR session state for CONFIG capability devices
  *
- * @param {BartlebyAPI} api - API instance (must be connected)
+ * @param {UnifiedDeviceAPI} api - API instance (must be connected, must have CONFIG capability)
  * @param {Object} callbacks
  *   addLog: (message, type) => void - Log callback
  *
@@ -166,9 +168,9 @@ function useBartlebySession(api, { addLog }) {
 //======================================================================
 
 /**
- * Fetch and store Bartleby device info
+ * Fetch and store device info
  *
- * @param {BartlebyAPI} api - API instance
+ * @param {UnifiedDeviceAPI} api - API instance
  * @param {Object} callbacks
  *   addLog: (message, type) => void
  *

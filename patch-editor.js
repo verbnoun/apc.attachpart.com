@@ -17,7 +17,8 @@ const { useState, useEffect, useCallback, useRef, useMemo } = React;
 // MODULE DEFINITIONS
 //======================================================================
 
-const MODULE_DEFINITIONS = {
+// Default module definitions - used as fallback when topology not yet loaded
+const DEFAULT_MODULE_DEFINITIONS = {
     // Audio modules - auto-wire in signal chain
     audio: [
         { id: 'OSC0', name: 'OSC 0', type: 'audio', category: 'oscillator', alwaysEnabled: true },
@@ -33,13 +34,45 @@ const MODULE_DEFINITIONS = {
         { id: 'GLFO', name: 'GLOBAL LFO', type: 'mod', category: 'lfo' },
         { id: 'VLFO', name: 'VOICE LFO', type: 'mod', category: 'lfo' }
     ],
-    // Control sources - live MIDI
+    // Control source - KEYMOD combines VELOCITY, PRESSURE, BEND
     control: [
-        { id: 'VELOCITY', name: 'VELOCITY', type: 'control', alwaysEnabled: true },
-        { id: 'PRESSURE', name: 'PRESSURE', type: 'control', alwaysEnabled: true },
-        { id: 'BEND', name: 'BEND', type: 'control', alwaysEnabled: true }
+        { id: 'KEYMOD', name: 'KEY MOD', type: 'control', outputs: ['VELOCITY', 'PRESSURE', 'BEND'], alwaysEnabled: true }
     ]
 };
+
+/**
+ * Build module definitions from topology
+ * Topology from device overrides defaults
+ */
+function buildModuleDefinitions(topology) {
+    if (!topology?.modules) {
+        return DEFAULT_MODULE_DEFINITIONS;
+    }
+
+    const audio = (topology.modules.audio || []).map(m => ({
+        id: m.id,
+        name: m.name,
+        type: 'audio',
+        alwaysEnabled: m.alwaysEnabled || false
+    }));
+
+    const mod = (topology.modules.mod || []).map(m => ({
+        id: m.id,
+        name: m.name,
+        type: 'mod',
+        alwaysEnabled: m.alwaysEnabled || false
+    }));
+
+    const control = (topology.modules.control || []).map(m => ({
+        id: m.id,
+        name: m.name,
+        type: 'control',
+        outputs: m.outputs || [],
+        alwaysEnabled: m.alwaysEnabled || false
+    }));
+
+    return { audio, mod, control };
+}
 
 // Signal chain order for audio modules
 const AUDIO_CHAIN_ORDER = ['OSC0', 'OSC1', 'OSC2', 'FILTER', 'VAMP'];
@@ -64,31 +97,50 @@ const WIRE_COLORS = {
 
 /**
  * Check if a modulation source can target a specific parameter
- * Uses the source's `targets` array from the patch data
+ * Uses topology.mod_targets (static data from device)
  */
-function canSourceModulateParam(patch, sourceId, paramKey) {
-    const sourceData = patch?.[sourceId];
-    const targets = sourceData?.targets || [];
+function canSourceModulateParam(topology, sourceId, paramKey) {
+    const targets = topology?.mod_targets?.[sourceId] || [];
     return targets.includes(paramKey);
 }
 
 /**
  * Find a module definition by ID
+ * For KEYMOD outputs (VELOCITY, PRESSURE, BEND), returns a synthetic module def
  */
-function findModuleDef(moduleId) {
+function findModuleDef(moduleId, moduleDefinitions) {
+    const defs = moduleDefinitions || DEFAULT_MODULE_DEFINITIONS;
     const allModules = [
-        ...MODULE_DEFINITIONS.audio,
-        ...MODULE_DEFINITIONS.mod,
-        ...MODULE_DEFINITIONS.control
+        ...defs.audio,
+        ...defs.mod,
+        ...defs.control
     ];
-    return allModules.find(m => m.id === moduleId);
+
+    // First check if it's a direct module match
+    const directMatch = allModules.find(m => m.id === moduleId);
+    if (directMatch) return directMatch;
+
+    // Check if it's a KEYMOD output (VELOCITY, PRESSURE, BEND)
+    const keymod = defs.control.find(m => m.id === 'KEYMOD');
+    if (keymod?.outputs?.includes(moduleId)) {
+        // Return synthetic module def for KEYMOD output
+        return {
+            id: moduleId,
+            name: moduleId,
+            type: 'control',
+            isKeymodOutput: true,
+            parentModule: 'KEYMOD'
+        };
+    }
+
+    return null;
 }
 
 /**
  * Calculate the impact of deleting a module
  * Returns routes that will be removed and modules that will be orphaned
  */
-function calculateDeletionImpact(patch, moduleId, modConnections) {
+function calculateDeletionImpact(patch, moduleId, modConnections, moduleDefinitions) {
     const impact = {
         routesRemoved: [],      // Direct routes from/to this module
         orphanedModules: [],    // Modules that will have no connections after
@@ -131,7 +183,7 @@ function calculateDeletionImpact(patch, moduleId, modConnections) {
         );
 
         if (remainingRoutes.length === 0) {
-            const moduleDef = findModuleDef(sourceId);
+            const moduleDef = findModuleDef(sourceId, moduleDefinitions);
             // Only orphan non-alwaysEnabled modules
             if (moduleDef && !moduleDef.alwaysEnabled) {
                 impact.orphanedModules.push(sourceId);
@@ -154,10 +206,42 @@ function createPatchLogger(addLog) {
 }
 
 //======================================================================
+// LOADING OVERLAY
+//======================================================================
+
+/**
+ * Loading overlay with animated dots
+ * Shows during patch loading, fades out when complete
+ */
+function LoadingOverlay({ isLoading, isVisible }) {
+    const [dots, setDots] = useState('');
+
+    useEffect(() => {
+        if (!isLoading) return;
+        const interval = setInterval(() => {
+            setDots(d => d.length >= 3 ? '' : d + '.');
+        }, 400);
+        return () => clearInterval(interval);
+    }, [isLoading]);
+
+    // Use isVisible for fade animation (allows fade-out when isLoading becomes false)
+    const overlayClass = `ap-loading-overlay ${isVisible ? 'visible' : ''}`;
+
+    return (
+        <div className={overlayClass}>
+            <div className="ap-loading-content">
+                <span className="ap-loading-text">LOADING{dots}</span>
+            </div>
+        </div>
+    );
+}
+
+//======================================================================
 // PATCH EDITOR WINDOW
 //======================================================================
 
 function PatchEditorWindow({
+    topology,
     patchList,
     currentIndex,
     currentPatch,
@@ -175,6 +259,9 @@ function PatchEditorWindow({
 }) {
     // Create logger that uses the addLog prop
     const log = useMemo(() => createPatchLogger(addLog), [addLog]);
+
+    // Build module definitions from topology (or use defaults)
+    const moduleDefinitions = useMemo(() => buildModuleDefinitions(topology), [topology]);
 
     // Node positions (stored locally, could be persisted later)
     const [nodePositions, setNodePositions] = useState({});
@@ -204,6 +291,35 @@ function PatchEditorWindow({
     // Wire dragging state
     const [wiringFrom, setWiringFrom] = useState(null); // { moduleId, type }
     const [wiringMousePos, setWiringMousePos] = useState(null);
+
+    // Loading state
+    const [isLoading, setIsLoading] = useState(!currentPatch);
+    const [loadingIndex, setLoadingIndex] = useState(currentIndex >= 0 ? currentIndex : null);
+
+    // Detect when loading completes (currentPatch changes from null to data)
+    const prevPatchRef = useRef(currentPatch);
+    useEffect(() => {
+        if (prevPatchRef.current !== currentPatch && currentPatch !== null) {
+            // Patch loaded - end loading state
+            setIsLoading(false);
+            setLoadingIndex(null);
+        }
+        prevPatchRef.current = currentPatch;
+    }, [currentPatch]);
+
+    // Handle patch selection with loading state
+    const handleSelectPatch = useCallback((index) => {
+        if (isLoading) return; // Ignore clicks while loading
+        if (index === currentIndex) return; // Already selected
+
+        setIsLoading(true);
+        setLoadingIndex(index);
+        setSelection({ type: null, moduleId: null, wireKey: null }); // Clear selection
+
+        if (onSelectPatch) {
+            onSelectPatch(index);
+        }
+    }, [isLoading, currentIndex, onSelectPatch]);
 
     // Get enabled modules from current patch
     // Unified rule: module is enabled if it has params OR has active modulation routes
@@ -340,8 +456,8 @@ function PatchEditorWindow({
     // Show delete confirmation dialog
     const showDeleteConfirmation = (type, id) => {
         if (type === 'module') {
-            const impact = calculateDeletionImpact(currentPatch, id, modConnections);
-            const moduleDef = findModuleDef(id);
+            const impact = calculateDeletionImpact(currentPatch, id, modConnections, moduleDefinitions);
+            const moduleDef = findModuleDef(id, moduleDefinitions);
             log('Delete Confirmation Shown', { type, id, impact });
             setConfirmDialog({
                 type: 'module',
@@ -519,49 +635,59 @@ function PatchEditorWindow({
             <PatchesList
                 patches={patchList}
                 currentIndex={currentIndex}
-                onSelect={onSelectPatch}
+                onSelect={handleSelectPatch}
                 onCreate={onCreatePatch}
                 onDelete={onDeletePatch}
                 onRename={onRenamePatch}
                 onMove={onMovePatch}
                 isConnected={isConnected}
+                isLoading={isLoading}
+                loadingIndex={loadingIndex}
             />
 
             {/* Module Drawer */}
             <ModuleDrawer
+                moduleDefinitions={moduleDefinitions}
                 enabledModules={enabledModules}
                 onAddModule={handleAddModule}
                 currentPatch={currentPatch}
             />
 
-            {/* Node Workspace */}
-            <NodeWorkspace
-                currentPatch={currentPatch}
-                enabledModules={enabledModules}
-                nodePositions={nodePositions}
-                onNodePositionChange={(id, pos) => setNodePositions(prev => ({ ...prev, [id]: pos }))}
-                onSelectModule={handleSelectModule}
-                onOpenContextMenu={handleOpenContextMenu}
-                onSelectWire={handleSelectWire}
-                onClearSelection={clearSelection}
-                selection={selection}
-                deletingModules={deletingModules}
-                pendingModule={pendingModule}
-                setPendingModule={setPendingModule}
-                onAddModule={handleAddModule}
-                onToggleModule={onToggleModule}
-                wiringFrom={wiringFrom}
-                onStartWiring={handleStartWiring}
-                onWireDrop={handleWireDrop}
-                onWiringMouseMove={setWiringMousePos}
-                wiringMousePos={wiringMousePos}
-                modConnections={modConnections}
-            />
+            {/* Node Workspace with Loading Overlay */}
+            <div className="ap-workspace-container">
+                <NodeWorkspace
+                    topology={topology}
+                    moduleDefinitions={moduleDefinitions}
+                    currentPatch={currentPatch}
+                    enabledModules={enabledModules}
+                    nodePositions={nodePositions}
+                    onNodePositionChange={(id, pos) => setNodePositions(prev => ({ ...prev, [id]: pos }))}
+                    onSelectModule={handleSelectModule}
+                    onOpenContextMenu={handleOpenContextMenu}
+                    onSelectWire={handleSelectWire}
+                    onClearSelection={clearSelection}
+                    selection={selection}
+                    deletingModules={deletingModules}
+                    pendingModule={pendingModule}
+                    setPendingModule={setPendingModule}
+                    onAddModule={handleAddModule}
+                    onToggleModule={onToggleModule}
+                    wiringFrom={wiringFrom}
+                    onStartWiring={handleStartWiring}
+                    onWireDrop={handleWireDrop}
+                    onWiringMouseMove={setWiringMousePos}
+                    wiringMousePos={wiringMousePos}
+                    modConnections={modConnections}
+                    log={log}
+                />
+                <LoadingOverlay isLoading={isLoading} isVisible={isLoading} />
+            </div>
 
             {/* Context Menu */}
             {contextMenuTarget && contextMenuPos && !wiringFrom && (
                 <NodeContextMenu
                     moduleId={contextMenuTarget}
+                    moduleDefinitions={moduleDefinitions}
                     patch={currentPatch}
                     position={contextMenuPos}
                     onClose={closeContextMenu}
@@ -589,10 +715,13 @@ function PatchEditorWindow({
 // PATCHES LIST
 //======================================================================
 
-function PatchesList({ patches, currentIndex, onSelect, onCreate, onDelete, onRename, onMove, isConnected }) {
+function PatchesList({ patches, currentIndex, onSelect, onCreate, onDelete, onRename, onMove, isConnected, isLoading, loadingIndex }) {
     const [dragIndex, setDragIndex] = useState(null);
     const [editingIndex, setEditingIndex] = useState(null);
     const [editingName, setEditingName] = useState('');
+
+    // Determine which index to highlight (loading takes precedence for immediate feedback)
+    const highlightIndex = loadingIndex !== null ? loadingIndex : currentIndex;
 
     const handleDragStart = (index) => {
         setDragIndex(index);
@@ -653,15 +782,18 @@ function PatchesList({ patches, currentIndex, onSelect, onCreate, onDelete, onRe
                     const patchIndex = typeof patch === 'object' ? patch.index : idx;
                     const patchName = typeof patch === 'object' ? patch.name : patch;
 
+                    const isHighlighted = patchIndex === highlightIndex;
+                    const isDragging = patchIndex === dragIndex;
+
                     return (
                         <div
                             key={patchIndex}
-                            className={`ap-patch-item ${patchIndex === currentIndex ? 'selected' : ''} ${patchIndex === dragIndex ? 'dragging' : ''}`}
-                            draggable
-                            onDragStart={() => handleDragStart(patchIndex)}
-                            onDragOver={(e) => handleDragOver(patchIndex, e)}
-                            onDrop={() => handleDrop(patchIndex)}
-                            onClick={() => onSelect && onSelect(patchIndex)}
+                            className={`ap-patch-item ${isHighlighted ? 'selected' : ''} ${isDragging ? 'dragging' : ''} ${isLoading ? 'loading-disabled' : ''}`}
+                            draggable={!isLoading}
+                            onDragStart={() => !isLoading && handleDragStart(patchIndex)}
+                            onDragOver={(e) => !isLoading && handleDragOver(patchIndex, e)}
+                            onDrop={() => !isLoading && handleDrop(patchIndex)}
+                            onClick={() => !isLoading && onSelect && onSelect(patchIndex)}
                         >
                             {editingIndex === patchIndex ? (
                                 <input
@@ -708,7 +840,7 @@ function PatchesList({ patches, currentIndex, onSelect, onCreate, onDelete, onRe
 // MODULE DRAWER
 //======================================================================
 
-function ModuleDrawer({ enabledModules, onAddModule, currentPatch }) {
+function ModuleDrawer({ moduleDefinitions, enabledModules, onAddModule, currentPatch }) {
     const [showJson, setShowJson] = useState(false);
 
     return (
@@ -719,19 +851,19 @@ function ModuleDrawer({ enabledModules, onAddModule, currentPatch }) {
             <div className="ap-drawer-scroll">
                 <DrawerSection
                     title="AUDIO"
-                    modules={MODULE_DEFINITIONS.audio}
+                    modules={moduleDefinitions.audio}
                     enabledModules={enabledModules}
                     onAddModule={onAddModule}
                 />
                 <DrawerSection
                     title="MOD"
-                    modules={MODULE_DEFINITIONS.mod}
+                    modules={moduleDefinitions.mod}
                     enabledModules={enabledModules}
                     onAddModule={onAddModule}
                 />
                 <DrawerSection
                     title="CONTROL"
-                    modules={MODULE_DEFINITIONS.control}
+                    modules={moduleDefinitions.control}
                     enabledModules={enabledModules}
                     onAddModule={onAddModule}
                 />
@@ -886,6 +1018,8 @@ function ConfirmDialog({ dialog, onConfirm, onCancel }) {
 //======================================================================
 
 function NodeWorkspace({
+    topology,
+    moduleDefinitions,
     currentPatch,
     enabledModules,
     nodePositions,
@@ -905,7 +1039,8 @@ function NodeWorkspace({
     onWireDrop,
     onWiringMouseMove,
     wiringMousePos,
-    modConnections
+    modConnections,
+    log = () => {}  // Default to no-op if not provided
 }) {
     const workspaceRef = useRef(null);
     const [draggingNode, setDraggingNode] = useState(null);
@@ -914,26 +1049,52 @@ function NodeWorkspace({
     const [isDragOver, setIsDragOver] = useState(false);
 
     // Port position registry - tracks actual DOM positions of all ports
+    // Use ref to collect positions without triggering re-renders
+    const portPositionsRef = useRef({});
     const [portPositions, setPortPositions] = useState({});
+    const positionUpdateTimeoutRef = useRef(null);
 
     // Callback for nodes to report their port positions
+    // Collects in ref, then batches a single state update
     const handlePortPositionChange = useCallback((portId, globalPos) => {
         const wsRect = workspaceRef.current?.getBoundingClientRect();
         if (!wsRect) return;
 
-        // Convert global coords to workspace-relative
-        setPortPositions(prev => ({
-            ...prev,
-            [portId]: {
-                x: globalPos.x - wsRect.left,
-                y: globalPos.y - wsRect.top
+        // Store in ref (no re-render)
+        const newPos = {
+            x: globalPos.x - wsRect.left,
+            y: globalPos.y - wsRect.top
+        };
+
+        // Only update if position actually changed
+        const oldPos = portPositionsRef.current[portId];
+        if (oldPos && Math.abs(oldPos.x - newPos.x) < 1 && Math.abs(oldPos.y - newPos.y) < 1) {
+            return; // Position unchanged, skip
+        }
+
+        portPositionsRef.current[portId] = newPos;
+
+        // Debounce the state update - wait for all nodes to report
+        if (positionUpdateTimeoutRef.current) {
+            clearTimeout(positionUpdateTimeoutRef.current);
+        }
+        positionUpdateTimeoutRef.current = setTimeout(() => {
+            setPortPositions({ ...portPositionsRef.current });
+        }, 50);
+    }, []);
+
+    // Cleanup timeout on unmount
+    useEffect(() => {
+        return () => {
+            if (positionUpdateTimeoutRef.current) {
+                clearTimeout(positionUpdateTimeoutRef.current);
             }
-        }));
+        };
     }, []);
 
     // Get default position for a module
     const getDefaultPosition = (moduleId, index) => {
-        const allModules = [...MODULE_DEFINITIONS.audio, ...MODULE_DEFINITIONS.mod, ...MODULE_DEFINITIONS.control];
+        const allModules = [...moduleDefinitions.audio, ...moduleDefinitions.mod, ...moduleDefinitions.control];
         const moduleDef = allModules.find(m => m.id === moduleId);
 
         if (moduleDef?.type === 'audio') {
@@ -950,23 +1111,24 @@ function NodeWorkspace({
     };
 
     // Get enabled modules grouped by type
+    // Modules show if: (1) enabled in patch, OR (2) alwaysEnabled in definition
     const enabledByType = useMemo(() => {
         const audio = [];
         const mod = [];
         const control = [];
 
-        MODULE_DEFINITIONS.audio.forEach(m => {
-            if (enabledModules.has(m.id)) audio.push(m);
+        moduleDefinitions.audio.forEach(m => {
+            if (enabledModules.has(m.id) || m.alwaysEnabled) audio.push(m);
         });
-        MODULE_DEFINITIONS.mod.forEach(m => {
-            if (enabledModules.has(m.id)) mod.push(m);
+        moduleDefinitions.mod.forEach(m => {
+            if (enabledModules.has(m.id) || m.alwaysEnabled) mod.push(m);
         });
-        MODULE_DEFINITIONS.control.forEach(m => {
-            if (enabledModules.has(m.id)) control.push(m);
+        moduleDefinitions.control.forEach(m => {
+            if (enabledModules.has(m.id) || m.alwaysEnabled) control.push(m);
         });
 
         return { audio, mod, control };
-    }, [enabledModules]);
+    }, [moduleDefinitions, enabledModules]);
 
     // Handle node drag
     const handleMouseDown = (moduleId, e) => {
@@ -1072,7 +1234,7 @@ function NodeWorkspace({
         }
 
         // For mod/control modules, enter wiring mode
-        const moduleDef = findModuleDef(moduleId);
+        const moduleDef = findModuleDef(moduleId, moduleDefinitions);
         if (moduleDef?.type === 'mod' || moduleDef?.type === 'control') {
             // Set pending module and start wiring
             setPendingModule({ moduleId, position: dropPosition });
@@ -1176,6 +1338,7 @@ function NodeWorkspace({
                     <Node
                         key={module.id}
                         module={module}
+                        topology={topology}
                         patch={currentPatch}
                         position={pos}
                         isSelected={isSelected}
@@ -1200,6 +1363,7 @@ function NodeWorkspace({
                     <Node
                         key={module.id}
                         module={module}
+                        topology={topology}
                         patch={currentPatch}
                         position={pos}
                         isSelected={isSelected}
@@ -1215,15 +1379,35 @@ function NodeWorkspace({
                 );
             })}
 
-            {/* Control nodes */}
+            {/* Control nodes - KEYMOD rendered as special component */}
             {enabledByType.control.map((module, index) => {
                 const pos = nodePositions[module.id] || getDefaultPosition(module.id, index);
                 const isSelected = selection?.type === 'module' && selection?.moduleId === module.id;
+
+                // KEYMOD has outputs (VELOCITY, PRESSURE, BEND) - render special node
+                if (module.id === 'KEYMOD' && module.outputs) {
+                    return (
+                        <KeyModNode
+                            key={module.id}
+                            module={module}
+                            position={pos}
+                            isSelected={isSelected}
+                            onMouseDown={(e) => handleMouseDown(module.id, e)}
+                            onSelectModule={() => onSelectModule(module.id)}
+                            onStartWiring={onStartWiring}
+                            onPortPositionChange={handlePortPositionChange}
+                            wiringFrom={wiringFrom}
+                        />
+                    );
+                }
+
+                // Regular control node
                 const isDeleting = deletingModules?.has(module.id);
                 return (
                     <Node
                         key={module.id}
                         module={module}
+                        topology={topology}
                         patch={currentPatch}
                         position={pos}
                         isSelected={isSelected}
@@ -1243,11 +1427,77 @@ function NodeWorkspace({
 }
 
 //======================================================================
+// KEYMOD NODE - Combined VELOCITY/PRESSURE/BEND with 3 outputs
+//======================================================================
+
+function KeyModNode({
+    module,
+    position,
+    isSelected,
+    onMouseDown,
+    onSelectModule,
+    onStartWiring,
+    onPortPositionChange,
+    wiringFrom
+}) {
+    const outputRefs = useRef({});
+    const outputs = module.outputs || ['VELOCITY', 'PRESSURE', 'BEND'];
+
+    // Report port positions for wire drawing
+    useEffect(() => {
+        outputs.forEach(output => {
+            const ref = outputRefs.current[output];
+            if (ref && onPortPositionChange) {
+                const rect = ref.getBoundingClientRect();
+                const pos = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+                onPortPositionChange(`${output}-out`, pos);
+            }
+        });
+    });
+
+    const nodeClass = `ap-node ap-node-control ap-node-keymod ${isSelected ? 'ap-node-selected' : ''}`;
+
+    return (
+        <div
+            className={nodeClass}
+            style={{ left: position.x, top: position.y }}
+            onMouseDown={onMouseDown}
+        >
+            <div className="ap-node-header" onClick={(e) => { e.stopPropagation(); onSelectModule(); }}>
+                <span className="ap-node-name">{module.name}</span>
+            </div>
+            <div className="ap-node-body ap-keymod-outputs">
+                {outputs.map(output => {
+                    const isWiringSource = wiringFrom?.moduleId === output;
+                    return (
+                        <div
+                            key={output}
+                            className={`ap-keymod-output ${isWiringSource ? 'wiring-source' : ''}`}
+                            onMouseDown={(e) => {
+                                e.stopPropagation();
+                                onStartWiring(output, 'control');
+                            }}
+                        >
+                            <span className="ap-keymod-output-label">{output}</span>
+                            <div
+                                className="ap-output-port"
+                                ref={el => outputRefs.current[output] = el}
+                            />
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
+}
+
+//======================================================================
 // NODE COMPONENT
 //======================================================================
 
 function Node({
     module,
+    topology,
     patch,
     position,
     isSelected,
@@ -1389,7 +1639,7 @@ function Node({
                 {digestParams.map(param => {
                     // Check if this param is a valid target for the current wiring source
                     const canReceiveWire = wiringFrom &&
-                        canSourceModulateParam(patch, wiringFrom.moduleId, param.key);
+                        canSourceModulateParam(topology, wiringFrom.moduleId, param.key);
 
                     // Check if this param is the target of a selected wire
                     const isWireTarget = selectedWireTarget &&
@@ -1576,6 +1826,7 @@ function Wire({ from, to, type, portPositions }) {
 
 function NodeContextMenu({
     moduleId,
+    moduleDefinitions,
     patch,
     position,
     onClose,
@@ -1599,7 +1850,7 @@ function NodeContextMenu({
     }, [onClose]);
 
     // Find module definition
-    const allModules = [...MODULE_DEFINITIONS.audio, ...MODULE_DEFINITIONS.mod, ...MODULE_DEFINITIONS.control];
+    const allModules = [...moduleDefinitions.audio, ...moduleDefinitions.mod, ...moduleDefinitions.control];
     const moduleDef = allModules.find(m => m.id === moduleId);
     const canRemove = moduleDef && !moduleDef.alwaysEnabled;
     const isModSource = moduleDef?.type === 'mod' || moduleDef?.type === 'control';

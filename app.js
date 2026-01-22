@@ -43,25 +43,6 @@ function App() {
     const [synthPortName, setSynthPortName] = useState(null);
     const [controllerPortName, setControllerPortName] = useState(null);
 
-    // Virtual devices for protocol testing
-    const virtualSynthRef = useRef(null);
-    const virtualControllerRef = useRef(null);
-    const [virtualControllerPatch, setVirtualControllerPatch] = useState(null);
-
-    // Initialize virtual devices
-    useEffect(() => {
-        // Virtual synth (acts as synth role)
-        virtualSynthRef.current = new VirtualSynth();
-        virtualSynthRef.current.setLogFn(addLog);
-
-        // Virtual controller (acts as controller role)
-        virtualControllerRef.current = new VirtualController((patch) => {
-            setVirtualControllerPatch(patch);
-            addLog(`Virtual Controller received patch: "${patch.name}"`, 'success');
-        });
-        virtualControllerRef.current.setLogFn(addLog);
-    }, []);
-
     // Logs
     const [logs, setLogs] = useState([]);
 
@@ -138,27 +119,6 @@ function App() {
             api.onExternalPatchChange((index) => {
                 addLog(`External patch change to ${index}`, 'info');
                 loadPatch(index);
-            });
-
-            // Handle incoming commands (controller role)
-            // When physical synth sends commands to APC, route to virtual controller
-            api.onIncomingCommand((cmdObj, fromPort) => {
-                if (!virtualControllerRef.current) {
-                    addLog(`Incoming ${cmdObj.cmd} but no virtual controller`, 'warning');
-                    return null;
-                }
-
-                if (cmdObj.cmd === 'get-control-surface') {
-                    addLog(`Incoming: get-control-surface from ${fromPort}`, 'info');
-                    return virtualControllerRef.current.getControlSurface();
-                }
-
-                if (cmdObj.cmd === 'set-patch') {
-                    addLog(`Incoming: set-patch "${cmdObj.name}" from ${fromPort}`, 'info');
-                    return virtualControllerRef.current.handleSetPatch(cmdObj);
-                }
-
-                return null;
             });
 
             // Discover capabilities
@@ -471,10 +431,66 @@ function App() {
 
         if (tool === 'expression') {
             openExpressionPad();
-        } else if (tool === 'patch') {
-            openPatchTester();
+        } else if (tool === 'sync') {
+            triggerExchange();
         } else if (tool === 'log') {
             openLogWindow();
+        }
+    };
+
+    /**
+     * Trigger exchange between synth and controller
+     * Sends 'controller-available' to synth, which initiates the exchange
+     */
+    const triggerExchange = async () => {
+        // Find synth and controller
+        const synth = Object.entries(devices).find(([_, d]) =>
+            d.status === 'connected' && d.capabilities?.includes('SYNTH')
+        );
+        const controller = Object.entries(devices).find(([_, d]) =>
+            d.status === 'connected' && d.capabilities?.includes('CONTROLLER')
+        );
+
+        if (!synth) {
+            addLog('No synth connected', 'warn');
+            return;
+        }
+        if (!controller) {
+            addLog('No controller connected', 'warn');
+            return;
+        }
+
+        const [synthPort, synthDevice] = synth;
+        const [controllerPort, controllerDevice] = controller;
+        const synthApi = deviceApisRef.current[synthPort];
+
+        if (!synthApi) {
+            addLog('Synth API not ready', 'error');
+            return;
+        }
+
+        addLog(`Triggering exchange: ${synthDevice.deviceInfo?.name || synthPort} → ${controllerDevice.deviceInfo?.name || controllerPort}`, 'info');
+
+        // Enable SysEx relay between synth and controller
+        const registry = deviceRegistryRef.current;
+        if (registry) {
+            registry.enableExchangeRelay(synthPort, controllerPort);
+        }
+
+        try {
+            // Send controller-available to synth
+            const controllerInfo = {
+                device: controllerDevice.deviceInfo?.name || 'Controller',
+                port: controllerPort
+            };
+            await synthApi.sendControllerAvailable(controllerInfo);
+            addLog('Exchange initiated', 'success');
+        } catch (err) {
+            addLog(`Exchange failed: ${err.message}`, 'error');
+            // Disable relay on failure
+            if (registry) {
+                registry.disableExchangeRelay();
+            }
         }
     };
 
@@ -544,7 +560,7 @@ function App() {
         }
     }, [logs]);
 
-    // Re-render Expression Pad when connection or virtual controller changes
+    // Re-render Expression Pad when synth connection changes
     useEffect(() => {
         const container = windowContainersRef.current['expression-pad'];
         if (container && WindowManager.exists('expression-pad')) {
@@ -556,13 +572,11 @@ function App() {
                     isConnected={synthDevice?.status === 'connected'}
                     deviceRegistry={deviceRegistryRef.current}
                     addLog={addLog}
-                    virtualController={virtualControllerRef.current}
-                    virtualControllerPatch={virtualControllerPatch}
                 />,
                 container
             );
         }
-    }, [synthPortName, devices, addLog, virtualControllerPatch]);
+    }, [synthPortName, devices, addLog]);
 
     //------------------------------------------------------------------
     // WINDOW OPENERS
@@ -776,8 +790,6 @@ function App() {
                 isConnected={synthDevice?.status === 'connected'}
                 deviceRegistry={deviceRegistryRef.current}
                 addLog={addLog}
-                virtualController={virtualControllerRef.current}
-                virtualControllerPatch={virtualControllerPatch}
             />,
             container
         );
@@ -808,41 +820,6 @@ function App() {
 
         ReactDOM.render(
             <LogWindow logs={logs} onClear={() => setLogs([])} />,
-            container
-        );
-    };
-
-    const openPatchTester = () => {
-        if (WindowManager.exists('patch-tester')) {
-            WindowManager.focus('patch-tester');
-            return;
-        }
-
-        const container = document.createElement('div');
-        container.style.height = '100%';
-        windowContainersRef.current['patch-tester'] = container;
-
-        WindowManager.create({
-            id: 'patch-tester',
-            title: 'Patch Tester',
-            x: 200,
-            y: 100,
-            width: 380,
-            height: 320,
-            content: container,
-            onClose: () => {
-                delete windowContainersRef.current['patch-tester'];
-            }
-        });
-
-        ReactDOM.render(
-            <PatchTesterWindow
-                devices={devices}
-                deviceApis={deviceApisRef.current}
-                virtualSynth={virtualSynthRef.current}
-                virtualController={virtualControllerRef.current}
-                addLog={addLog}
-            />,
             container
         );
     };
@@ -1206,7 +1183,7 @@ const NOTE_COLORS = [
     '#aa44ff',
 ];
 
-function ExpressionPadWindow({ candideApi, isConnected, deviceRegistry, addLog, virtualController, virtualControllerPatch }) {
+function ExpressionPadWindow({ candideApi, isConnected, deviceRegistry, addLog }) {
     const canvasRef = useRef(null);
     const [velocity, setVelocity] = useState(0.8);
     const [activeNotes, setActiveNotes] = useState(new Map());
@@ -1227,9 +1204,9 @@ function ExpressionPadWindow({ candideApi, isConnected, deviceRegistry, addLog, 
     const THROTTLE_INTERVAL_MS = 50;
     const CHANGE_THRESHOLD = 0.02;
 
-    // Slider state (from virtual controller patch)
+    // Slider state (disabled - was used with virtual controller)
     const [sliderValue, setSliderValue] = useState(0);
-    const sliderState = virtualController?.getSliderState() || { label: 'Slider', cc: null, enabled: false };
+    const sliderState = { label: 'Slider', cc: null, enabled: false };
 
     const PAD_SIZE = 200;
     const CENTER = PAD_SIZE / 2;
@@ -1567,9 +1544,6 @@ function ExpressionPadWindow({ candideApi, isConnected, deviceRegistry, addLog, 
                     onChange={(e) => {
                         const val = parseInt(e.target.value);
                         setSliderValue(val);
-                        if (virtualController && sliderState.enabled) {
-                            virtualController.setSliderValue(val);
-                        }
                     }}
                     disabled={!sliderState.enabled}
                 />
@@ -1608,207 +1582,6 @@ function LogWindow({ logs, onClear }) {
             <pre className="ap-log-text" ref={scrollRef}>
                 {logs.length === 0 ? 'No log entries' : logText}
             </pre>
-        </div>
-    );
-}
-
-//======================================================================
-// PATCH TESTER WINDOW
-//======================================================================
-
-function PatchTesterWindow({ devices, deviceApis, virtualSynth, virtualController, addLog }) {
-    const [selectedSynth, setSelectedSynth] = useState('');
-    const [selectedController, setSelectedController] = useState('');
-    const [controllerHID, setControllerHID] = useState(null);
-    const [exchangeState, setExchangeState] = useState('idle'); // idle, hid-fetched, patch-sent
-
-    // Build synth options (physical synths + virtual)
-    const synthOptions = useMemo(() => {
-        const options = [{ id: '', name: '-- Select Synth --' }];
-        for (const [portName, device] of Object.entries(devices)) {
-            if (device.status === 'connected' && device.capabilities?.includes('SYNTH')) {
-                options.push({ id: portName, name: device.deviceInfo?.name || portName });
-            }
-        }
-        options.push({ id: 'virtual', name: 'Virtual Synth' });
-        return options;
-    }, [devices]);
-
-    // Build controller options (physical controllers + virtual)
-    const controllerOptions = useMemo(() => {
-        const options = [{ id: '', name: '-- Select Controller --' }];
-        for (const [portName, device] of Object.entries(devices)) {
-            if (device.status === 'connected' && device.capabilities?.includes('CONTROLLER')) {
-                options.push({ id: portName, name: device.deviceInfo?.name || portName });
-            }
-        }
-        options.push({ id: 'virtual', name: 'Pad+ (Virtual)' });
-        return options;
-    }, [devices]);
-
-    // Get controller API for the selected controller
-    const getControllerAPI = useCallback(() => {
-        if (selectedController === 'virtual') {
-            // Create mock API that delegates to virtualController
-            return {
-                getControlSurface: async () => virtualController.getControlSurface(),
-                setPatch: async (name, controls) => virtualController.handleSetPatch({ name, controls })
-            };
-        } else if (selectedController && deviceApis[selectedController]) {
-            return deviceApis[selectedController];
-        }
-        return null;
-    }, [selectedController, deviceApis, virtualController]);
-
-    // Handle Control Surface button
-    const handleGetControlSurface = async () => {
-        if (!selectedController) {
-            addLog('Error: No controller selected', 'error');
-            return;
-        }
-
-        const api = getControllerAPI();
-        if (!api) {
-            addLog('Error: Controller API not available', 'error');
-            return;
-        }
-
-        addLog(`Requesting control-surface from ${selectedController}...`, 'info');
-
-        try {
-            const response = await api.getControlSurface();
-            if (response.error) {
-                addLog(`Error: ${response.error}`, 'error');
-                return;
-            }
-
-            setControllerHID(response);
-            setExchangeState('hid-fetched');
-            addLog(`Control surface received: ${response.device}`, 'success');
-            addLog(`  Controls: ${JSON.stringify(response.controls)}`, 'info');
-            addLog(`  Labeled: ${response.labeled}`, 'info');
-        } catch (err) {
-            addLog(`Error: ${err.message}`, 'error');
-        }
-    };
-
-    // Handle Set Patch button
-    const handleSetPatch = async () => {
-        if (!selectedController) {
-            addLog('Error: No controller selected', 'error');
-            return;
-        }
-
-        if (!controllerHID) {
-            addLog('Error: Must fetch control-surface first!', 'error');
-            return;
-        }
-
-        const api = getControllerAPI();
-        if (!api) {
-            addLog('Error: Controller API not available', 'error');
-            return;
-        }
-
-        // Get patch data from synth
-        let patchData;
-        if (selectedSynth === 'virtual') {
-            patchData = virtualSynth.currentPatch;
-        } else {
-            // For now, use a test patch for physical synths
-            patchData = {
-                name: 'Test Patch',
-                controls: [
-                    { input: 'FILTER_FREQUENCY', label: 'Filter', cc: 74 },
-                    { input: 'OSC1_LEVEL', label: 'Osc 1', cc: 70 }
-                ]
-            };
-        }
-
-        addLog(`Sending set-patch: "${patchData.name}"...`, 'info');
-        addLog(`  Controls: ${patchData.controls.length}`, 'info');
-
-        try {
-            const response = await api.setPatch(patchData.name, patchData.controls);
-            if (response.error) {
-                addLog(`Error: ${response.error}`, 'error');
-                return;
-            }
-
-            setExchangeState('patch-sent');
-            addLog(`Patch sent successfully`, 'success');
-        } catch (err) {
-            addLog(`Error: ${err.message}`, 'error');
-        }
-    };
-
-    // Reset state when selections change
-    useEffect(() => {
-        setControllerHID(null);
-        setExchangeState('idle');
-    }, [selectedSynth, selectedController]);
-
-    return (
-        <div className="ap-patch-tester">
-            <div className="ap-patch-tester-row">
-                <label>Synth</label>
-                <select
-                    value={selectedSynth}
-                    onChange={(e) => setSelectedSynth(e.target.value)}
-                >
-                    {synthOptions.map(opt => (
-                        <option key={opt.id || 'none'} value={opt.id}>{opt.name}</option>
-                    ))}
-                </select>
-            </div>
-
-            <div className="ap-patch-tester-row">
-                <label>Controller</label>
-                <select
-                    value={selectedController}
-                    onChange={(e) => setSelectedController(e.target.value)}
-                >
-                    {controllerOptions.map(opt => (
-                        <option key={opt.id || 'none'} value={opt.id}>{opt.name}</option>
-                    ))}
-                </select>
-            </div>
-
-            <div className="ap-patch-tester-divider" />
-
-            <div className="ap-patch-tester-buttons">
-                <button
-                    className="ap-btn"
-                    onClick={handleGetControlSurface}
-                    disabled={!selectedController}
-                >
-                    1. CONTROL SURFACE
-                </button>
-                <button
-                    className="ap-btn"
-                    onClick={handleSetPatch}
-                    disabled={!selectedController}
-                >
-                    2. SET PATCH
-                </button>
-            </div>
-
-            <div className="ap-patch-tester-status">
-                <div className="ap-status-row">
-                    <span>HID:</span>
-                    <span className={controllerHID ? 'ap-text-success' : 'ap-text-muted'}>
-                        {controllerHID ? controllerHID.device : 'Not fetched'}
-                    </span>
-                </div>
-                <div className="ap-status-row">
-                    <span>State:</span>
-                    <span className={exchangeState !== 'idle' ? 'ap-text-success' : 'ap-text-muted'}>
-                        {exchangeState === 'idle' && 'Ready'}
-                        {exchangeState === 'hid-fetched' && 'HID fetched'}
-                        {exchangeState === 'patch-sent' && 'Patch sent'}
-                    </span>
-                </div>
-            </div>
         </div>
     );
 }

@@ -293,6 +293,17 @@ class UnifiedDeviceAPI {
         return this._sendCommand({ cmd: 'move-patch', fromIdx: from, toIdx: to });
     }
 
+    /**
+     * Send controller-available notification to synth
+     * Triggers synth to initiate exchange with the specified controller
+     * @param {Object} controllerInfo - { device, port }
+     * @returns {Promise<Object>}
+     */
+    async sendControllerAvailable(controllerInfo) {
+        this._requireCapability(CAPABILITIES.SYNTH, 'controller-available');
+        return this._sendCommand({ cmd: 'controller-available', ...controllerInfo });
+    }
+
     //======================================================================
     // PUBLIC: CONFIG Commands
     //======================================================================
