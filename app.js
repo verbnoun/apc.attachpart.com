@@ -43,6 +43,9 @@ function App() {
     const [synthPortName, setSynthPortName] = useState(null);
     const [controllerPortName, setControllerPortName] = useState(null);
 
+    // Ref to track synthPortName for use in callbacks (avoids stale closure)
+    const synthPortNameRef = useRef(null);
+
     // Logs
     const [logs, setLogs] = useState([]);
 
@@ -76,8 +79,31 @@ function App() {
             addLog(`Registry init failed: ${err.message}`, 'error');
         });
 
+        // Setup workspace persistence callbacks
+        WindowManager.onGeometryChange = (windowId, geometry) => {
+            WorkspacePersistence.saveGeometry(windowId, geometry);
+        };
+
+        WindowManager.onWindowClose = (windowId) => {
+            WorkspacePersistence.setWasOpen(windowId, false);
+        };
+
+        // Restore tool windows that were previously open
+        const openTools = WorkspacePersistence.getOpenToolWindows();
+        // Defer to next tick to ensure handlers are ready
+        setTimeout(() => {
+            for (const windowId of openTools) {
+                if (windowId === 'log-window') {
+                    openLogWindow();
+                } else if (windowId === 'expression-pad') {
+                    openExpressionPad();
+                }
+            }
+        }, 0);
+
         return () => {
-            // Cleanup on unmount
+            WindowManager.onGeometryChange = null;
+            WindowManager.onWindowClose = null;
         };
     }, []);
 
@@ -138,6 +164,7 @@ function App() {
             if (capabilities.includes(CAPABILITIES.SYNTH)) {
                 registry.setSynthDevice(portName);
                 setSynthPortName(portName);
+                synthPortNameRef.current = portName;
             }
 
             // Load capability-specific data
@@ -195,9 +222,29 @@ function App() {
 
         delete deviceApisRef.current[portName];
 
+        // Close device windows (geometry already saved, will be used on next open)
+        const deviceWindowIds = [
+            `config-${portName}`,
+            `firmware-${portName}`,
+            `language-${portName}`
+        ];
+
+        // Add patch-editor if this is the synth device (use ref to avoid stale closure)
+        if (synthPortNameRef.current === portName) {
+            deviceWindowIds.push('patch-editor');
+        }
+
+        for (const windowId of deviceWindowIds) {
+            if (WindowManager.exists(windowId)) {
+                WindowManager.close(windowId);
+                delete windowContainersRef.current[windowId];
+            }
+        }
+
         // Clear role if this device had one
-        if (synthPortName === portName) {
+        if (synthPortNameRef.current === portName) {
             setSynthPortName(null);
+            synthPortNameRef.current = null;
             setTopology(null);
             setPatchList([]);
             setCurrentPatchIndex(-1);
@@ -611,18 +658,24 @@ function App() {
         const device = devices[portName];
         const deviceName = device?.deviceInfo?.name || portName;
 
+        // Get saved geometry or use defaults
+        const saved = WorkspacePersistence.getWindowState(windowId);
+
         WindowManager.create({
             id: windowId,
             title: `${deviceName} Config`,
-            x: 100,
-            y: 50,
-            width: 450,
-            height: 400,
+            x: saved?.x ?? 100,
+            y: saved?.y ?? 50,
+            width: saved?.width ?? 450,
+            height: saved?.height ?? 400,
             content: container,
             onClose: () => {
                 delete windowContainersRef.current[windowId];
             }
         });
+
+        // Mark as open for persistence
+        WorkspacePersistence.setWasOpen(windowId, true);
 
         ReactDOM.render(
             <BartlebyConfigWindow
@@ -651,18 +704,24 @@ function App() {
         const device = devices[portName];
         const deviceName = device?.deviceInfo?.name || portName;
 
+        // Get saved geometry or use defaults
+        const saved = WorkspacePersistence.getWindowState('patch-editor');
+
         WindowManager.create({
             id: 'patch-editor',
             title: `${deviceName} Patches`,
-            x: 120,
-            y: 70,
-            width: 1280,
-            height: 800,
+            x: saved?.x ?? 120,
+            y: saved?.y ?? 70,
+            width: saved?.width ?? 1280,
+            height: saved?.height ?? 800,
             content: container,
             onClose: () => {
                 delete windowContainersRef.current['patch-editor'];
             }
         });
+
+        // Mark as open for persistence
+        WorkspacePersistence.setWasOpen('patch-editor', true);
 
         ReactDOM.render(
             <PatchEditorWindow
@@ -701,16 +760,22 @@ function App() {
         const device = devices[portName];
         const deviceName = device?.deviceInfo?.name || portName;
 
+        // Get saved geometry or use defaults
+        const saved = WorkspacePersistence.getWindowState(windowId);
+
         WindowManager.create({
             id: windowId,
             title: `${deviceName} Firmware`,
-            x: 200,
-            y: 100,
-            width: 350,
-            height: 300,
+            x: saved?.x ?? 200,
+            y: saved?.y ?? 100,
+            width: saved?.width ?? 350,
+            height: saved?.height ?? 300,
             content: container,
             onClose: () => {}
         });
+
+        // Mark as open for persistence
+        WorkspacePersistence.setWasOpen(windowId, true);
 
         ReactDOM.render(
             <FirmwareWindow
@@ -735,16 +800,22 @@ function App() {
         const device = devices[portName];
         const deviceName = device?.deviceInfo?.name || portName;
 
+        // Get saved geometry or use defaults
+        const saved = WorkspacePersistence.getWindowState(windowId);
+
         WindowManager.create({
             id: windowId,
             title: `${deviceName} Language`,
-            x: 250,
-            y: 150,
-            width: 300,
-            height: 250,
+            x: saved?.x ?? 250,
+            y: saved?.y ?? 150,
+            width: saved?.width ?? 300,
+            height: saved?.height ?? 250,
             content: container,
             onClose: () => {}
         });
+
+        // Mark as open for persistence
+        WorkspacePersistence.setWasOpen(windowId, true);
 
         ReactDOM.render(
             <LanguageWindow
@@ -768,18 +839,24 @@ function App() {
         container.style.height = '100%';
         windowContainersRef.current['expression-pad'] = container;
 
+        // Get saved geometry or use defaults
+        const saved = WorkspacePersistence.getWindowState('expression-pad');
+
         WindowManager.create({
             id: 'expression-pad',
             title: 'Expression Pad',
-            x: 150,
-            y: 80,
-            width: 320,
-            height: 420,
+            x: saved?.x ?? 150,
+            y: saved?.y ?? 80,
+            width: saved?.width ?? 320,
+            height: saved?.height ?? 420,
             content: container,
             onClose: () => {
                 delete windowContainersRef.current['expression-pad'];
             }
         });
+
+        // Mark as open for persistence
+        WorkspacePersistence.setWasOpen('expression-pad', true);
 
         const synthDevice = synthPortName ? devices[synthPortName] : null;
         const synthApi = synthPortName ? deviceApisRef.current[synthPortName] : null;
@@ -805,18 +882,24 @@ function App() {
         container.style.height = '100%';
         windowContainersRef.current['log-window'] = container;
 
+        // Get saved geometry or use defaults
+        const saved = WorkspacePersistence.getWindowState('log-window');
+
         WindowManager.create({
             id: 'log-window',
             title: 'Console Log',
-            x: 400,
-            y: 100,
-            width: 450,
-            height: 350,
+            x: saved?.x ?? 400,
+            y: saved?.y ?? 100,
+            width: saved?.width ?? 450,
+            height: saved?.height ?? 350,
             content: container,
             onClose: () => {
                 delete windowContainersRef.current['log-window'];
             }
         });
+
+        // Mark as open for persistence
+        WorkspacePersistence.setWasOpen('log-window', true);
 
         ReactDOM.render(
             <LogWindow logs={logs} onClear={() => setLogs([])} />,

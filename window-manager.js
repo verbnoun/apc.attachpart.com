@@ -14,6 +14,10 @@ const WindowManager = {
     nextZIndex: 100,
     activeWindowId: null,
 
+    // Persistence callbacks
+    onGeometryChange: null,  // (windowId, { x, y, width, height }) => void
+    onWindowClose: null,     // (windowId) => void
+
     /**
      * Create a new window
      * @param {Object} options
@@ -125,10 +129,17 @@ const WindowManager = {
 
     /**
      * Close a window
+     * @param {string} id - Window ID
+     * @param {boolean} preserveState - If true, don't notify onWindowClose (used for device disconnect)
      */
-    close(id) {
+    close(id, preserveState = false) {
         const windowInfo = this.windows.get(id);
         if (!windowInfo) return;
+
+        // Notify persistence (unless preserving state for device disconnect)
+        if (this.onWindowClose && !preserveState) {
+            this.onWindowClose(id);
+        }
 
         if (windowInfo.onClose) {
             windowInfo.onClose();
@@ -210,7 +221,18 @@ const WindowManager = {
         });
 
         document.addEventListener('mouseup', () => {
-            isDragging = false;
+            if (isDragging) {
+                isDragging = false;
+                // Notify persistence of geometry change
+                if (this.onGeometryChange) {
+                    this.onGeometryChange(id, {
+                        x: win.offsetLeft,
+                        y: win.offsetTop,
+                        width: win.offsetWidth,
+                        height: win.offsetHeight
+                    });
+                }
+            }
         });
     },
 
@@ -247,7 +269,18 @@ const WindowManager = {
         });
 
         document.addEventListener('mouseup', () => {
-            isResizing = false;
+            if (isResizing) {
+                isResizing = false;
+                // Notify persistence of geometry change
+                if (this.onGeometryChange) {
+                    this.onGeometryChange(id, {
+                        x: win.offsetLeft,
+                        y: win.offsetTop,
+                        width: win.offsetWidth,
+                        height: win.offsetHeight
+                    });
+                }
+            }
         });
     },
 
