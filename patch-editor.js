@@ -1866,11 +1866,12 @@ function NodeContextMenu({
 
             if (typeof value === 'object' && value !== null) {
                 // Parameter object with range, initial, etc.
+                // Range is an array [min, max] in patch JSON
                 params.push({
                     key,
                     value: value.initial !== undefined ? value.initial : value.value,
-                    min: value.min !== undefined ? value.min : 0,
-                    max: value.max !== undefined ? value.max : 127,
+                    min: value.range?.[0] ?? 0,
+                    max: value.range?.[1] ?? 1,
                     range: value.range
                 });
             } else if (typeof value === 'number') {
@@ -2055,12 +2056,43 @@ function ParameterControl({ moduleId, param, onUpdate }) {
         }
     };
 
-    // Format display based on parameter range
-    const formatValue = (val) => {
-        if (param.range === 'bipolar') {
-            return val > 0 ? `+${val}` : val;
+    // Determine step size based on parameter type
+    // WAVE params are discrete (integer steps)
+    // Small ranges (<=2) get fine control (0.01 step)
+    // Larger ranges get integer steps
+    const getStep = () => {
+        const key = param.key || '';
+        const range = param.max - param.min;
+
+        // WAVE params are always discrete
+        if (key.includes('_WAVE')) {
+            return 1;
         }
-        return val;
+
+        // Small ranges (like 0-1, -1 to 1) need fine control
+        if (range <= 2) {
+            return 0.01;
+        }
+
+        // Medium ranges (like 0-10) get medium step
+        if (range <= 20) {
+            return 0.1;
+        }
+
+        // Large ranges (semitones, cents, frequency) get integer step
+        return 1;
+    };
+
+    // Format display value based on step size
+    const formatValue = (val) => {
+        const step = getStep();
+        if (step >= 1) {
+            return Math.round(val);
+        } else if (step >= 0.1) {
+            return val.toFixed(1);
+        } else {
+            return val.toFixed(2);
+        }
     };
 
     return (
@@ -2074,7 +2106,7 @@ function ParameterControl({ moduleId, param, onUpdate }) {
                 className="ap-slider"
                 min={param.min}
                 max={param.max}
-                step={1}
+                step={getStep()}
                 value={localValue}
                 onChange={handleChange}
                 onMouseUp={handleCommit}
