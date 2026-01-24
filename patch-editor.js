@@ -51,10 +51,21 @@ function buildModuleDefinitions(topology) {
         return DEFAULT_MODULE_DEFINITIONS;
     }
 
+    // Infer category from module ID if not provided
+    const inferCategory = (moduleId, defaultCategory) => {
+        if (moduleId.startsWith('OSC')) return 'oscillator';
+        if (moduleId.includes('FILTER')) return 'filter';
+        if (moduleId === 'VAMP') return 'amp';
+        if (moduleId.includes('ENV')) return 'envelope';
+        if (moduleId.includes('LFO')) return 'lfo';
+        return defaultCategory;
+    };
+
     const audio = (topology.modules.audio || []).map(m => ({
         id: m.id,
         name: m.name,
         type: 'audio',
+        category: m.category || inferCategory(m.id, 'audio'),
         alwaysEnabled: m.alwaysEnabled || false
     }));
 
@@ -62,6 +73,7 @@ function buildModuleDefinitions(topology) {
         id: m.id,
         name: m.name,
         type: 'mod',
+        category: m.category || inferCategory(m.id, 'mod'),
         alwaysEnabled: m.alwaysEnabled || false
     }));
 
@@ -71,6 +83,7 @@ function buildModuleDefinitions(topology) {
             id: m.id,
             name: m.name,
             type: 'control',
+            category: m.category || 'control',
             alwaysEnabled: m.alwaysEnabled || false
         }))
         : DEFAULT_MODULE_DEFINITIONS.control;
@@ -1367,6 +1380,40 @@ function NodeWorkspace({
         return { module: parts[1], param: parts[2] };
     }, [selection]);
 
+    // Calculate envelope params for both envelopes (for overlay feature)
+    const envelopeData = useMemo(() => {
+        if (!currentPatch) return { MOD_ENV: null, VAMP_ENV: null };
+
+        const extractEnvelopeParams = (moduleId) => {
+            const moduleData = currentPatch[moduleId];
+            if (!moduleData) return null;
+
+            const findParam = (suffix) => {
+                for (const [key, value] of Object.entries(moduleData)) {
+                    if (key.endsWith(suffix) && typeof value === 'object' && value.initial !== undefined) {
+                        return value.initial;
+                    }
+                }
+                return null;
+            };
+
+            const attack = findParam('_ATTACK_TIME');
+            const decay = findParam('_DECAY_TIME');
+            const sustain = findParam('_SUSTAIN_LEVEL');
+            const release = findParam('_RELEASE_TIME');
+
+            if (attack !== null && decay !== null && sustain !== null && release !== null) {
+                return { attack, decay, sustain, release };
+            }
+            return null;
+        };
+
+        return {
+            MOD_ENV: extractEnvelopeParams('MOD_ENV'),
+            VAMP_ENV: extractEnvelopeParams('VAMP_ENV')
+        };
+    }, [currentPatch]);
+
     if (!currentPatch) {
         return (
             <div className="ap-node-workspace">
@@ -1457,6 +1504,18 @@ function NodeWorkspace({
                 const pos = nodePositions[module.id] || getDefaultPosition(module.id, index);
                 const isSelected = selection?.type === 'module' && selection?.moduleId === module.id;
                 const isDeleting = deletingModules?.has(module.id);
+
+                // For envelope modules, pass the other envelope's params for overlay
+                let otherEnvelopeParams = null;
+                let otherEnvelopeColor = null;
+                if (module.id === 'MOD_ENV' && envelopeData.VAMP_ENV) {
+                    otherEnvelopeParams = envelopeData.VAMP_ENV;
+                    otherEnvelopeColor = 'var(--ap-accent-red)';
+                } else if (module.id === 'VAMP_ENV' && envelopeData.MOD_ENV) {
+                    otherEnvelopeParams = envelopeData.MOD_ENV;
+                    otherEnvelopeColor = 'var(--ap-accent-yellow)';
+                }
+
                 return (
                     <Node
                         key={module.id}
@@ -1475,6 +1534,8 @@ function NodeWorkspace({
                         selectedWireTarget={selectedWireTarget}
                         onUpdateParam={onUpdateParam}
                         onUpdateModAmount={onUpdateModAmount}
+                        otherEnvelopeParams={otherEnvelopeParams}
+                        otherEnvelopeColor={otherEnvelopeColor}
                     />
                 );
             })}
@@ -1538,6 +1599,187 @@ function NodeWorkspace({
 }
 
 //======================================================================
+// ENVELOPE CURVE VISUALIZATION
+//======================================================================
+
+function EnvelopeCurve({ attack, decay, sustain, release, color, dashed = false }) {
+    // Normalize times to fit in SVG viewBox (100 width)
+    // Total time = attack + decay + hold (fixed 0.3s for visualization) + release
+    const holdTime = 0.3;
+    const totalTime = Math.max(0.01, attack + decay + holdTime + release);
+    const scale = 100 / totalTime;
+
+    // Calculate x positions
+    const x1 = 0;                                    // Start
+    const x2 = attack * scale;                       // Attack peak
+    const x3 = (attack + decay) * scale;             // Decay end
+    const x4 = (attack + decay + holdTime) * scale;  // Hold end
+    const x5 = 100;                                  // Release end
+
+    // Y positions (inverted: 0 = top = max, 100 = bottom = min)
+    const y1 = 100;                   // Start at 0
+    const y2 = 0;                     // Attack peak at max
+    const y3 = 100 - sustain * 100;   // Sustain level
+    const y4 = y3;                    // Hold at sustain
+    const y5 = 100;                   // Release to 0
+
+    const pathD = `M ${x1},${y1} L ${x2},${y2} L ${x3},${y3} L ${x4},${y4} L ${x5},${y5}`;
+
+    return (
+        <svg viewBox="0 0 100 100" className="ap-envelope-curve" preserveAspectRatio="none">
+            <path
+                d={pathD}
+                stroke={color}
+                strokeWidth={dashed ? 1.5 : 2.5}
+                strokeDasharray={dashed ? "4,2" : "none"}
+                fill="none"
+                vectorEffect="non-scaling-stroke"
+            />
+        </svg>
+    );
+}
+
+//======================================================================
+// WAVE ICON COMPONENT
+//======================================================================
+
+function WaveIcon({ type }) {
+    // Simple SVG paths for each wave type
+    const paths = {
+        'Sine': 'M 0,50 Q 25,0 50,50 Q 75,100 100,50',
+        'Square': 'M 0,75 L 0,25 L 50,25 L 50,75 L 100,75 L 100,25',
+        'Saw': 'M 0,75 L 50,25 L 50,75 L 100,25',
+        'Triangle': 'M 0,50 L 25,25 L 75,75 L 100,50',
+        'Noise': 'M 0,50 L 10,30 L 20,70 L 30,40 L 40,60 L 50,35 L 60,65 L 70,45 L 80,55 L 90,38 L 100,50',
+        // Common variants
+        'sine': 'M 0,50 Q 25,0 50,50 Q 75,100 100,50',
+        'square': 'M 0,75 L 0,25 L 50,25 L 50,75 L 100,75 L 100,25',
+        'saw': 'M 0,75 L 50,25 L 50,75 L 100,25',
+        'triangle': 'M 0,50 L 25,25 L 75,75 L 100,50',
+        'noise': 'M 0,50 L 10,30 L 20,70 L 30,40 L 40,60 L 50,35 L 60,65 L 70,45 L 80,55 L 90,38 L 100,50',
+    };
+
+    const path = paths[type] || paths['Sine'];
+
+    return (
+        <svg viewBox="0 0 100 100" className="ap-wave-icon">
+            <path d={path} stroke="currentColor" fill="none" strokeWidth="8" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+    );
+}
+
+//======================================================================
+// WAVE SELECTOR COMPONENT
+//======================================================================
+
+function WaveSelector({ param, waves, onUpdateParam }) {
+    // waves is an array like [{ id: 0, name: 'Sine' }, { id: 1, name: 'Square' }, ...]
+    // If waves not provided, use default OSC waves
+    const defaultWaves = [
+        { id: 0, name: 'Sine' },
+        { id: 1, name: 'Triangle' },
+        { id: 2, name: 'Saw' },
+        { id: 3, name: 'Square' },
+        { id: 4, name: 'Noise' }
+    ];
+    const waveList = waves || defaultWaves;
+    const currentWaveId = Math.round(param.value);
+
+    return (
+        <div className="ap-wave-selector">
+            <span className="ap-wave-label">{param.name}</span>
+            <div className="ap-wave-options">
+                {waveList.map(wave => (
+                    <button
+                        key={wave.id}
+                        className={`ap-wave-btn ${wave.id === currentWaveId ? 'active' : ''}`}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onUpdateParam(param.key, wave.id);
+                        }}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        title={wave.name}
+                    >
+                        <WaveIcon type={wave.name} />
+                    </button>
+                ))}
+            </div>
+        </div>
+    );
+}
+
+//======================================================================
+// EDITABLE VALUE COMPONENT
+//======================================================================
+
+function EditableValue({ value, min, max, step, onCommit, formatValue }) {
+    const [editing, setEditing] = useState(false);
+    const [editValue, setEditValue] = useState(value.toString());
+    const inputRef = useRef(null);
+
+    const handleClick = (e) => {
+        e.stopPropagation();
+        setEditing(true);
+        setEditValue(value.toString());
+    };
+
+    const handleBlur = () => {
+        const num = parseFloat(editValue);
+        if (!isNaN(num)) {
+            const clamped = Math.max(min, Math.min(max, num));
+            onCommit(clamped);
+        }
+        setEditing(false);
+    };
+
+    const handleKeyDown = (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            handleBlur();
+        }
+        if (e.key === 'Escape') {
+            setEditing(false);
+        }
+    };
+
+    useEffect(() => {
+        if (editing && inputRef.current) {
+            inputRef.current.select();
+        }
+    }, [editing]);
+
+    // Sync with external value when not editing
+    useEffect(() => {
+        if (!editing) {
+            setEditValue(value.toString());
+        }
+    }, [value, editing]);
+
+    if (editing) {
+        return (
+            <input
+                ref={inputRef}
+                type="text"
+                className="ap-node-param-edit"
+                value={editValue}
+                onChange={(e) => setEditValue(e.target.value)}
+                onBlur={handleBlur}
+                onKeyDown={handleKeyDown}
+                onClick={(e) => e.stopPropagation()}
+                onMouseDown={(e) => e.stopPropagation()}
+                autoFocus
+            />
+        );
+    }
+
+    return (
+        <span className="ap-node-param-value clickable" onClick={handleClick}>
+            {formatValue(value)}
+        </span>
+    );
+}
+
+//======================================================================
 // NODE COMPONENT
 //======================================================================
 
@@ -1559,7 +1801,9 @@ function Node({
     onPortPositionChange,
     selectedWireTarget,
     onUpdateParam,
-    onUpdateModAmount
+    onUpdateModAmount,
+    otherEnvelopeParams,  // For envelope overlay
+    otherEnvelopeColor    // Color for the other envelope curve
 }) {
     const moduleData = patch?.[module.id];
 
@@ -1583,16 +1827,56 @@ function Node({
                 if (value.initial !== undefined) {
                     params.push({
                         key,
+                        name: value.name || key,  // Human-readable name
                         value: value.initial,
                         min: value.range?.[0] ?? 0,
-                        max: value.range?.[1] ?? 1
+                        max: value.range?.[1] ?? 1,
+                        priority: value.priority ?? 999,  // For sorting
+                        cc: value.cc  // MIDI CC for future display
                     });
                 }
             }
         });
 
-        return params.slice(0, 4); // Show up to 4 params
+        // Sort by priority, then take top 6
+        return params.sort((a, b) => a.priority - b.priority).slice(0, 6);
     }, [moduleData]);
+
+    // Check if this is an envelope module
+    const isEnvelopeModule = module.category === 'envelope' ||
+        module.id === 'MOD_ENV' || module.id === 'VAMP_ENV';
+
+    // Check if this is an oscillator module
+    const isOscillatorModule = module.category === 'oscillator' ||
+        module.id.startsWith('OSC');
+
+    // Check if this is an LFO module
+    const isLfoModule = module.category === 'lfo' ||
+        module.id === 'GLFO' || module.id === 'VLFO';
+
+    // Get envelope params (ADSR) if this is an envelope module
+    const envelopeParams = useMemo(() => {
+        if (!isEnvelopeModule || !moduleData) return null;
+
+        const findParam = (suffix) => {
+            for (const [key, value] of Object.entries(moduleData)) {
+                if (key.endsWith(suffix) && typeof value === 'object' && value.initial !== undefined) {
+                    return value.initial;
+                }
+            }
+            return null;
+        };
+
+        const attack = findParam('_ATTACK_TIME');
+        const decay = findParam('_DECAY_TIME');
+        const sustain = findParam('_SUSTAIN_LEVEL');
+        const release = findParam('_RELEASE_TIME');
+
+        if (attack !== null && decay !== null && sustain !== null && release !== null) {
+            return { attack, decay, sustain, release };
+        }
+        return null;
+    }, [isEnvelopeModule, moduleData]);
 
     // Report port positions when mounted or position changes
     // Use useLayoutEffect for synchronous updates during drag
@@ -1667,6 +1951,27 @@ function Node({
     if (isSelected) classNames.push('selected');
     if (isDeleting) classNames.push('deleting');
     if (isPending) classNames.push('pending');
+    if (isEnvelopeModule) classNames.push('ap-node-envelope');
+    if (isOscillatorModule) classNames.push('ap-node-oscillator');
+    if (isLfoModule) classNames.push('ap-node-lfo');
+
+    // Get envelope color based on module type
+    const envelopeColor = module.id === 'VAMP_ENV' ? 'var(--ap-accent-red)' :
+                          module.id === 'MOD_ENV' ? 'var(--ap-accent-yellow)' :
+                          'var(--ap-wire-env)';
+
+    // Determine which params are WAVE params (to use WaveSelector)
+    const isWaveParam = (paramKey) => paramKey.includes('_WAVE');
+
+    // Get wave list for this module type from topology
+    const getWavesForParam = (paramKey) => {
+        if (!topology?.waves) return null;
+        // OSC waves for oscillator modules
+        if (isOscillatorModule) return topology.waves.osc;
+        // LFO waves for LFO modules
+        if (isLfoModule) return topology.waves.lfo;
+        return null;
+    };
 
     return (
         <div
@@ -1703,6 +2008,30 @@ function Node({
                 />
             </div>
             <div className="ap-node-body">
+                {/* Envelope curve visualization */}
+                {isEnvelopeModule && envelopeParams && (
+                    <div className="ap-node-envelope-viz">
+                        {/* Other envelope (dashed, behind) */}
+                        {otherEnvelopeParams && (
+                            <EnvelopeCurve
+                                attack={otherEnvelopeParams.attack}
+                                decay={otherEnvelopeParams.decay}
+                                sustain={otherEnvelopeParams.sustain}
+                                release={otherEnvelopeParams.release}
+                                color={otherEnvelopeColor || 'var(--ap-text-muted)'}
+                                dashed={true}
+                            />
+                        )}
+                        {/* This envelope (solid, front) */}
+                        <EnvelopeCurve
+                            attack={envelopeParams.attack}
+                            decay={envelopeParams.decay}
+                            sustain={envelopeParams.sustain}
+                            release={envelopeParams.release}
+                            color={envelopeColor}
+                        />
+                    </div>
+                )}
                 {digestParams.map(param => {
                     // Check if this param is a valid target for the current wiring source
                     const canReceiveWire = wiringFrom &&
@@ -1716,24 +2045,37 @@ function Node({
                     // Find AMOUNT params for this param
                     const amountParams = findAmountParamsForTarget(moduleData, param.key);
 
+                    // Check if this is a WAVE param
+                    const isWave = isWaveParam(param.key);
+                    const waves = isWave ? getWavesForParam(param.key) : null;
+
                     return (
                         <div key={param.key} className="ap-node-param-container">
-                            <div
-                                className={`ap-node-param ${canReceiveWire ? 'drop-target' : ''} ${isWireTarget ? 'wire-target' : ''}`}
-                                onMouseDown={canReceiveWire ? (e) => e.stopPropagation() : undefined}
-                                onMouseUp={canReceiveWire ? (e) => handleParamDrop(param.key, e) : undefined}
-                            >
-                                {/* Param input port for modulation targets */}
-                                <div
-                                    ref={el => paramPortRefs.current[param.key] = el}
-                                    className="ap-node-port ap-node-port-param-in"
-                                />
-                                <span className="ap-node-param-key">{param.key}</span>
-                                <NodeParamSlider
+                            {isWave ? (
+                                /* Wave selector for WAVE params */
+                                <WaveSelector
                                     param={param}
+                                    waves={waves}
                                     onUpdateParam={onUpdateParam}
                                 />
-                            </div>
+                            ) : (
+                                <div
+                                    className={`ap-node-param ${canReceiveWire ? 'drop-target' : ''} ${isWireTarget ? 'wire-target' : ''}`}
+                                    onMouseDown={canReceiveWire ? (e) => e.stopPropagation() : undefined}
+                                    onMouseUp={canReceiveWire ? (e) => handleParamDrop(param.key, e) : undefined}
+                                >
+                                    {/* Param input port for modulation targets */}
+                                    <div
+                                        ref={el => paramPortRefs.current[param.key] = el}
+                                        className="ap-node-port ap-node-port-param-in"
+                                    />
+                                    <span className="ap-node-param-key">{param.name}</span>
+                                    <NodeParamSlider
+                                        param={param}
+                                        onUpdateParam={onUpdateParam}
+                                    />
+                                </div>
+                            )}
                             {/* Amount sliders under param */}
                             {amountParams.map(amt => (
                                 <div key={amt.source} className="ap-node-mod-amount">
@@ -1827,6 +2169,14 @@ function NodeParamSlider({ param, onUpdateParam }) {
         }
     };
 
+    // Handle direct value edit
+    const handleValueCommit = (newValue) => {
+        setLocalValue(newValue);
+        if (onUpdateParam) {
+            onUpdateParam(param.key, newValue);
+        }
+    };
+
     return (
         <>
             <input
@@ -1842,7 +2192,14 @@ function NodeParamSlider({ param, onUpdateParam }) {
                 onClick={(e) => e.stopPropagation()}
                 onMouseDown={(e) => e.stopPropagation()}
             />
-            <span className="ap-node-param-value">{formatValue(localValue)}</span>
+            <EditableValue
+                value={localValue}
+                min={param.min}
+                max={param.max}
+                step={getStep()}
+                onCommit={handleValueCommit}
+                formatValue={formatValue}
+            />
         </>
     );
 }

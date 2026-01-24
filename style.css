@@ -2098,3 +2098,163 @@ html, body {
 .ap-pad-slider .ap-slider:disabled + .ap-slider-value {
     color: var(--ap-text-muted);
 }
+
+/* ============================================================
+   ENVELOPE CURVE VISUALIZATION
+   ============================================================ */
+
+.ap-node-envelope-viz {
+    position: relative;
+    height: 40px;
+    margin: 0 4px 4px 4px;
+    background: var(--ap-bg-secondary);
+    border: 1px solid var(--ap-bg-tertiary);
+    border-radius: 2px;
+}
+
+.ap-envelope-curve {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+}
+
+/* ============================================================
+   WAVE SELECTOR
+   ============================================================ */
+
+.ap-wave-selector {
+    display: flex;
+    align-items: center;
+    gap: var(--ap-spacing-xs);
+    padding: 2px 0;
+}
+
+.ap-wave-label {
+    font-size: 7px;
+    color: var(--ap-text-muted);
+    min-width: 30px;
+}
+
+.ap-wave-options {
+    display: flex;
+    gap: 2px;
+}
+
+.ap-wave-btn {
+    width: 18px;
+    height: 18px;
+    padding: 2px;
+    background: var(--ap-bg-secondary);
+    border: 1px solid var(--ap-bg-tertiary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--ap-text-secondary);
+    transition: all 0.1s;
+}
+
+.ap-wave-btn:hover {
+    background: var(--ap-bg-tertiary);
+    border-color: var(--ap-accent-blue);
+    color: var(--ap-text-primary);
+}
+
+.ap-wave-btn.active {
+    background: var(--ap-accent-blue);
+    border-color: var(--ap-accent-blue);
+    color: var(--ap-bg-primary);
+}
+
+.ap-wave-icon {
+    width: 14px;
+    height: 14px;
+}
+
+/* ============================================================
+   CLICK-TO-EDIT VALUES
+   ============================================================ */
+
+.ap-node-param-value.clickable {
+    cursor: pointer;
+    padding: 1px 3px;
+    border-radius: 2px;
+    transition: background 0.1s;
+}
+
+.ap-node-param-value.clickable:hover {
+    background: var(--ap-bg-tertiary);
+    color: var(--ap-accent-blue);
+}
+
+.ap-node-param-edit {
+    width: 36px;
+    font-family: var(--ap-font-family);
+    font-size: 7px;
+    padding: 1px 3px;
+    background: var(--ap-bg-secondary);
+    border: 1px solid var(--ap-accent-blue);
+    color: var(--ap-text-primary);
+    text-align: right;
+    outline: none;
+}
+
+.ap-node-param-edit:focus {
+    box-shadow: 0 0 4px var(--ap-accent-blue);
+}
+
+/* ============================================================
+   NODE LAYOUT VARIANTS
+   ============================================================ */
+
+/* Envelope module layout */
+.ap-node-envelope {
+    min-width: 160px;
+}
+
+.ap-node-envelope .ap-node-body {
+    padding: var(--ap-spacing-xs);
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2px 4px;
+}
+
+/* Envelope curve spans both columns */
+.ap-node-envelope .ap-node-envelope-viz {
+    grid-column: 1 / -1;
+}
+
+/* Param containers fit in grid cells */
+.ap-node-envelope .ap-node-param-container {
+    display: flex;
+    flex-direction: column;
+}
+
+/* Mod amount rows span both columns */
+.ap-node-envelope .ap-node-mod-amount {
+    grid-column: 1 / -1;
+}
+
+/* Oscillator module layout */
+.ap-node-oscillator {
+    min-width: 150px;
+}
+
+.ap-node-oscillator .ap-wave-selector {
+    border-bottom: 1px solid var(--ap-bg-tertiary);
+    padding-bottom: var(--ap-spacing-xs);
+    margin-bottom: var(--ap-spacing-xs);
+}
+
+/* LFO module layout */
+.ap-node-lfo {
+    min-width: 150px;
+}
+
+.ap-node-lfo .ap-wave-selector {
+    border-bottom: 1px solid var(--ap-bg-tertiary);
+    padding-bottom: var(--ap-spacing-xs);
+    margin-bottom: var(--ap-spacing-xs);
+}
