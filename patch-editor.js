@@ -290,6 +290,12 @@ function PatchEditorWindow({
     // Modules currently being deleted (for animation)
     const [deletingModules, setDeletingModules] = useState(new Set());
 
+    // Optimistic state - changes confirmed by ok but patch not yet refreshed
+    const [optimisticDeletes, setOptimisticDeletes] = useState(new Set());  // moduleIds
+    const [optimisticAdds, setOptimisticAdds] = useState(new Set());        // moduleIds
+    const [optimisticWireDeletes, setOptimisticWireDeletes] = useState(new Set()); // wireKeys
+    const [optimisticWireAdds, setOptimisticWireAdds] = useState(new Set());       // wireKeys
+
     // Pending module (dropped but not yet connected)
     const [pendingModule, setPendingModule] = useState(null);
     // { moduleId, position: {x, y} }
@@ -311,6 +317,14 @@ function PatchEditorWindow({
             setLoadingIndex(null);
         }
         prevPatchRef.current = currentPatch;
+    }, [currentPatch]);
+
+    // Clear optimistic state when real patch data arrives
+    useEffect(() => {
+        setOptimisticDeletes(new Set());
+        setOptimisticAdds(new Set());
+        setOptimisticWireDeletes(new Set());
+        setOptimisticWireAdds(new Set());
     }, [currentPatch]);
 
     // Handle patch selection with loading state
@@ -372,8 +386,12 @@ function PatchEditorWindow({
         // they only appear as suffixes in _AMOUNT params)
         activeSources.forEach(src => enabled.add(src));
 
+        // Apply optimistic changes
+        optimisticDeletes.forEach(id => enabled.delete(id));
+        optimisticAdds.forEach(id => enabled.add(id));
+
         return enabled;
-    }, [currentPatch]);
+    }, [currentPatch, optimisticDeletes, optimisticAdds]);
 
     // Extract existing modulation connections from patch
     // Scans for {TARGET}_{SOURCE}_AMOUNT params to find active routes
@@ -418,8 +436,23 @@ function PatchEditorWindow({
             });
         });
 
-        return connections;
-    }, [currentPatch]);
+        // Apply optimistic wire changes
+        // Filter out optimistically deleted wires
+        const filtered = connections.filter(conn => {
+            const wireKey = `${conn.from}:${conn.toModule}:${conn.toParam}`;
+            return !optimisticWireDeletes.has(wireKey);
+        });
+
+        // Add optimistically added wires (with default amount)
+        optimisticWireAdds.forEach(wireKey => {
+            const [from, toModule, toParam] = wireKey.split(':');
+            if (!filtered.some(c => c.from === from && c.toModule === toModule && c.toParam === toParam)) {
+                filtered.push({ from, toModule, toParam, amount: 0.5 });
+            }
+        });
+
+        return filtered;
+    }, [currentPatch, optimisticWireDeletes, optimisticWireAdds]);
 
     // Select a module (click on header)
     const handleSelectModule = (moduleId) => {
@@ -491,12 +524,18 @@ function PatchEditorWindow({
             // Wait for animation
             await new Promise(resolve => setTimeout(resolve, 300));
 
-            // Actually delete - device handles removing related amounts
+            // Call API and await result
+            let result = null;
             if (onToggleModule) {
-                onToggleModule(moduleId, false);
+                result = await onToggleModule(moduleId, false);
             }
 
-            // Clean up
+            // On success, apply optimistic delete (module disappears immediately)
+            if (result?.status === 'ok') {
+                setOptimisticDeletes(prev => new Set([...prev, moduleId]));
+            }
+
+            // Clean up animation state
             setDeletingModules(prev => {
                 const next = new Set(prev);
                 next.delete(moduleId);
@@ -504,12 +543,18 @@ function PatchEditorWindow({
             });
         } else if (confirmDialog.type === 'wire') {
             const { source, target, param } = confirmDialog;
+            const wireKey = `${source}:${target}:${param}`;
             log('Wire Delete Confirmed', { source, target, param });
 
-            // Delete the wire (disable modulation)
-            // API signature: toggleModulation(targetParam, sourceModule, enabled)
+            // Call API and await result
+            let result = null;
             if (onToggleModulation) {
-                onToggleModulation(param, source, false);
+                result = await onToggleModulation(param, source, false);
+            }
+
+            // On success, apply optimistic wire delete
+            if (result?.status === 'ok') {
+                setOptimisticWireDeletes(prev => new Set([...prev, wireKey]));
             }
         }
 
@@ -525,10 +570,18 @@ function PatchEditorWindow({
     };
 
     // Handle module add from drawer
-    const handleAddModule = (moduleId) => {
+    const handleAddModule = async (moduleId) => {
         log('Module Added', { moduleId });
+
+        // Call API and await result
+        let result = null;
         if (onToggleModule) {
-            onToggleModule(moduleId, true);
+            result = await onToggleModule(moduleId, true);
+        }
+
+        // On success, apply optimistic add
+        if (result?.status === 'ok') {
+            setOptimisticAdds(prev => new Set([...prev, moduleId]));
         }
     };
 
@@ -544,16 +597,23 @@ function PatchEditorWindow({
     };
 
     // Handle wire drop on a parameter
-    const handleWireDrop = (targetModule, targetParam) => {
+    const handleWireDrop = async (targetModule, targetParam) => {
         if (!wiringFrom || !onToggleModulation) return;
 
+        const wireKey = `${wiringFrom.moduleId}:${targetModule}:${targetParam}`;
         log('Wire Created', {
             source: wiringFrom.moduleId,
             target: targetModule,
             param: targetParam
         });
+
         // API signature: toggleModulation(targetParam, sourceModule, enabled)
-        onToggleModulation(targetParam, wiringFrom.moduleId, true);
+        const result = await onToggleModulation(targetParam, wiringFrom.moduleId, true);
+
+        // On success, apply optimistic wire add
+        if (result?.status === 'ok') {
+            setOptimisticWireAdds(prev => new Set([...prev, wireKey]));
+        }
 
         // If this was a pending module drop, clear pending state
         if (pendingModule && pendingModule.moduleId === wiringFrom.moduleId) {

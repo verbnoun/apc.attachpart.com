@@ -367,15 +367,17 @@ function App() {
     //------------------------------------------------------------------
 
     const toggleModule = async (moduleName, enabled) => {
-        if (!synthPortName) return;
+        if (!synthPortName) return null;
         const api = deviceApisRef.current[synthPortName];
-        if (!api || currentPatchIndex < 0) return;
+        if (!api || currentPatchIndex < 0) return null;
 
         try {
-            await api.toggleModule(currentPatchIndex, moduleName, enabled);
+            const result = await api.toggleModule(currentPatchIndex, moduleName, enabled);
             await loadPatch(currentPatchIndex);
+            return result;  // Return for optimistic UI
         } catch (err) {
             addLog(`Failed to toggle module: ${err.message}`, 'error');
+            return null;
         }
     };
 
@@ -393,15 +395,17 @@ function App() {
     };
 
     const toggleModulation = async (targetParam, sourceModule, enabled) => {
-        if (!synthPortName) return;
+        if (!synthPortName) return null;
         const api = deviceApisRef.current[synthPortName];
-        if (!api || currentPatchIndex < 0) return;
+        if (!api || currentPatchIndex < 0) return null;
 
         try {
-            await api.toggleModulation(currentPatchIndex, targetParam, sourceModule, enabled);
+            const result = await api.toggleModulation(currentPatchIndex, targetParam, sourceModule, enabled);
             await loadPatch(currentPatchIndex);
+            return result;  // Return for optimistic UI
         } catch (err) {
             addLog(`Failed to toggle modulation: ${err.message}`, 'error');
+            return null;
         }
     };
 
