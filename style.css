@@ -999,7 +999,7 @@ html, body {
     box-shadow:
         inset -3px -3px var(--ap-window-shadow-dark),
         inset 3px 3px var(--ap-window-shadow-light);
-    min-width: 80px;
+    min-width: 140px;
     cursor: move;
     user-select: none;
 }
@@ -1019,6 +1019,31 @@ html, body {
     flex: 1;
     text-align: center;
     padding: 0 var(--ap-spacing-xs);
+}
+
+/* Delete button on node header */
+.ap-node-delete-btn {
+    width: 14px;
+    height: 14px;
+    font-size: 8px;
+    font-family: var(--ap-font-family);
+    background: transparent;
+    border: 1px solid currentColor;
+    color: inherit;
+    cursor: pointer;
+    opacity: 0.6;
+    margin-left: 2px;
+    padding: 0;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.ap-node-delete-btn:hover {
+    opacity: 1;
+    background: var(--ap-accent-red);
+    border-color: var(--ap-accent-red);
 }
 
 .ap-node-audio .ap-node-header {
@@ -1042,6 +1067,11 @@ html, body {
     font-size: 7px;
 }
 
+.ap-node-param-container {
+    display: flex;
+    flex-direction: column;
+}
+
 .ap-node-param {
     display: flex;
     align-items: center;
@@ -1052,11 +1082,94 @@ html, body {
 .ap-node-param-key {
     flex: 1;
     color: var(--ap-text-muted);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ap-node-param-slider {
+    flex: 1;
+    height: 8px;
+    max-width: 50px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: var(--ap-bg-tertiary);
+    border: 1px solid var(--ap-text-muted);
+    cursor: pointer;
+}
+
+.ap-node-param-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 8px;
+    height: 12px;
+    background: var(--ap-accent-blue);
+    cursor: pointer;
+}
+
+.ap-node-param-slider::-moz-range-thumb {
+    width: 8px;
+    height: 12px;
+    background: var(--ap-accent-blue);
+    cursor: pointer;
+    border: none;
 }
 
 .ap-node-param-value {
     text-align: right;
     color: var(--ap-text-primary);
+    min-width: 24px;
+}
+
+/* Modulation amount sliders on target nodes */
+.ap-node-mod-amount {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 0 2px 16px;
+    font-size: var(--ap-font-size-xs);
+    opacity: 0.85;
+}
+
+.ap-mod-source-label {
+    min-width: 40px;
+    font-size: 6px;
+    text-transform: uppercase;
+}
+
+.ap-mod-amount-mini {
+    flex: 1;
+    height: 8px;
+    max-width: 60px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: var(--ap-bg-tertiary);
+    border: 1px solid var(--ap-text-muted);
+    cursor: pointer;
+}
+
+.ap-mod-amount-mini::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 8px;
+    height: 12px;
+    background: var(--ap-accent-yellow);
+    cursor: pointer;
+}
+
+.ap-mod-amount-mini::-moz-range-thumb {
+    width: 8px;
+    height: 12px;
+    background: var(--ap-accent-yellow);
+    cursor: pointer;
+    border: none;
+}
+
+.ap-mod-amount-value {
+    min-width: 24px;
+    text-align: right;
+    font-size: 7px;
+    color: var(--ap-text-secondary);
 }
 
 /* Node ports - Header ports (inline in flexbox header) */
@@ -1187,56 +1300,6 @@ html, body {
 .ap-node-control .ap-node-port-header-out.active {
     background: var(--ap-accent-yellow);
     box-shadow: 0 0 8px var(--ap-accent-yellow);
-}
-
-/* KEYMOD node - combined VELOCITY/PRESSURE/BEND */
-.ap-node-keymod {
-    min-width: 120px;
-}
-
-.ap-keymod-outputs {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    padding: 8px;
-}
-
-.ap-keymod-output {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 4px 8px;
-    background: var(--ap-bg-secondary);
-    border-radius: 4px;
-    cursor: pointer;
-    transition: background 0.15s;
-}
-
-.ap-keymod-output:hover {
-    background: var(--ap-accent-purple);
-}
-
-.ap-keymod-output.wiring-source {
-    background: var(--ap-accent-yellow);
-}
-
-.ap-keymod-output-label {
-    font-size: 10px;
-    color: var(--ap-text);
-}
-
-.ap-keymod-output .ap-output-port {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    background: var(--ap-accent-purple);
-    border: 2px solid var(--ap-border-light);
-    transition: transform 0.15s, background 0.15s;
-}
-
-.ap-keymod-output:hover .ap-output-port {
-    transform: scale(1.2);
-    background: var(--ap-accent-yellow);
 }
 
 /* Modulation wire styling */
@@ -1785,6 +1848,27 @@ html, body {
 .ap-node.deleting {
     animation: nodeDelete 0.3s ease-out forwards;
     pointer-events: none;
+}
+
+/* Pending node (dropped but not yet wired) */
+.ap-node.pending {
+    opacity: 0.7;
+    animation: nodePending 1s ease-in-out infinite;
+}
+
+@keyframes nodePending {
+    0%, 100% { opacity: 0.5; }
+    50% { opacity: 0.9; }
+}
+
+/* Drawer module that requires drag (mod/control) */
+.ap-drawer-module.drag-only {
+    cursor: grab;
+    opacity: 0.85;
+}
+
+.ap-drawer-module.drag-only:hover {
+    cursor: grab;
 }
 
 /* Selected wire glow */

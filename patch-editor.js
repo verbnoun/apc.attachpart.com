@@ -11,7 +11,7 @@
  * - Modulation wires (user-created, editable)
  */
 
-const { useState, useEffect, useCallback, useRef, useMemo } = React;
+const { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } = React;
 
 //======================================================================
 // MODULE DEFINITIONS
@@ -25,7 +25,7 @@ const DEFAULT_MODULE_DEFINITIONS = {
         { id: 'OSC1', name: 'OSC 1', type: 'audio', category: 'oscillator' },
         { id: 'OSC2', name: 'OSC 2', type: 'audio', category: 'oscillator' },
         { id: 'FILTER', name: 'FILTER', type: 'audio', category: 'filter' },
-        { id: 'VAMP', name: 'OUTPUT', type: 'audio', category: 'amp', alwaysEnabled: true }
+        { id: 'VAMP', name: 'Amp', type: 'audio', category: 'amp', alwaysEnabled: true }
     ],
     // Modulation sources - user wires to targets
     mod: [
@@ -34,9 +34,11 @@ const DEFAULT_MODULE_DEFINITIONS = {
         { id: 'GLFO', name: 'GLOBAL LFO', type: 'mod', category: 'lfo' },
         { id: 'VLFO', name: 'VOICE LFO', type: 'mod', category: 'lfo' }
     ],
-    // Control source - KEYMOD combines VELOCITY, PRESSURE, BEND
+    // Control sources - individual key expression modules
     control: [
-        { id: 'KEYMOD', name: 'KEY MOD', type: 'control', outputs: ['VELOCITY', 'PRESSURE', 'BEND'], alwaysEnabled: true }
+        { id: 'VELOCITY', name: 'Velocity', type: 'control' },
+        { id: 'PRESSURE', name: 'Pressure', type: 'control' },
+        { id: 'BEND', name: 'Bend', type: 'control' }
     ]
 };
 
@@ -63,13 +65,15 @@ function buildModuleDefinitions(topology) {
         alwaysEnabled: m.alwaysEnabled || false
     }));
 
-    const control = (topology.modules.control || []).map(m => ({
-        id: m.id,
-        name: m.name,
-        type: 'control',
-        outputs: m.outputs || [],
-        alwaysEnabled: m.alwaysEnabled || false
-    }));
+    // Control modules - use device topology if provided, otherwise defaults
+    const control = topology.modules.control?.length > 0
+        ? topology.modules.control.map(m => ({
+            id: m.id,
+            name: m.name,
+            type: 'control',
+            alwaysEnabled: m.alwaysEnabled || false
+        }))
+        : DEFAULT_MODULE_DEFINITIONS.control;
 
     return { audio, mod, control };
 }
@@ -106,7 +110,6 @@ function canSourceModulateParam(topology, sourceId, paramKey) {
 
 /**
  * Find a module definition by ID
- * For KEYMOD outputs (VELOCITY, PRESSURE, BEND), returns a synthetic module def
  */
 function findModuleDef(moduleId, moduleDefinitions) {
     const defs = moduleDefinitions || DEFAULT_MODULE_DEFINITIONS;
@@ -115,25 +118,32 @@ function findModuleDef(moduleId, moduleDefinitions) {
         ...defs.mod,
         ...defs.control
     ];
+    return allModules.find(m => m.id === moduleId) || null;
+}
 
-    // First check if it's a direct module match
-    const directMatch = allModules.find(m => m.id === moduleId);
-    if (directMatch) return directMatch;
+/**
+ * Find all AMOUNT params for a given target parameter
+ * Returns array of { source, key, value, min, max }
+ */
+function findAmountParamsForTarget(moduleData, targetParamKey) {
+    if (!moduleData) return [];
+    const amounts = [];
+    const knownSources = ['VELOCITY', 'PRESSURE', 'BEND', 'GLFO', 'VLFO', 'MOD_ENV', 'VAMP_ENV'];
 
-    // Check if it's a KEYMOD output (VELOCITY, PRESSURE, BEND)
-    const keymod = defs.control.find(m => m.id === 'KEYMOD');
-    if (keymod?.outputs?.includes(moduleId)) {
-        // Return synthetic module def for KEYMOD output
-        return {
-            id: moduleId,
-            name: moduleId,
-            type: 'control',
-            isKeymodOutput: true,
-            parentModule: 'KEYMOD'
-        };
-    }
-
-    return null;
+    knownSources.forEach(source => {
+        const amountKey = `${targetParamKey}_${source}_AMOUNT`;
+        const amountData = moduleData[amountKey];
+        if (amountData !== undefined) {
+            amounts.push({
+                source,
+                key: amountKey,
+                value: typeof amountData === 'object' ? amountData.initial : amountData,
+                min: amountData.range?.[0] ?? -1,
+                max: amountData.range?.[1] ?? 1
+            });
+        }
+    });
+    return amounts;
 }
 
 /**
@@ -273,10 +283,6 @@ function PatchEditorWindow({
         wireKey: null,     // Selected wire key: "{source}:{target}:{param}"
     });
 
-    // Context menu state (only for param editing, not selection)
-    const [contextMenuTarget, setContextMenuTarget] = useState(null); // moduleId
-    const [contextMenuPos, setContextMenuPos] = useState(null);
-
     // Confirmation dialog state
     const [confirmDialog, setConfirmDialog] = useState(null);
     // { type: 'module'|'wire', id: string, impact: object }
@@ -346,23 +352,25 @@ function PatchEditorWindow({
             });
         });
 
-        // Second pass: determine enabled modules
+        // Second pass: determine enabled modules from patch keys
         Object.keys(currentPatch).forEach(key => {
             if (metadataKeys.includes(key)) return;
 
             const moduleData = currentPatch[key];
             const moduleKeys = Object.keys(moduleData || {});
 
-            // Check 1: Has parameters (not just name/targets)
+            // Has parameters (not just name/targets)
             const hasParams = moduleKeys.some(k => k !== 'name' && k !== 'targets');
 
-            // Check 2: Has active modulation routes
-            const hasActiveRoutes = activeSources.has(key);
-
-            if (hasParams || hasActiveRoutes) {
+            if (hasParams) {
                 enabled.add(key);
             }
         });
+
+        // Third pass: add control sources that have active routes
+        // (VELOCITY, PRESSURE, BEND don't have their own patch keys,
+        // they only appear as suffixes in _AMOUNT params)
+        activeSources.forEach(src => enabled.add(src));
 
         return enabled;
     }, [currentPatch]);
@@ -439,20 +447,6 @@ function PatchEditorWindow({
         setSelection({ type: null, moduleId: null, wireKey: null });
     };
 
-    // Open context menu (click on node body/params)
-    const handleOpenContextMenu = (moduleId, event) => {
-        if (wiringFrom) return; // Don't open context menu while wiring
-        log('Context Menu Opened', { moduleId });
-        setContextMenuTarget(moduleId);
-        setContextMenuPos({ x: event.clientX, y: event.clientY });
-    };
-
-    // Close context menu
-    const closeContextMenu = () => {
-        setContextMenuTarget(null);
-        setContextMenuPos(null);
-    };
-
     // Show delete confirmation dialog
     const showDeleteConfirmation = (type, id) => {
         if (type === 'module') {
@@ -497,7 +491,7 @@ function PatchEditorWindow({
             // Wait for animation
             await new Promise(resolve => setTimeout(resolve, 300));
 
-            // Actually delete
+            // Actually delete - device handles removing related amounts
             if (onToggleModule) {
                 onToggleModule(moduleId, false);
             }
@@ -522,7 +516,6 @@ function PatchEditorWindow({
         // Clear dialog and selection
         setConfirmDialog(null);
         clearSelection();
-        closeContextMenu();
     };
 
     // Cancel deletion
@@ -578,12 +571,10 @@ function PatchEditorWindow({
 
         if (pendingModule) {
             log('Pending Module Cancelled', { moduleId: pendingModule.moduleId });
-            // Remove the pending module with animation
+            // Just clear the pending state - no API call needed since we never added it
+            // Show delete animation briefly
             setDeletingModules(prev => new Set([...prev, pendingModule.moduleId]));
             setTimeout(() => {
-                if (onToggleModule) {
-                    onToggleModule(pendingModule.moduleId, false);
-                }
                 setDeletingModules(prev => {
                     const next = new Set(prev);
                     next.delete(pendingModule.moduleId);
@@ -617,8 +608,6 @@ function PatchEditorWindow({
                     handleCancelDelete();
                 } else if (wiringFrom) {
                     handleCancelWiring();
-                } else if (contextMenuTarget) {
-                    closeContextMenu();
                 } else {
                     clearSelection();
                 }
@@ -627,7 +616,7 @@ function PatchEditorWindow({
 
         document.addEventListener('keydown', handleKeyDown);
         return () => document.removeEventListener('keydown', handleKeyDown);
-    }, [selection, confirmDialog, wiringFrom, contextMenuTarget]);
+    }, [selection, confirmDialog, wiringFrom]);
 
     return (
         <div className="ap-patch-editor" onMouseUp={handleCancelWiring}>
@@ -651,6 +640,7 @@ function PatchEditorWindow({
                 enabledModules={enabledModules}
                 onAddModule={handleAddModule}
                 currentPatch={currentPatch}
+                pendingModuleId={pendingModule?.moduleId}
             />
 
             {/* Node Workspace with Loading Overlay */}
@@ -663,7 +653,6 @@ function PatchEditorWindow({
                     nodePositions={nodePositions}
                     onNodePositionChange={(id, pos) => setNodePositions(prev => ({ ...prev, [id]: pos }))}
                     onSelectModule={handleSelectModule}
-                    onOpenContextMenu={handleOpenContextMenu}
                     onSelectWire={handleSelectWire}
                     onClearSelection={clearSelection}
                     selection={selection}
@@ -672,32 +661,19 @@ function PatchEditorWindow({
                     setPendingModule={setPendingModule}
                     onAddModule={handleAddModule}
                     onToggleModule={onToggleModule}
+                    onRemoveModule={handleRemoveModule}
                     wiringFrom={wiringFrom}
                     onStartWiring={handleStartWiring}
                     onWireDrop={handleWireDrop}
                     onWiringMouseMove={setWiringMousePos}
                     wiringMousePos={wiringMousePos}
                     modConnections={modConnections}
+                    onUpdateParam={onUpdateParam}
+                    onUpdateModAmount={onUpdateModAmount}
                     log={log}
                 />
                 <LoadingOverlay isLoading={isLoading} isVisible={isLoading} />
             </div>
-
-            {/* Context Menu */}
-            {contextMenuTarget && contextMenuPos && !wiringFrom && (
-                <NodeContextMenu
-                    moduleId={contextMenuTarget}
-                    moduleDefinitions={moduleDefinitions}
-                    patch={currentPatch}
-                    position={contextMenuPos}
-                    onClose={closeContextMenu}
-                    onUpdateParam={onUpdateParam}
-                    onToggleModulation={onToggleModulation}
-                    onUpdateModAmount={onUpdateModAmount}
-                    onRemove={() => handleRemoveModule(contextMenuTarget)}
-                    enabledModules={enabledModules}
-                />
-            )}
 
             {/* Confirmation Dialog */}
             {confirmDialog && (
@@ -840,7 +816,7 @@ function PatchesList({ patches, currentIndex, onSelect, onCreate, onDelete, onRe
 // MODULE DRAWER
 //======================================================================
 
-function ModuleDrawer({ moduleDefinitions, enabledModules, onAddModule, currentPatch }) {
+function ModuleDrawer({ moduleDefinitions, enabledModules, onAddModule, currentPatch, pendingModuleId }) {
     const [showJson, setShowJson] = useState(false);
 
     return (
@@ -854,18 +830,21 @@ function ModuleDrawer({ moduleDefinitions, enabledModules, onAddModule, currentP
                     modules={moduleDefinitions.audio}
                     enabledModules={enabledModules}
                     onAddModule={onAddModule}
+                    pendingModuleId={pendingModuleId}
                 />
                 <DrawerSection
                     title="MOD"
                     modules={moduleDefinitions.mod}
                     enabledModules={enabledModules}
                     onAddModule={onAddModule}
+                    pendingModuleId={pendingModuleId}
                 />
                 <DrawerSection
                     title="CONTROL"
                     modules={moduleDefinitions.control}
                     enabledModules={enabledModules}
                     onAddModule={onAddModule}
+                    pendingModuleId={pendingModuleId}
                 />
             </div>
             <div className="ap-drawer-footer">
@@ -887,15 +866,22 @@ function ModuleDrawer({ moduleDefinitions, enabledModules, onAddModule, currentP
     );
 }
 
-function DrawerSection({ title, modules, enabledModules, onAddModule }) {
-    // Filter to only show modules NOT in workspace
-    const availableModules = modules.filter(m => !enabledModules.has(m.id));
+function DrawerSection({ title, modules, enabledModules, onAddModule, pendingModuleId }) {
+    // Filter to only show modules NOT in workspace (and not pending)
+    const availableModules = modules.filter(m =>
+        !enabledModules.has(m.id) && m.id !== pendingModuleId
+    );
 
     if (availableModules.length === 0) return null;
 
     const handleDragStart = (e, moduleId) => {
         e.dataTransfer.setData('moduleId', moduleId);
         e.dataTransfer.effectAllowed = 'copy';
+    };
+
+    const handleClick = (module) => {
+        // All modules can be clicked to add at default position
+        onAddModule(module.id);
     };
 
     return (
@@ -907,7 +893,7 @@ function DrawerSection({ title, modules, enabledModules, onAddModule }) {
                     className="ap-drawer-module"
                     draggable
                     onDragStart={(e) => handleDragStart(e, module.id)}
-                    onClick={() => onAddModule(module.id)}
+                    onClick={() => handleClick(module)}
                 >
                     {module.name}
                 </div>
@@ -1025,7 +1011,6 @@ function NodeWorkspace({
     nodePositions,
     onNodePositionChange,
     onSelectModule,
-    onOpenContextMenu,
     onSelectWire,
     onClearSelection,
     selection,
@@ -1034,12 +1019,15 @@ function NodeWorkspace({
     setPendingModule,
     onAddModule,
     onToggleModule,
+    onRemoveModule,
     wiringFrom,
     onStartWiring,
     onWireDrop,
     onWiringMouseMove,
     wiringMousePos,
     modConnections,
+    onUpdateParam,
+    onUpdateModAmount,
     log = () => {}  // Default to no-op if not provided
 }) {
     const workspaceRef = useRef(null);
@@ -1074,13 +1062,13 @@ function NodeWorkspace({
 
         portPositionsRef.current[portId] = newPos;
 
-        // Debounce the state update - wait for all nodes to report
+        // Debounce the state update - short delay for batching but fast enough for drag
         if (positionUpdateTimeoutRef.current) {
             clearTimeout(positionUpdateTimeoutRef.current);
         }
         positionUpdateTimeoutRef.current = setTimeout(() => {
             setPortPositions({ ...portPositionsRef.current });
-        }, 50);
+        }, 10);
     }, []);
 
     // Cleanup timeout on unmount
@@ -1092,21 +1080,46 @@ function NodeWorkspace({
         };
     }, []);
 
+    // Default positions matching intended layout
+    const DEFAULT_POSITIONS = {
+        // Audio - oscillators stacked vertically, then filter/amp/effects flow right
+        OSC0:     { x: 50, y: 50 },
+        OSC1:     { x: 50, y: 160 },
+        OSC2:     { x: 50, y: 270 },
+        FILTER:   { x: 250, y: 50 },
+        VAMP:     { x: 450, y: 50 },
+        DISTORT:  { x: 650, y: 50 },
+        DELAY:    { x: 650, y: 160 },
+
+        // Mod sources - below audio
+        MOD_ENV:  { x: 50, y: 420 },
+        VAMP_ENV: { x: 250, y: 420 },
+        GLFO:     { x: 50, y: 530 },
+        VLFO:     { x: 250, y: 530 },
+
+        // Control sources - bottom
+        VELOCITY: { x: 50, y: 640 },
+        PRESSURE: { x: 200, y: 640 },
+        BEND:     { x: 350, y: 640 },
+    };
+
     // Get default position for a module
     const getDefaultPosition = (moduleId, index) => {
+        // Use predefined position if available
+        if (DEFAULT_POSITIONS[moduleId]) {
+            return DEFAULT_POSITIONS[moduleId];
+        }
+
+        // Fallback for unknown modules
         const allModules = [...moduleDefinitions.audio, ...moduleDefinitions.mod, ...moduleDefinitions.control];
         const moduleDef = allModules.find(m => m.id === moduleId);
 
         if (moduleDef?.type === 'audio') {
-            // Audio modules in horizontal chain
-            const chainIndex = AUDIO_CHAIN_ORDER.indexOf(moduleId);
-            return { x: 50 + chainIndex * 150, y: 50 };
+            return { x: 50 + index * 200, y: 50 };
         } else if (moduleDef?.type === 'mod') {
-            // Mod sources below audio chain
-            return { x: 50 + index * 120, y: 200 };
+            return { x: 50 + index * 150, y: 420 };
         } else {
-            // Control sources at bottom
-            return { x: 50 + index * 100, y: 320 };
+            return { x: 50 + index * 150, y: 640 };
         }
     };
 
@@ -1168,19 +1181,42 @@ function NodeWorkspace({
         }
     }, [draggingNode, dragOffset]);
 
-    // Build audio wires (connect audio modules in chain order)
+    // Build audio wires with proper parallel routing
+    // OSCs -> Filter (parallel), Filter -> Amp, Amp -> Effects (chain)
     const audioWires = useMemo(() => {
         const wires = [];
-        const audioModules = enabledByType.audio;
+        const modules = enabledByType.audio;
 
-        // Connect each audio module to the next in chain
-        for (let i = 0; i < audioModules.length - 1; i++) {
-            const from = audioModules[i];
-            const to = audioModules[i + 1];
-            wires.push({ from: from.id, to: to.id, type: 'audio' });
+        // Find modules by category/role
+        const oscillators = modules.filter(m => m.id.startsWith('OSC'));
+        const filter = modules.find(m => m.id === 'FILTER');
+        const amp = modules.find(m => m.id === 'VAMP');
+        const effects = modules.filter(m => ['DISTORT', 'DELAY'].includes(m.id));
+
+        // OSCs -> Filter (parallel)
+        if (filter) {
+            oscillators.forEach(osc => {
+                wires.push({ from: osc.id, to: filter.id, type: 'audio' });
+            });
+        } else if (amp) {
+            // No filter - OSCs go directly to amp
+            oscillators.forEach(osc => {
+                wires.push({ from: osc.id, to: amp.id, type: 'audio' });
+            });
         }
 
-        // VAMP (OUTPUT) is the final destination - no outgoing wire
+        // Filter -> Amp
+        if (filter && amp) {
+            wires.push({ from: filter.id, to: amp.id, type: 'audio' });
+        }
+
+        // Amp -> Effects chain
+        if (amp && effects.length > 0) {
+            wires.push({ from: amp.id, to: effects[0].id, type: 'audio' });
+            for (let i = 0; i < effects.length - 1; i++) {
+                wires.push({ from: effects[i].id, to: effects[i + 1].id, type: 'audio' });
+            }
+        }
 
         return wires;
     }, [enabledByType.audio]);
@@ -1228,18 +1264,19 @@ function NodeWorkspace({
         // Set the position BEFORE adding module
         onNodePositionChange(moduleId, dropPosition);
 
-        // Add the module
-        if (onAddModule) {
-            onAddModule(moduleId);
-        }
-
-        // For mod/control modules, enter wiring mode
         const moduleDef = findModuleDef(moduleId, moduleDefinitions);
+
+        // For mod/control modules: set pending and start wiring (NO API call yet)
+        // The API call happens when the wire is connected
         if (moduleDef?.type === 'mod' || moduleDef?.type === 'control') {
-            // Set pending module and start wiring
             setPendingModule({ moduleId, position: dropPosition });
             onStartWiring(moduleId, moduleDef.type);
-            log('Wiring Mode Started', { moduleId, type: moduleDef.type });
+            log('Pending Module Created', { moduleId, type: moduleDef.type });
+        } else {
+            // For audio modules: add immediately via API
+            if (onAddModule) {
+                onAddModule(moduleId);
+            }
         }
     };
 
@@ -1248,10 +1285,9 @@ function NodeWorkspace({
         // Only handle clicks directly on the workspace, not on nodes
         if (e.target !== workspaceRef.current) return;
 
-        // If we have a pending module, remove it
-        if (pendingModule && onToggleModule) {
+        // If we have a pending module, just clear it (no API call needed)
+        if (pendingModule) {
             log('Pending Module Removed', { moduleId: pendingModule.moduleId });
-            onToggleModule(pendingModule.moduleId, false);
             setPendingModule(null);
         }
 
@@ -1345,11 +1381,13 @@ function NodeWorkspace({
                         isDeleting={isDeleting}
                         onMouseDown={(e) => handleMouseDown(module.id, e)}
                         onSelectModule={() => onSelectModule(module.id)}
-                        onOpenContextMenu={(e) => onOpenContextMenu(module.id, e)}
+                        onRemoveModule={() => onRemoveModule(module.id)}
                         wiringFrom={wiringFrom}
                         onParamDrop={onWireDrop}
                         onPortPositionChange={handlePortPositionChange}
                         selectedWireTarget={selectedWireTarget}
+                        onUpdateParam={onUpdateParam}
+                        onUpdateModAmount={onUpdateModAmount}
                     />
                 );
             })}
@@ -1370,38 +1408,21 @@ function NodeWorkspace({
                         isDeleting={isDeleting}
                         onMouseDown={(e) => handleMouseDown(module.id, e)}
                         onSelectModule={() => onSelectModule(module.id)}
-                        onOpenContextMenu={(e) => onOpenContextMenu(module.id, e)}
+                        onRemoveModule={() => onRemoveModule(module.id)}
                         onStartWiring={() => onStartWiring(module.id, module.type)}
                         isWiringSource={wiringFrom?.moduleId === module.id}
                         onPortPositionChange={handlePortPositionChange}
                         selectedWireTarget={selectedWireTarget}
+                        onUpdateParam={onUpdateParam}
+                        onUpdateModAmount={onUpdateModAmount}
                     />
                 );
             })}
 
-            {/* Control nodes - KEYMOD rendered as special component */}
+            {/* Control nodes */}
             {enabledByType.control.map((module, index) => {
                 const pos = nodePositions[module.id] || getDefaultPosition(module.id, index);
                 const isSelected = selection?.type === 'module' && selection?.moduleId === module.id;
-
-                // KEYMOD has outputs (VELOCITY, PRESSURE, BEND) - render special node
-                if (module.id === 'KEYMOD' && module.outputs) {
-                    return (
-                        <KeyModNode
-                            key={module.id}
-                            module={module}
-                            position={pos}
-                            isSelected={isSelected}
-                            onMouseDown={(e) => handleMouseDown(module.id, e)}
-                            onSelectModule={() => onSelectModule(module.id)}
-                            onStartWiring={onStartWiring}
-                            onPortPositionChange={handlePortPositionChange}
-                            wiringFrom={wiringFrom}
-                        />
-                    );
-                }
-
-                // Regular control node
                 const isDeleting = deletingModules?.has(module.id);
                 return (
                     <Node
@@ -1414,79 +1435,44 @@ function NodeWorkspace({
                         isDeleting={isDeleting}
                         onMouseDown={(e) => handleMouseDown(module.id, e)}
                         onSelectModule={() => onSelectModule(module.id)}
-                        onOpenContextMenu={(e) => onOpenContextMenu(module.id, e)}
+                        onRemoveModule={() => onRemoveModule(module.id)}
                         onStartWiring={() => onStartWiring(module.id, module.type)}
                         isWiringSource={wiringFrom?.moduleId === module.id}
                         onPortPositionChange={handlePortPositionChange}
                         selectedWireTarget={selectedWireTarget}
+                        onUpdateParam={onUpdateParam}
+                        onUpdateModAmount={onUpdateModAmount}
                     />
                 );
             })}
-        </div>
-    );
-}
 
-//======================================================================
-// KEYMOD NODE - Combined VELOCITY/PRESSURE/BEND with 3 outputs
-//======================================================================
-
-function KeyModNode({
-    module,
-    position,
-    isSelected,
-    onMouseDown,
-    onSelectModule,
-    onStartWiring,
-    onPortPositionChange,
-    wiringFrom
-}) {
-    const outputRefs = useRef({});
-    const outputs = module.outputs || ['VELOCITY', 'PRESSURE', 'BEND'];
-
-    // Report port positions for wire drawing
-    useEffect(() => {
-        outputs.forEach(output => {
-            const ref = outputRefs.current[output];
-            if (ref && onPortPositionChange) {
-                const rect = ref.getBoundingClientRect();
-                const pos = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-                onPortPositionChange(`${output}-out`, pos);
-            }
-        });
-    });
-
-    const nodeClass = `ap-node ap-node-control ap-node-keymod ${isSelected ? 'ap-node-selected' : ''}`;
-
-    return (
-        <div
-            className={nodeClass}
-            style={{ left: position.x, top: position.y }}
-            onMouseDown={onMouseDown}
-        >
-            <div className="ap-node-header" onClick={(e) => { e.stopPropagation(); onSelectModule(); }}>
-                <span className="ap-node-name">{module.name}</span>
-            </div>
-            <div className="ap-node-body ap-keymod-outputs">
-                {outputs.map(output => {
-                    const isWiringSource = wiringFrom?.moduleId === output;
-                    return (
-                        <div
-                            key={output}
-                            className={`ap-keymod-output ${isWiringSource ? 'wiring-source' : ''}`}
-                            onMouseDown={(e) => {
-                                e.stopPropagation();
-                                onStartWiring(output, 'control');
-                            }}
-                        >
-                            <span className="ap-keymod-output-label">{output}</span>
-                            <div
-                                className="ap-output-port"
-                                ref={el => outputRefs.current[output] = el}
-                            />
-                        </div>
-                    );
-                })}
-            </div>
+            {/* Pending module (dropped but not yet wired) */}
+            {pendingModule && !enabledModules.has(pendingModule.moduleId) && (() => {
+                const moduleDef = findModuleDef(pendingModule.moduleId, moduleDefinitions);
+                if (!moduleDef) return null;
+                const pos = nodePositions[pendingModule.moduleId] || pendingModule.position;
+                return (
+                    <Node
+                        key={`pending-${pendingModule.moduleId}`}
+                        module={moduleDef}
+                        topology={topology}
+                        patch={currentPatch}
+                        position={pos}
+                        isSelected={false}
+                        isDeleting={deletingModules?.has(pendingModule.moduleId)}
+                        isPending={true}
+                        onMouseDown={(e) => handleMouseDown(pendingModule.moduleId, e)}
+                        onSelectModule={() => {}}
+                        onRemoveModule={() => {}}
+                        onStartWiring={() => onStartWiring(pendingModule.moduleId, moduleDef.type)}
+                        isWiringSource={wiringFrom?.moduleId === pendingModule.moduleId}
+                        onPortPositionChange={handlePortPositionChange}
+                        selectedWireTarget={selectedWireTarget}
+                        onUpdateParam={onUpdateParam}
+                        onUpdateModAmount={onUpdateModAmount}
+                    />
+                );
+            })()}
         </div>
     );
 }
@@ -1502,15 +1488,18 @@ function Node({
     position,
     isSelected,
     isDeleting,
+    isPending,
     onMouseDown,
     onSelectModule,
-    onOpenContextMenu,
+    onRemoveModule,
     onStartWiring,
     isWiringSource,
     wiringFrom,
     onParamDrop,
     onPortPositionChange,
-    selectedWireTarget
+    selectedWireTarget,
+    onUpdateParam,
+    onUpdateModAmount
 }) {
     const moduleData = patch?.[module.id];
 
@@ -1521,7 +1510,7 @@ function Node({
 
     const isAudioModule = module.type === 'audio';
 
-    // Get key parameters to display in digest
+    // Get key parameters to display with full range info
     const digestParams = useMemo(() => {
         if (!moduleData) return [];
 
@@ -1532,7 +1521,12 @@ function Node({
             if (typeof value === 'object' && value !== null) {
                 // It's a parameter with range/initial/etc
                 if (value.initial !== undefined) {
-                    params.push({ key, value: value.initial });
+                    params.push({
+                        key,
+                        value: value.initial,
+                        min: value.range?.[0] ?? 0,
+                        max: value.range?.[1] ?? 1
+                    });
                 }
             }
         });
@@ -1541,7 +1535,8 @@ function Node({
     }, [moduleData]);
 
     // Report port positions when mounted or position changes
-    useEffect(() => {
+    // Use useLayoutEffect for synchronous updates during drag
+    useLayoutEffect(() => {
         if (!onPortPositionChange) return;
 
         // Header input port (audio modules only)
@@ -1582,11 +1577,11 @@ function Node({
         }
     };
 
-    // Handle body click - opens context menu
-    const handleBodyClick = (e) => {
+    // Handle delete button click
+    const handleDeleteClick = (e) => {
         e.stopPropagation();
-        if (onOpenContextMenu) {
-            onOpenContextMenu(e);
+        if (onRemoveModule) {
+            onRemoveModule();
         }
     };
 
@@ -1611,6 +1606,7 @@ function Node({
     if (isWiringSource) classNames.push('wiring-source');
     if (isSelected) classNames.push('selected');
     if (isDeleting) classNames.push('deleting');
+    if (isPending) classNames.push('pending');
 
     return (
         <div
@@ -1626,6 +1622,17 @@ function Node({
                         className="ap-node-port ap-node-port-header-in"
                     />
                 )}
+                {/* Delete button for removable modules */}
+                {!module.alwaysEnabled && (
+                    <button
+                        className="ap-node-delete-btn"
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onClick={handleDeleteClick}
+                        title="Remove module"
+                    >
+                        X
+                    </button>
+                )}
                 <span className="ap-node-title">{module.name}</span>
                 {/* Output port - all modules */}
                 <div
@@ -1635,7 +1642,7 @@ function Node({
                     title={(module.type === 'mod' || module.type === 'control') ? "Drag to connect" : undefined}
                 />
             </div>
-            <div className="ap-node-body" onClick={handleBodyClick}>
+            <div className="ap-node-body">
                 {digestParams.map(param => {
                     // Check if this param is a valid target for the current wiring source
                     const canReceiveWire = wiringFrom &&
@@ -1646,24 +1653,137 @@ function Node({
                         selectedWireTarget.module === module.id &&
                         selectedWireTarget.param === param.key;
 
+                    // Find AMOUNT params for this param
+                    const amountParams = findAmountParamsForTarget(moduleData, param.key);
+
                     return (
-                        <div
-                            key={param.key}
-                            className={`ap-node-param ${canReceiveWire ? 'drop-target' : ''} ${isWireTarget ? 'wire-target' : ''}`}
-                            onMouseUp={canReceiveWire ? (e) => handleParamDrop(param.key, e) : undefined}
-                        >
-                            {/* Param input port for modulation targets */}
+                        <div key={param.key} className="ap-node-param-container">
                             <div
-                                ref={el => paramPortRefs.current[param.key] = el}
-                                className="ap-node-port ap-node-port-param-in"
-                            />
-                            <span className="ap-node-param-key">{param.key}</span>
-                            <span className="ap-node-param-value">{param.value}</span>
+                                className={`ap-node-param ${canReceiveWire ? 'drop-target' : ''} ${isWireTarget ? 'wire-target' : ''}`}
+                                onMouseDown={canReceiveWire ? (e) => e.stopPropagation() : undefined}
+                                onMouseUp={canReceiveWire ? (e) => handleParamDrop(param.key, e) : undefined}
+                            >
+                                {/* Param input port for modulation targets */}
+                                <div
+                                    ref={el => paramPortRefs.current[param.key] = el}
+                                    className="ap-node-port ap-node-port-param-in"
+                                />
+                                <span className="ap-node-param-key">{param.key}</span>
+                                <NodeParamSlider
+                                    param={param}
+                                    onUpdateParam={onUpdateParam}
+                                />
+                            </div>
+                            {/* Amount sliders under param */}
+                            {amountParams.map(amt => (
+                                <div key={amt.source} className="ap-node-mod-amount">
+                                    <span
+                                        className="ap-mod-source-label"
+                                        style={{ color: WIRE_COLORS[amt.source] }}
+                                    >
+                                        {amt.source.replace('_', ' ')}
+                                    </span>
+                                    <input
+                                        type="range"
+                                        className="ap-mod-amount-mini"
+                                        min={amt.min}
+                                        max={amt.max}
+                                        step={0.01}
+                                        value={amt.value}
+                                        onChange={(e) => onUpdateModAmount && onUpdateModAmount(
+                                            param.key,
+                                            amt.source,
+                                            parseFloat(e.target.value)
+                                        )}
+                                        onClick={(e) => e.stopPropagation()}
+                                        onMouseDown={(e) => e.stopPropagation()}
+                                    />
+                                    <span className="ap-mod-amount-value">{amt.value.toFixed(2)}</span>
+                                </div>
+                            ))}
                         </div>
                     );
                 })}
             </div>
         </div>
+    );
+}
+
+//======================================================================
+// NODE PARAM SLIDER - Inline slider with local state
+//======================================================================
+
+function NodeParamSlider({ param, onUpdateParam }) {
+    const [localValue, setLocalValue] = useState(param.value);
+
+    // Sync with external value changes
+    useEffect(() => {
+        setLocalValue(param.value);
+    }, [param.value]);
+
+    // Determine step size based on parameter type
+    const getStep = () => {
+        const key = param.key || '';
+        const range = param.max - param.min;
+
+        // WAVE params are always discrete
+        if (key.includes('_WAVE')) {
+            return 1;
+        }
+
+        // Small ranges (like 0-1, -1 to 1) need fine control
+        if (range <= 2) {
+            return 0.01;
+        }
+
+        // Medium ranges (like 0-10) get medium step
+        if (range <= 20) {
+            return 0.1;
+        }
+
+        // Large ranges (semitones, cents, frequency) get integer step
+        return 1;
+    };
+
+    // Format display value based on step size
+    const formatValue = (val) => {
+        const step = getStep();
+        if (step >= 1) {
+            return Math.round(val);
+        } else if (step >= 0.1) {
+            return val.toFixed(1);
+        } else {
+            return val.toFixed(2);
+        }
+    };
+
+    const handleChange = (e) => {
+        setLocalValue(parseFloat(e.target.value));
+    };
+
+    const handleCommit = () => {
+        if (onUpdateParam && localValue !== param.value) {
+            onUpdateParam(param.key, localValue);
+        }
+    };
+
+    return (
+        <>
+            <input
+                type="range"
+                className="ap-node-param-slider"
+                min={param.min}
+                max={param.max}
+                step={getStep()}
+                value={localValue}
+                onChange={handleChange}
+                onMouseUp={handleCommit}
+                onTouchEnd={handleCommit}
+                onClick={(e) => e.stopPropagation()}
+                onMouseDown={(e) => e.stopPropagation()}
+            />
+            <span className="ap-node-param-value">{formatValue(localValue)}</span>
+        </>
     );
 }
 
@@ -1687,12 +1807,18 @@ function ModWire({ connection, wireKey, portPositions, isSelected, onSelect }) {
     const x2 = toPort.x;
     const y2 = toPort.y;
 
-    // Bezier control points
-    const cx1 = x1 + 40;
-    const cx2 = x2 - 40;
+    // Always use horizontal stubs - exit right, enter left
+    // Scale offset based on vertical distance - more vertical = more horizontal stub needed
+    const dx = Math.abs(x2 - x1);
+    const dy = Math.abs(y2 - y1);
+    const offset = Math.max(40, Math.min(200, dx / 3 + dy / 2));
+    const cx1 = x1 + offset;
+    const cy1 = y1;
+    const cx2 = x2 - offset;
+    const cy2 = y2;
 
     const color = WIRE_COLORS[from] || 'var(--ap-wire-mod)';
-    const pathD = `M ${x1} ${y1} C ${cx1} ${y1}, ${cx2} ${y2}, ${x2} ${y2}`;
+    const pathD = `M ${x1} ${y1} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${x2} ${y2}`;
 
     const handleClick = (e) => {
         e.stopPropagation();
@@ -1764,14 +1890,21 @@ function DraggingWire({ fromModule, mousePos, portPositions }) {
     const x2 = mousePos.x;
     const y2 = mousePos.y;
 
-    const cx1 = x1 + 40;
-    const cx2 = x2 - 40;
+    // Always use horizontal stubs - exit right, enter left
+    // Scale offset based on vertical distance - more vertical = more horizontal stub needed
+    const dx = Math.abs(x2 - x1);
+    const dy = Math.abs(y2 - y1);
+    const offset = Math.max(40, Math.min(200, dx / 3 + dy / 2));
+    const cx1 = x1 + offset;
+    const cy1 = y1;
+    const cx2 = x2 - offset;
+    const cy2 = y2;
 
     const color = WIRE_COLORS[fromModule] || 'var(--ap-wire-mod)';
 
     return (
         <path
-            d={`M ${x1} ${y1} C ${cx1} ${y1}, ${cx2} ${y2}, ${x2} ${y2}`}
+            d={`M ${x1} ${y1} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${x2} ${y2}`}
             stroke={color}
             strokeWidth={2}
             fill="none"
@@ -1800,9 +1933,15 @@ function Wire({ from, to, type, portPositions }) {
     const x2 = toPort.x;
     const y2 = toPort.y;
 
-    // Bezier control points
-    const cx1 = x1 + 50;
-    const cx2 = x2 - 50;
+    // Always use horizontal stubs - exit right, enter left
+    // Scale offset based on vertical distance - more vertical = more horizontal stub needed
+    const dx = Math.abs(x2 - x1);
+    const dy = Math.abs(y2 - y1);
+    const offset = Math.max(40, Math.min(200, dx / 3 + dy / 2));
+    const cx1 = x1 + offset;
+    const cy1 = y1;
+    const cx2 = x2 - offset;
+    const cy2 = y2;
 
     const strokeColor = type === 'audio' ? 'var(--ap-wire-audio)' : 'var(--ap-wire-mod)';
     const strokeWidth = type === 'audio' ? 3 : 2;
@@ -1810,7 +1949,7 @@ function Wire({ from, to, type, portPositions }) {
 
     return (
         <path
-            d={`M ${x1} ${y1} C ${cx1} ${y1}, ${cx2} ${y2}, ${x2} ${y2}`}
+            d={`M ${x1} ${y1} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${x2} ${y2}`}
             stroke={strokeColor}
             strokeWidth={strokeWidth}
             strokeDasharray={strokeDash}
