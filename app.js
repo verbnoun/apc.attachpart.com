@@ -600,16 +600,16 @@ function App() {
         }
     }, [topology, patchList, currentPatchIndex, currentPatch, synthPortName, devices, addLog]);
 
-    // Re-render Log window when logs change
+    // Re-render Log window when logs or topology change
     useEffect(() => {
         const container = windowContainersRef.current['log-window'];
         if (container && WindowManager.exists('log-window')) {
             ReactDOM.render(
-                <LogWindow logs={logs} onClear={() => setLogs([])} />,
+                <LogWindow logs={logs} onClear={() => setLogs([])} topology={topology} />,
                 container
             );
         }
-    }, [logs]);
+    }, [logs, topology]);
 
     // Re-render Expression Pad when synth connection changes
     useEffect(() => {
@@ -906,7 +906,7 @@ function App() {
         WorkspacePersistence.setWasOpen('log-window', true);
 
         ReactDOM.render(
-            <LogWindow logs={logs} onClear={() => setLogs([])} />,
+            <LogWindow logs={logs} onClear={() => setLogs([])} topology={topology} />,
             container
         );
     };
@@ -1644,30 +1644,55 @@ function ExpressionPadWindow({ candideApi, isConnected, deviceRegistry, addLog }
 // LOG WINDOW
 //======================================================================
 
-function LogWindow({ logs, onClear }) {
+function LogWindow({ logs, onClear, topology }) {
+    const [activeView, setActiveView] = useState('log');
     const scrollRef = useRef(null);
 
     useEffect(() => {
-        if (scrollRef.current) {
+        if (scrollRef.current && activeView === 'log') {
             scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
         }
-    }, [logs]);
+    }, [logs, activeView]);
 
     const logText = logs.map(log => {
         const typeTag = log.type === 'info' ? '' : `[${log.type.toUpperCase()}] `;
         return `[${log.timestamp}] ${typeTag}${log.message}`;
     }).join('\n');
 
+    const topoText = topology
+        ? JSON.stringify(topology, null, 2)
+        : 'No topology loaded (connect a synth device)';
+
     return (
         <div className="ap-log-window">
             <div className="ap-log-toolbar">
-                <span className="ap-log-count">{logs.length} entries</span>
-                <button className="ap-btn ap-btn-small" onClick={onClear}>
-                    CLEAR
-                </button>
+                <div className="ap-tabs" style={{ background: 'transparent', padding: 0 }}>
+                    <button
+                        className={`ap-tab ${activeView === 'log' ? 'active' : ''}`}
+                        onClick={() => setActiveView('log')}
+                    >
+                        LOG
+                    </button>
+                    <button
+                        className={`ap-tab ${activeView === 'topo' ? 'active' : ''}`}
+                        onClick={() => setActiveView('topo')}
+                    >
+                        TOPO
+                    </button>
+                </div>
+                {activeView === 'log' && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span className="ap-log-count">{logs.length} entries</span>
+                        <button className="ap-btn ap-btn-small" onClick={onClear}>
+                            CLEAR
+                        </button>
+                    </div>
+                )}
             </div>
             <pre className="ap-log-text" ref={scrollRef}>
-                {logs.length === 0 ? 'No log entries' : logText}
+                {activeView === 'log'
+                    ? (logs.length === 0 ? 'No log entries' : logText)
+                    : topoText}
             </pre>
         </div>
     );
