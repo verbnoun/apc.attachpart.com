@@ -381,13 +381,14 @@ function App() {
         }
     };
 
-    const updateParam = async (paramKey, value) => {
+    const updateParam = async (paramKey, options) => {
+        // options can be a raw value (number) or object { value, priority }
         if (!synthPortName) return;
         const api = deviceApisRef.current[synthPortName];
         if (!api || currentPatchIndex < 0) return;
 
         try {
-            await api.updateParam(currentPatchIndex, paramKey, value);
+            await api.updateParam(currentPatchIndex, paramKey, options);
             await loadPatch(currentPatchIndex);
         } catch (err) {
             addLog(`Failed to update param: ${err.message}`, 'error');

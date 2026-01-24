@@ -21,16 +21,16 @@ const { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } = R
 const DEFAULT_MODULE_DEFINITIONS = {
     // Audio modules - auto-wire in signal chain
     audio: [
-        { id: 'OSC0', name: 'OSC 0', type: 'audio', category: 'oscillator', alwaysEnabled: true },
+        { id: 'OSC0', name: 'OSC 0', type: 'audio', category: 'oscillator' },
         { id: 'OSC1', name: 'OSC 1', type: 'audio', category: 'oscillator' },
         { id: 'OSC2', name: 'OSC 2', type: 'audio', category: 'oscillator' },
         { id: 'FILTER', name: 'FILTER', type: 'audio', category: 'filter' },
-        { id: 'VAMP', name: 'Amp', type: 'audio', category: 'amp', alwaysEnabled: true }
+        { id: 'VAMP', name: 'Amp', type: 'audio', category: 'amp' }
     ],
     // Modulation sources - user wires to targets
     mod: [
         { id: 'MOD_ENV', name: 'MOD ENV', type: 'mod', category: 'envelope' },
-        { id: 'VAMP_ENV', name: 'AMP ENV', type: 'mod', category: 'envelope', alwaysEnabled: true },
+        { id: 'VAMP_ENV', name: 'AMP ENV', type: 'mod', category: 'envelope' },
         { id: 'GLFO', name: 'GLOBAL LFO', type: 'mod', category: 'lfo' },
         { id: 'VLFO', name: 'VOICE LFO', type: 'mod', category: 'lfo' }
     ],
@@ -65,16 +65,14 @@ function buildModuleDefinitions(topology) {
         id: m.id,
         name: m.name,
         type: 'audio',
-        category: m.category || inferCategory(m.id, 'audio'),
-        alwaysEnabled: m.alwaysEnabled || false
+        category: m.category || inferCategory(m.id, 'audio')
     }));
 
     const mod = (topology.modules.mod || []).map(m => ({
         id: m.id,
         name: m.name,
         type: 'mod',
-        category: m.category || inferCategory(m.id, 'mod'),
-        alwaysEnabled: m.alwaysEnabled || false
+        category: m.category || inferCategory(m.id, 'mod')
     }));
 
     // Control modules - use device topology if provided, otherwise defaults
@@ -83,8 +81,7 @@ function buildModuleDefinitions(topology) {
             id: m.id,
             name: m.name,
             type: 'control',
-            category: m.category || 'control',
-            alwaysEnabled: m.alwaysEnabled || false
+            category: m.category || 'control'
         }))
         : DEFAULT_MODULE_DEFINITIONS.control;
 
@@ -206,11 +203,7 @@ function calculateDeletionImpact(patch, moduleId, modConnections, moduleDefiniti
         );
 
         if (remainingRoutes.length === 0) {
-            const moduleDef = findModuleDef(sourceId, moduleDefinitions);
-            // Only orphan non-alwaysEnabled modules
-            if (moduleDef && !moduleDef.alwaysEnabled) {
-                impact.orphanedModules.push(sourceId);
-            }
+            impact.orphanedModules.push(sourceId);
         }
     });
 
@@ -1196,23 +1189,11 @@ function NodeWorkspace({
         }
     };
 
-    // Get enabled modules grouped by type
-    // Modules show if: (1) enabled in patch, OR (2) alwaysEnabled in definition
+    // Get enabled modules grouped by type - only show modules actually in the patch
     const enabledByType = useMemo(() => {
-        const audio = [];
-        const mod = [];
-        const control = [];
-
-        moduleDefinitions.audio.forEach(m => {
-            if (enabledModules.has(m.id) || m.alwaysEnabled) audio.push(m);
-        });
-        moduleDefinitions.mod.forEach(m => {
-            if (enabledModules.has(m.id) || m.alwaysEnabled) mod.push(m);
-        });
-        moduleDefinitions.control.forEach(m => {
-            if (enabledModules.has(m.id) || m.alwaysEnabled) control.push(m);
-        });
-
+        const audio = moduleDefinitions.audio.filter(m => enabledModules.has(m.id));
+        const mod = moduleDefinitions.mod.filter(m => enabledModules.has(m.id));
+        const control = moduleDefinitions.control.filter(m => enabledModules.has(m.id));
         return { audio, mod, control };
     }, [moduleDefinitions, enabledModules]);
 
@@ -1780,6 +1761,86 @@ function EditableValue({ value, min, max, step, onCommit, formatValue }) {
 }
 
 //======================================================================
+// PRIORITY BADGE COMPONENT
+//======================================================================
+
+function PriorityBadge({ priority, paramKey, existingPriorities, onUpdatePriority }) {
+    const [editing, setEditing] = useState(false);
+    const [editValue, setEditValue] = useState(priority?.toString() || '');
+    const [error, setError] = useState(false);
+    const inputRef = useRef(null);
+
+    const handleClick = (e) => {
+        e.stopPropagation();
+        setEditing(true);
+        setError(false);
+        setEditValue(priority?.toString() || '');
+    };
+
+    const handleBlur = () => {
+        const num = parseInt(editValue, 10);
+        // Validate: must be positive integer
+        if (isNaN(num) || num <= 0) {
+            setEditing(false);
+            return;
+        }
+        // Skip if unchanged
+        if (num === priority) {
+            setEditing(false);
+            return;
+        }
+        // Check for duplicate (exclude current param's own priority)
+        if (existingPriorities?.has(num)) {
+            setError(true);
+            // Brief red flash, then close
+            setTimeout(() => setEditing(false), 300);
+            return;
+        }
+        onUpdatePriority(paramKey, num);
+        setEditing(false);
+    };
+
+    const handleKeyDown = (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            handleBlur();
+        }
+        if (e.key === 'Escape') {
+            setEditing(false);
+        }
+    };
+
+    useEffect(() => {
+        if (editing && inputRef.current) {
+            inputRef.current.select();
+        }
+    }, [editing]);
+
+    if (editing) {
+        return (
+            <input
+                ref={inputRef}
+                type="text"
+                className={`ap-priority-edit ${error ? 'error' : ''}`}
+                value={editValue}
+                onChange={(e) => { setEditValue(e.target.value); setError(false); }}
+                onBlur={handleBlur}
+                onKeyDown={handleKeyDown}
+                onClick={(e) => e.stopPropagation()}
+                onMouseDown={(e) => e.stopPropagation()}
+                autoFocus
+            />
+        );
+    }
+
+    return (
+        <span className="ap-priority-badge" onClick={handleClick} title="Priority (click to edit)">
+            {priority || '?'}
+        </span>
+    );
+}
+
+//======================================================================
 // NODE COMPONENT
 //======================================================================
 
@@ -1841,6 +1902,22 @@ function Node({
         // Sort by priority, then take top 6
         return params.sort((a, b) => a.priority - b.priority).slice(0, 6);
     }, [moduleData]);
+
+    // Collect all existing priorities from the entire patch for duplicate checking
+    const existingPriorities = useMemo(() => {
+        const priorities = new Set();
+        if (!patch) return priorities;
+
+        Object.entries(patch).forEach(([moduleId, modData]) => {
+            if (typeof modData !== 'object' || modData === null) return;
+            Object.entries(modData).forEach(([key, value]) => {
+                if (typeof value === 'object' && value !== null && value.priority) {
+                    priorities.add(value.priority);
+                }
+            });
+        });
+        return priorities;
+    }, [patch]);
 
     // Check if this is an envelope module
     const isEnvelopeModule = module.category === 'envelope' ||
@@ -1987,17 +2064,15 @@ function Node({
                         className="ap-node-port ap-node-port-header-in"
                     />
                 )}
-                {/* Delete button for removable modules */}
-                {!module.alwaysEnabled && (
-                    <button
-                        className="ap-node-delete-btn"
-                        onMouseDown={(e) => e.stopPropagation()}
-                        onClick={handleDeleteClick}
-                        title="Remove module"
-                    >
-                        X
-                    </button>
-                )}
+                {/* Delete button */}
+                <button
+                    className="ap-node-delete-btn"
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={handleDeleteClick}
+                    title="Remove module"
+                >
+                    X
+                </button>
                 <span className="ap-node-title">{module.name}</span>
                 {/* Output port - all modules */}
                 <div
@@ -2068,6 +2143,12 @@ function Node({
                                     <div
                                         ref={el => paramPortRefs.current[param.key] = el}
                                         className="ap-node-port ap-node-port-param-in"
+                                    />
+                                    <PriorityBadge
+                                        priority={param.priority}
+                                        paramKey={param.key}
+                                        existingPriorities={existingPriorities}
+                                        onUpdatePriority={(key, pri) => onUpdateParam(key, { priority: pri })}
                                     />
                                     <span className="ap-node-param-key">{param.name}</span>
                                     <NodeParamSlider
@@ -2408,7 +2489,6 @@ function NodeContextMenu({
     // Find module definition
     const allModules = [...moduleDefinitions.audio, ...moduleDefinitions.mod, ...moduleDefinitions.control];
     const moduleDef = allModules.find(m => m.id === moduleId);
-    const canRemove = moduleDef && !moduleDef.alwaysEnabled;
     const isModSource = moduleDef?.type === 'mod' || moduleDef?.type === 'control';
 
     // Extract parameters from moduleData
@@ -2578,14 +2658,12 @@ function NodeContextMenu({
                 )}
 
                 {/* Remove Button */}
-                {canRemove && (
-                    <button
-                        className="ap-btn ap-btn-danger ap-btn-small ap-mt-md"
-                        onClick={onRemove}
-                    >
-                        Remove Module
-                    </button>
-                )}
+                <button
+                    className="ap-btn ap-btn-danger ap-btn-small ap-mt-md"
+                    onClick={onRemove}
+                >
+                    Remove Module
+                </button>
             </div>
         </div>
     );

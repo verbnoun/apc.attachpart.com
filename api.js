@@ -390,9 +390,14 @@ class UnifiedDeviceAPI {
     // PUBLIC: PARAMS Commands (real-time patch editing)
     //======================================================================
 
-    async updateParam(index, param, value) {
+    async updateParam(index, param, options) {
         this._requireCapability(CAPABILITIES.PARAMS, 'update-param');
-        return this._sendCommand({ cmd: 'update-param', index, param, value });
+        // Support both old signature (index, param, value) and new (index, param, {value, priority})
+        const opts = typeof options === 'object' ? options : { value: options };
+        const cmd = { cmd: 'update-param', index, param };
+        if (opts.value !== undefined) cmd.value = opts.value;
+        if (opts.priority !== undefined) cmd.priority = opts.priority;
+        return this._sendCommand(cmd);
     }
 
     async updateRange(index, param, min, max) {

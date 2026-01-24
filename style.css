@@ -2206,6 +2206,60 @@ html, body {
 }
 
 /* ============================================================
+   PRIORITY BADGE
+   ============================================================ */
+
+.ap-priority-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 14px;
+    height: 14px;
+    padding: 0 3px;
+    margin-right: 4px;
+    font-size: 8px;
+    font-weight: 600;
+    background: var(--ap-bg-tertiary);
+    border: 1px solid var(--ap-border-primary);
+    border-radius: 3px;
+    cursor: pointer;
+    color: var(--ap-text-secondary);
+    flex-shrink: 0;
+}
+
+.ap-priority-badge:hover {
+    background: var(--ap-bg-secondary);
+    color: var(--ap-text-primary);
+    border-color: var(--ap-accent-blue);
+}
+
+.ap-priority-edit {
+    width: 24px;
+    height: 14px;
+    padding: 0 2px;
+    margin-right: 4px;
+    font-family: var(--ap-font-family);
+    font-size: 8px;
+    font-weight: 600;
+    text-align: center;
+    background: var(--ap-bg-secondary);
+    border: 1px solid var(--ap-accent-blue);
+    border-radius: 3px;
+    color: var(--ap-text-primary);
+    outline: none;
+    flex-shrink: 0;
+}
+
+.ap-priority-edit:focus {
+    box-shadow: 0 0 4px var(--ap-accent-blue);
+}
+
+.ap-priority-edit.error {
+    border-color: var(--ap-error, #f44);
+    background: rgba(255, 68, 68, 0.15);
+}
+
+/* ============================================================
    NODE LAYOUT VARIANTS
    ============================================================ */
 
