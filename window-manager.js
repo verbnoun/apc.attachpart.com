@@ -17,6 +17,7 @@ const WindowManager = {
     // Persistence callbacks
     onGeometryChange: null,  // (windowId, { x, y, width, height }) => void
     onWindowClose: null,     // (windowId) => void
+    onWindowFocus: null,     // (windowId, title) => void
 
     /**
      * Create a new window
@@ -65,18 +66,25 @@ const WindowManager = {
 
         const closeBtn = document.createElement('button');
         closeBtn.className = 'ap-window-close';
-        closeBtn.innerHTML = '&times;';
         closeBtn.onclick = (e) => {
             e.stopPropagation();
             this.close(id);
         };
 
+        const stripesLeft = document.createElement('div');
+        stripesLeft.className = 'ap-window-stripes';
+
         const titleText = document.createElement('span');
         titleText.className = 'ap-window-title';
         titleText.textContent = title;
 
+        const stripesRight = document.createElement('div');
+        stripesRight.className = 'ap-window-stripes';
+
         titleBar.appendChild(closeBtn);
+        titleBar.appendChild(stripesLeft);
         titleBar.appendChild(titleText);
+        titleBar.appendChild(stripesRight);
 
         // Content area
         const contentArea = document.createElement('div');
@@ -150,6 +158,9 @@ const WindowManager = {
 
         if (this.activeWindowId === id) {
             this.activeWindowId = null;
+            if (this.onWindowFocus) {
+                this.onWindowFocus(null, null);
+            }
         }
     },
 
@@ -169,6 +180,12 @@ const WindowManager = {
         windowInfo.element.classList.add('ap-window-active');
         windowInfo.element.style.zIndex = this.nextZIndex++;
         this.activeWindowId = id;
+
+        // Notify menu bar of focused window
+        if (this.onWindowFocus) {
+            const titleEl = windowInfo.titleBar.querySelector('.ap-window-title');
+            this.onWindowFocus(id, titleEl?.textContent || id);
+        }
     },
 
     /**

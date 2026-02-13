@@ -77,91 +77,194 @@ html, body {
 
 .ap-container {
     display: flex;
+    flex-direction: column;
     height: 100vh;
     width: 100vw;
 }
 
 /* ============================================================
-   SIDEBAR - Devices & Tools
+   MENU BAR - System 7 style top bar
    ============================================================ */
 
-.ap-sidebar {
-    width: 80px;
-    background: var(--ap-bg-secondary);
-    border-right: 4px solid var(--ap-window-border);
+.ap-menubar {
+    height: 28px;
+    background: var(--ap-bg-primary);
+    border-bottom: 2px solid var(--ap-text-secondary);
     display: flex;
-    flex-direction: column;
-    padding: var(--ap-spacing-sm);
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 var(--ap-spacing-sm);
+    flex-shrink: 0;
+    z-index: 10000;
+    box-shadow:
+        inset 0 -1px 0 var(--ap-window-shadow-dark),
+        0 1px 0 rgba(0,0,0,0.3);
+}
+
+.ap-menubar-left {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.ap-menubar-app-name {
+    font-size: var(--ap-font-size-xs);
+    font-weight: bold;
+    color: var(--ap-text-primary);
+    padding: 2px var(--ap-spacing-sm);
+    margin-right: var(--ap-spacing-xs);
+}
+
+.ap-menubar-btn {
+    font-family: var(--ap-font-family);
+    font-size: var(--ap-font-size-xs);
+    background: transparent;
+    border: none;
+    color: var(--ap-text-primary);
+    padding: 2px var(--ap-spacing-sm);
+    cursor: pointer;
+}
+
+.ap-menubar-btn:hover {
+    background: var(--ap-accent-blue);
+    color: var(--ap-bg-primary);
+}
+
+.ap-menubar-btn:active {
+    background: var(--ap-accent-blue);
+    color: var(--ap-bg-primary);
+}
+
+.ap-menubar-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.ap-menubar-btn:disabled:hover {
+    background: transparent;
+    color: var(--ap-text-primary);
+}
+
+.ap-menubar-right {
+    display: flex;
+    align-items: center;
     gap: var(--ap-spacing-md);
 }
 
-.ap-sidebar-section {
+.ap-menubar-device {
+    display: flex;
+    align-items: center;
+    gap: var(--ap-spacing-xs);
+}
+
+.ap-menubar-led {
+    width: 6px;
+    height: 6px;
+    background: var(--ap-text-muted);
+}
+
+.ap-menubar-led.connected {
+    background: var(--ap-accent-green);
+    box-shadow: 0 0 4px var(--ap-accent-green);
+}
+
+.ap-menubar-device-name {
+    font-size: var(--ap-font-size-xs);
+    color: var(--ap-text-secondary);
+}
+
+.ap-menubar-linked {
+    font-size: var(--ap-font-size-xs);
+    color: var(--ap-accent-yellow);
+    font-weight: bold;
+}
+
+/* ============================================================
+   DESKTOP - System 7 style icon desktop
+   ============================================================ */
+
+.ap-desktop {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    background:
+        radial-gradient(circle, rgba(50,50,60,0.3) 1px, transparent 1px),
+        var(--ap-bg-secondary);
+    background-size: 16px 16px;
+}
+
+.ap-desktop-icons {
+    position: absolute;
+    top: var(--ap-spacing-md);
+    right: var(--ap-spacing-md);
     display: flex;
     flex-direction: column;
     gap: var(--ap-spacing-sm);
+    z-index: 1;
 }
 
-.ap-sidebar-divider {
-    height: 2px;
-    background: var(--ap-bg-tertiary);
-    margin: var(--ap-spacing-sm) 0;
-}
-
-/* Device/Tool icons in sidebar */
-.ap-sidebar-item {
+.ap-desktop-icon {
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: var(--ap-spacing-xs);
     cursor: pointer;
-    padding: var(--ap-spacing-sm);
-    border-radius: 4px;
-    transition: background 0.1s;
+    padding: var(--ap-spacing-xs);
+    width: 72px;
+    user-select: none;
 }
 
-.ap-sidebar-item:hover {
-    background: var(--ap-bg-tertiary);
-}
-
-.ap-sidebar-item.disconnected {
-    opacity: 0.4;
-    cursor: not-allowed;
-}
-
-.ap-sidebar-icon {
+.ap-desktop-icon-image {
     width: 48px;
     height: 48px;
     background: var(--ap-bg-tertiary);
-    border: 4px solid var(--ap-window-border);
+    border: 3px solid var(--ap-window-border);
     box-shadow:
-        inset -4px -4px var(--ap-window-shadow-dark),
-        inset 4px 4px var(--ap-window-shadow-light);
+        inset -3px -3px var(--ap-window-shadow-dark),
+        inset 3px 3px var(--ap-window-shadow-light);
     display: flex;
     align-items: center;
     justify-content: center;
     font-size: 20px;
+    color: var(--ap-text-primary);
 }
 
-.ap-sidebar-item.connected .ap-sidebar-icon {
-    box-shadow:
-        inset -4px -4px var(--ap-window-shadow-dark),
-        inset 4px 4px var(--ap-window-shadow-light),
-        0 0 8px var(--ap-accent-green);
+.ap-desktop-icon-synth .ap-desktop-icon-image {
+    border-color: var(--ap-accent-green);
 }
 
-.ap-sidebar-label {
+.ap-desktop-icon-controller .ap-desktop-icon-image {
+    border-color: var(--ap-accent-purple);
+}
+
+.ap-desktop-icon-tool .ap-desktop-icon-image {
+    border-color: var(--ap-text-secondary);
+}
+
+.ap-desktop-icon-label {
     font-size: var(--ap-font-size-xs);
-    color: var(--ap-text-secondary);
+    color: var(--ap-text-primary);
     text-align: center;
+    word-break: break-word;
+    line-height: 1.3;
 }
 
-.ap-sidebar-status {
-    font-size: 6px;
-    color: var(--ap-text-muted);
+.ap-desktop-icon.selected .ap-desktop-icon-image {
+    box-shadow:
+        inset -3px -3px var(--ap-window-shadow-dark),
+        inset 3px 3px var(--ap-window-shadow-light),
+        0 0 8px var(--ap-accent-blue);
 }
 
-.ap-sidebar-item.connected .ap-sidebar-status {
-    color: var(--ap-accent-green);
+.ap-desktop-icon.selected .ap-desktop-icon-label {
+    background: var(--ap-accent-blue);
+    color: var(--ap-bg-primary);
+}
+
+.ap-desktop-icon:active .ap-desktop-icon-image {
+    box-shadow:
+        inset 3px 3px var(--ap-window-shadow-dark),
+        inset -3px -3px var(--ap-window-shadow-light);
 }
 
 /* ============================================================
@@ -169,14 +272,86 @@ html, body {
    ============================================================ */
 
 #workspace {
-    flex: 1;
-    position: relative;
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
     overflow: hidden;
-    background:
-        linear-gradient(90deg, rgba(50,50,60,0.2) 1px, transparent 1px),
-        linear-gradient(rgba(50,50,60,0.2) 1px, transparent 1px),
-        var(--ap-bg-secondary);
-    background-size: 32px 32px;
+}
+
+/* ============================================================
+   DEVICE APP WINDOW (Tabbed Views)
+   ============================================================ */
+
+.ap-device-app {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.ap-device-app-tabs {
+    display: flex;
+    gap: 0;
+    background: var(--ap-bg-tertiary);
+    padding: 0 var(--ap-spacing-xs);
+    flex-shrink: 0;
+    border-bottom: 2px solid var(--ap-window-border);
+}
+
+.ap-device-tab {
+    padding: var(--ap-spacing-sm) var(--ap-spacing-md);
+    font-family: var(--ap-font-family);
+    font-size: var(--ap-font-size-sm);
+    color: var(--ap-text-secondary);
+    background: var(--ap-bg-secondary);
+    border: 2px solid var(--ap-window-border);
+    border-bottom: none;
+    cursor: pointer;
+    margin-top: var(--ap-spacing-xs);
+    position: relative;
+    top: 2px;
+}
+
+.ap-device-tab:hover {
+    color: var(--ap-text-primary);
+    background: var(--ap-bg-tertiary);
+}
+
+.ap-device-tab.active {
+    color: var(--ap-text-primary);
+    background: var(--ap-bg-primary);
+    border-bottom: 2px solid var(--ap-bg-primary);
+}
+
+.ap-device-app-content {
+    flex: 1;
+    overflow: auto;
+    background: var(--ap-bg-primary);
+}
+
+/* Override negative margins when patch editor is embedded as tab */
+.ap-device-app-content .ap-patch-editor {
+    margin: 0;
+}
+
+/* Override bartleby config header margin when embedded as tab */
+.ap-device-app-content .ap-bartleby-header {
+    margin: 0;
+    margin-bottom: var(--ap-spacing-sm);
+}
+
+/* Override window content padding for device app (tabs manage own padding) */
+.ap-device-app-content .ap-bartleby-config {
+    padding: var(--ap-spacing-md);
+}
+
+.ap-device-app-content .ap-firmware-window {
+    padding: var(--ap-spacing-md);
+}
+
+.ap-device-app-content .ap-language-window {
+    padding: var(--ap-spacing-md);
 }
 
 /* ============================================================
@@ -203,51 +378,80 @@ html, body {
         0 4px 16px rgba(0, 0, 0, 0.4);
 }
 
-/* Title bar */
+/* Title bar - System 7 style */
 .ap-window-titlebar {
-    background: var(--ap-window-titlebar);
-    padding: var(--ap-spacing-sm) var(--ap-spacing-sm);
+    background: var(--ap-bg-tertiary);
+    padding: 3px var(--ap-spacing-xs);
     display: flex;
     align-items: center;
-    gap: var(--ap-spacing-sm);
+    gap: var(--ap-spacing-xs);
     cursor: move;
     user-select: none;
     flex-shrink: 0;
+    height: 24px;
 }
 
+/* Active window title bar */
+.ap-window-active .ap-window-titlebar {
+    background: var(--ap-window-titlebar);
+}
+
+/* Close box - outlined square (System 7) */
 .ap-window-close {
-    width: 24px;
-    height: 24px;
-    background: var(--ap-bg-primary);
-    border: 2px solid var(--ap-window-border);
-    box-shadow:
-        inset -2px -2px var(--ap-window-shadow-dark),
-        inset 2px 2px var(--ap-window-shadow-light);
-    color: var(--ap-text-primary);
-    font-size: 14px;
-    font-weight: bold;
+    width: 14px;
+    height: 14px;
+    background: transparent;
+    border: 2px solid var(--ap-text-secondary);
     cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    line-height: 1;
+    flex-shrink: 0;
+    padding: 0;
+}
+
+.ap-window-active .ap-window-close {
+    border-color: var(--ap-bg-primary);
 }
 
 .ap-window-close:hover {
     background: var(--ap-accent-red);
+    border-color: var(--ap-accent-red);
 }
 
-.ap-window-close:active {
-    box-shadow:
-        inset 2px 2px var(--ap-window-shadow-dark),
-        inset -2px -2px var(--ap-window-shadow-light);
+/* Title bar stripes (System 7 horizontal lines) */
+.ap-window-stripes {
+    flex: 1;
+    height: 12px;
+    background: repeating-linear-gradient(
+        to bottom,
+        transparent,
+        transparent 1px,
+        var(--ap-text-secondary) 1px,
+        var(--ap-text-secondary) 2px
+    );
+    opacity: 0;
+}
+
+.ap-window-active .ap-window-stripes {
+    opacity: 1;
+    background: repeating-linear-gradient(
+        to bottom,
+        transparent,
+        transparent 1px,
+        var(--ap-bg-primary) 1px,
+        var(--ap-bg-primary) 2px
+    );
 }
 
 .ap-window-title {
-    font-size: var(--ap-font-size-sm);
-    color: var(--ap-bg-primary);
+    font-size: var(--ap-font-size-xs);
+    color: var(--ap-text-secondary);
     text-transform: uppercase;
-    flex: 1;
+    white-space: nowrap;
+    flex-shrink: 0;
+    padding: 0 var(--ap-spacing-xs);
+}
+
+.ap-window-active .ap-window-title {
+    color: var(--ap-bg-primary);
 }
 
 /* Content area */
@@ -256,6 +460,12 @@ html, body {
     overflow: auto;
     padding: var(--ap-spacing-md);
     background: var(--ap-bg-primary);
+}
+
+/* No padding for device app windows (tabs manage their own) */
+.ap-window-content:has(.ap-device-app) {
+    padding: 0;
+    overflow: hidden;
 }
 
 /* Dimensions display */
@@ -291,40 +501,7 @@ html, body {
         );
 }
 
-/* ============================================================
-   ACTION MENU OVERLAY
-   ============================================================ */
-
-.ap-action-menu {
-    position: fixed;
-    background: var(--ap-bg-primary);
-    border: 4px solid var(--ap-window-border);
-    box-shadow:
-        inset -4px -4px var(--ap-window-shadow-dark),
-        inset 4px 4px var(--ap-window-shadow-light),
-        0 4px 16px rgba(0, 0, 0, 0.4);
-    padding: var(--ap-spacing-sm);
-    z-index: 10000;
-    min-width: 120px;
-}
-
-.ap-action-menu-item {
-    padding: var(--ap-spacing-sm) var(--ap-spacing-md);
-    font-size: var(--ap-font-size-sm);
-    color: var(--ap-text-primary);
-    cursor: pointer;
-    border: 2px solid transparent;
-}
-
-.ap-action-menu-item:hover {
-    background: var(--ap-bg-tertiary);
-    border-color: var(--ap-text-secondary);
-}
-
-.ap-action-menu-item.disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-}
+/* (Action menu removed — replaced by desktop icon double-click) */
 
 /* ============================================================
    TABS
@@ -365,47 +542,7 @@ html, body {
     display: block;
 }
 
-/* ============================================================
-   STATUS BAR
-   ============================================================ */
-
-.ap-status-bar {
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    height: 32px;
-    background: var(--ap-bg-primary);
-    border-top: 4px solid var(--ap-window-border);
-    display: flex;
-    align-items: center;
-    padding: 0 var(--ap-spacing-md);
-    gap: var(--ap-spacing-lg);
-    font-size: var(--ap-font-size-xs);
-    z-index: 9999;
-}
-
-.ap-status-item {
-    display: flex;
-    align-items: center;
-    gap: var(--ap-spacing-xs);
-}
-
-.ap-status-led {
-    width: 8px;
-    height: 8px;
-    background: var(--ap-text-muted);
-}
-
-.ap-status-led.connected {
-    background: var(--ap-accent-green);
-    box-shadow: 0 0 4px var(--ap-accent-green);
-}
-
-.ap-status-linked {
-    color: var(--ap-accent-yellow);
-    margin-left: auto;
-}
+/* (Status bar removed — replaced by menu bar) */
 
 /* ============================================================
    BUTTONS - NES.css style

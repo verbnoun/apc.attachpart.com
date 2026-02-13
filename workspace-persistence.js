@@ -59,35 +59,13 @@ const WorkspacePersistence = {
     },
 
     /**
-     * Get all window IDs that were open for a specific device
+     * Check if a device app window was open
      * @param {string} portName
-     * @returns {string[]} Window IDs like 'config-Bartleby MPE'
-     */
-    getDeviceWindowIds(portName) {
-        const state = this._load();
-        const deviceWindowIds = [];
-
-        for (const windowId of Object.keys(state.windows)) {
-            // Check if window belongs to this device
-            if (windowId === `config-${portName}` ||
-                windowId === `firmware-${portName}` ||
-                windowId === `language-${portName}`) {
-                deviceWindowIds.push(windowId);
-            }
-            // patch-editor is special - tied to synth device
-            // We'll handle it separately in app.js based on synthPortName
-        }
-
-        return deviceWindowIds;
-    },
-
-    /**
-     * Check if patch-editor was open
      * @returns {boolean}
      */
-    wasPatchEditorOpen() {
+    wasDeviceWindowOpen(portName) {
         const state = this._load();
-        return state.windows['patch-editor']?.wasOpen === true;
+        return state.windows[`device-${portName}`]?.wasOpen === true;
     },
 
     /**

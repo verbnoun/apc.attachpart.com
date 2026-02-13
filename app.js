@@ -2,9 +2,8 @@
  * Attach Part Console - Main Application (Unified Protocol)
  *
  * Architecture:
- * - Device Sidebar (left rail): shows devices + tools
- * - Workspace (main area): where windows open
- * - Status Bar (bottom): connection status
+ * - Menu Bar (top): app name, log/sync buttons, device status
+ * - Desktop (main area): device icons + workspace windows
  *
  * Backend layer:
  * - UnifiedDeviceAPI (capability-based device communication)
@@ -15,7 +14,7 @@
  * All devices handled identically - capabilities determine features
  */
 
-const { useState, useEffect, useCallback, useRef, useMemo } = React;
+const { useState, useEffect, useCallback, useRef } = React;
 
 //======================================================================
 // MAIN APP COMPONENT
@@ -46,6 +45,9 @@ function App() {
 
     // Ref to track synthPortName for use in callbacks (avoids stale closure)
     const synthPortNameRef = useRef(null);
+
+    // Focused window app name (for menu bar)
+    const [focusedApp, setFocusedApp] = useState(null);
 
     // Logs
     const [logs, setLogs] = useState([]);
@@ -93,6 +95,10 @@ function App() {
             WorkspacePersistence.setWasOpen(windowId, false);
         };
 
+        WindowManager.onWindowFocus = (windowId, title) => {
+            setFocusedApp(title || null);
+        };
+
         // Restore tool windows that were previously open
         const openTools = WorkspacePersistence.getOpenToolWindows();
         // Defer to next tick to ensure handlers are ready
@@ -109,6 +115,7 @@ function App() {
         return () => {
             WindowManager.onGeometryChange = null;
             WindowManager.onWindowClose = null;
+            WindowManager.onWindowFocus = null;
         };
     }, []);
 
@@ -210,6 +217,11 @@ function App() {
             }));
 
             addLog(`${deviceInfo.name || portName} initialized`, 'success');
+
+            // Auto-reopen device window if it was previously open
+            if (WorkspacePersistence.wasDeviceWindowOpen(portName)) {
+                setTimeout(() => openDeviceApp(portName), 0);
+            }
         } catch (err) {
             addLog(`${portName} init failed: ${err.message}`, 'error');
             setDevices(prev => ({
@@ -227,23 +239,11 @@ function App() {
 
         delete deviceApisRef.current[portName];
 
-        // Close device windows (geometry already saved, will be used on next open)
-        const deviceWindowIds = [
-            `config-${portName}`,
-            `firmware-${portName}`,
-            `language-${portName}`
-        ];
-
-        // Add patch-editor if this is the synth device (use ref to avoid stale closure)
-        if (synthPortNameRef.current === portName) {
-            deviceWindowIds.push('patch-editor');
-        }
-
-        for (const windowId of deviceWindowIds) {
-            if (WindowManager.exists(windowId)) {
-                WindowManager.close(windowId);
-                delete windowContainersRef.current[windowId];
-            }
+        // Close device app window
+        const windowId = `device-${portName}`;
+        if (WindowManager.exists(windowId)) {
+            WindowManager.close(windowId);
+            delete windowContainersRef.current[windowId];
         }
 
         // Clear role if this device had one
@@ -463,36 +463,18 @@ function App() {
     };
 
     //------------------------------------------------------------------
-    // DEVICE ACTION HANDLERS (Capability-Driven)
+    // DESKTOP HANDLERS
     //------------------------------------------------------------------
 
-    const handleDeviceAction = (portName, action) => {
-        addLog(`Action: ${portName} -> ${action}`, 'info');
-        const device = devices[portName];
-        if (!device) return;
-
-        const capabilities = device.capabilities || [];
-
-        if (action === 'config' && capabilities.includes(CAPABILITIES.CONFIG)) {
-            openConfigWindow(portName);
-        } else if (action === 'patches' && capabilities.includes(CAPABILITIES.PATCHES)) {
-            openPatchEditor(portName);
-        } else if (action === 'firmware' && capabilities.includes(CAPABILITIES.FIRMWARE)) {
-            openFirmwareWindow(portName);
-        } else if (action === 'language') {
-            openLanguageWindow(portName);
-        }
+    const handleDeviceOpen = (portName) => {
+        addLog(`Opening device: ${portName}`, 'info');
+        openDeviceApp(portName);
     };
 
-    const handleToolClick = (tool) => {
+    const handleToolOpen = (tool) => {
         addLog(`Tool: ${tool}`, 'info');
-
         if (tool === 'expression') {
             openExpressionPad();
-        } else if (tool === 'sync') {
-            triggerExchange();
-        } else if (tool === 'log') {
-            openLogWindow();
         }
     };
 
@@ -558,58 +540,47 @@ function App() {
 
     const windowContainersRef = useRef({});
 
-    // Re-render Config window when state changes
+    // Re-render device app windows when any relevant state changes
     useEffect(() => {
-        for (const portName of Object.keys(configByDevice)) {
-            const containerId = `config-${portName}`;
-            const container = windowContainersRef.current[containerId];
-            if (container && WindowManager.exists(containerId)) {
-                const device = devices[portName];
+        for (const [portName, device] of Object.entries(devices)) {
+            const windowId = `device-${portName}`;
+            const container = windowContainersRef.current[windowId];
+            if (container && WindowManager.exists(windowId)) {
+                const capabilities = device.capabilities || [];
+                const hasPatch = capabilities.includes(CAPABILITIES.PATCHES);
+                const cConfig = controllerPortName ? configByDevice[controllerPortName] : null;
                 ReactDOM.render(
-                    <BartlebyConfigWindow
+                    <DeviceAppWindow
+                        portName={portName}
+                        device={device}
+                        topology={topology}
+                        patchList={patchList}
+                        currentPatchIndex={currentPatchIndex}
+                        currentPatch={currentPatch}
+                        onSelectPatch={selectPatch}
+                        onCreatePatch={createPatch}
+                        onDeletePatch={deletePatch}
+                        onRenamePatch={renamePatch}
+                        onMovePatch={movePatch}
+                        onToggleModule={toggleModule}
+                        onUpdateParam={updateParam}
+                        onToggleModulation={toggleModulation}
+                        onUpdateModAmount={updateModulationAmount}
+                        addLog={addLog}
+                        midiState={midiStateRef.current}
+                        controllerConfig={cConfig}
                         config={configByDevice[portName]}
-                        saveStatus={device?.saveStatus || 'saved'}
-                        deviceInfo={device?.deviceInfo}
                         onConfigChange={(cfg) => updateConfig(portName, cfg)}
                         onSave={() => saveDevice(portName)}
-                        midiState={midiStateRef.current}
+                        api={deviceApisRef.current[portName]}
+                        defaultTab={hasPatch ? 'patches' : 'config'}
                     />,
                     container
                 );
             }
         }
-    }, [configByDevice, devices]);
-
-    // Re-render Patch editor window when state changes
-    useEffect(() => {
-        const container = windowContainersRef.current['patch-editor'];
-        if (container && WindowManager.exists('patch-editor')) {
-            const synthDevice = synthPortName ? devices[synthPortName] : null;
-            const controllerConfig = controllerPortName ? configByDevice[controllerPortName] : null;
-            ReactDOM.render(
-                <PatchEditorWindow
-                    topology={topology}
-                    patchList={patchList}
-                    currentIndex={currentPatchIndex}
-                    currentPatch={currentPatch}
-                    onSelectPatch={selectPatch}
-                    onCreatePatch={createPatch}
-                    onDeletePatch={deletePatch}
-                    onRenamePatch={renamePatch}
-                    onMovePatch={movePatch}
-                    onToggleModule={toggleModule}
-                    onUpdateParam={updateParam}
-                    onToggleModulation={toggleModulation}
-                    onUpdateModAmount={updateModulationAmount}
-                    isConnected={synthDevice?.status === 'connected'}
-                    addLog={addLog}
-                    midiState={midiStateRef.current}
-                    controllerConfig={controllerConfig}
-                />,
-                container
-            );
-        }
-    }, [topology, patchList, currentPatchIndex, currentPatch, synthPortName, devices, addLog, configByDevice, controllerPortName]);
+    }, [devices, configByDevice, topology, patchList, currentPatchIndex, currentPatch,
+        synthPortName, controllerPortName, addLog]);
 
     // Re-render Log window when logs or topology change
     useEffect(() => {
@@ -645,22 +616,25 @@ function App() {
     // WINDOW OPENERS
     //------------------------------------------------------------------
 
-    const openConfigWindow = async (portName) => {
-        const windowId = `config-${portName}`;
+    const openDeviceApp = async (portName) => {
+        const windowId = `device-${portName}`;
         if (WindowManager.exists(windowId)) {
             WindowManager.focus(windowId);
             return;
         }
 
-        const api = deviceApisRef.current[portName];
-        let initialConfig = configByDevice[portName];
+        const device = devices[portName];
+        if (!device) return;
+        const capabilities = device.capabilities || [];
+        const deviceName = device.deviceInfo?.name || portName;
+        const hasPatch = capabilities.includes(CAPABILITIES.PATCHES);
 
-        if (initialConfig === undefined && api) {
-            addLog(`Loading config from ${portName}...`, 'info');
+        // Ensure config is loaded
+        const api = deviceApisRef.current[portName];
+        if (capabilities.includes(CAPABILITIES.CONFIG) && !configByDevice[portName] && api) {
             try {
                 const result = await api.getConfig();
                 if (result.config) {
-                    initialConfig = result.config;
                     setConfigByDevice(prev => ({ ...prev, [portName]: result.config }));
                 }
             } catch (err) {
@@ -669,83 +643,34 @@ function App() {
         }
 
         const container = document.createElement('div');
+        container.style.height = '100%';
         windowContainersRef.current[windowId] = container;
 
-        const device = devices[portName];
-        const deviceName = device?.deviceInfo?.name || portName;
-
-        // Get saved geometry or use defaults
         const saved = WorkspacePersistence.getWindowState(windowId);
 
         WindowManager.create({
             id: windowId,
-            title: `${deviceName} Config`,
+            title: deviceName,
             x: saved?.x ?? 100,
-            y: saved?.y ?? 50,
-            width: saved?.width ?? 450,
-            height: saved?.height ?? 400,
+            y: saved?.y ?? 30,
+            width: saved?.width ?? (hasPatch ? 1280 : 500),
+            height: saved?.height ?? (hasPatch ? 800 : 450),
             content: container,
             onClose: () => {
                 delete windowContainersRef.current[windowId];
             }
         });
 
-        // Mark as open for persistence
         WorkspacePersistence.setWasOpen(windowId, true);
 
+        const cConfig = controllerPortName ? configByDevice[controllerPortName] : null;
         ReactDOM.render(
-            <BartlebyConfigWindow
-                config={initialConfig}
-                saveStatus={device?.saveStatus || 'saved'}
-                deviceInfo={device?.deviceInfo}
-                onConfigChange={(cfg) => updateConfig(portName, cfg)}
-                onSave={() => saveDevice(portName)}
-                midiState={midiStateRef.current}
-            />,
-            container
-        );
-    };
-
-    const openPatchEditor = async (portName) => {
-        if (WindowManager.exists('patch-editor')) {
-            WindowManager.focus('patch-editor');
-            return;
-        }
-
-        const initialIndex = currentPatchIndex >= 0 ? currentPatchIndex : 0;
-
-        const container = document.createElement('div');
-        container.style.height = '100%';
-        windowContainersRef.current['patch-editor'] = container;
-
-        const device = devices[portName];
-        const deviceName = device?.deviceInfo?.name || portName;
-
-        // Get saved geometry or use defaults
-        const saved = WorkspacePersistence.getWindowState('patch-editor');
-
-        WindowManager.create({
-            id: 'patch-editor',
-            title: `${deviceName} Patches`,
-            x: saved?.x ?? 120,
-            y: saved?.y ?? 70,
-            width: saved?.width ?? 1280,
-            height: saved?.height ?? 800,
-            content: container,
-            onClose: () => {
-                delete windowContainersRef.current['patch-editor'];
-            }
-        });
-
-        // Mark as open for persistence
-        WorkspacePersistence.setWasOpen('patch-editor', true);
-
-        const controllerConfig = controllerPortName ? configByDevice[controllerPortName] : null;
-        ReactDOM.render(
-            <PatchEditorWindow
+            <DeviceAppWindow
+                portName={portName}
+                device={device}
                 topology={topology}
                 patchList={patchList}
-                currentIndex={initialIndex}
+                currentPatchIndex={currentPatchIndex}
                 currentPatch={currentPatch}
                 onSelectPatch={selectPatch}
                 onCreatePatch={createPatch}
@@ -756,97 +681,23 @@ function App() {
                 onUpdateParam={updateParam}
                 onToggleModulation={toggleModulation}
                 onUpdateModAmount={updateModulationAmount}
-                isConnected={device?.status === 'connected'}
                 addLog={addLog}
                 midiState={midiStateRef.current}
-                controllerConfig={controllerConfig}
+                controllerConfig={cConfig}
+                config={configByDevice[portName]}
+                onConfigChange={(cfg) => updateConfig(portName, cfg)}
+                onSave={() => saveDevice(portName)}
+                api={deviceApisRef.current[portName]}
+                defaultTab={hasPatch ? 'patches' : 'config'}
             />,
             container
         );
 
-        if (currentPatch === null && patchList.length > 0) {
+        // Load initial patch if needed
+        if (hasPatch && currentPatch === null && patchList.length > 0) {
+            const initialIndex = currentPatchIndex >= 0 ? currentPatchIndex : 0;
             loadPatch(initialIndex);
         }
-    };
-
-    const openFirmwareWindow = (portName) => {
-        const windowId = `firmware-${portName}`;
-        if (WindowManager.exists(windowId)) {
-            WindowManager.focus(windowId);
-            return;
-        }
-
-        const container = document.createElement('div');
-        const device = devices[portName];
-        const deviceName = device?.deviceInfo?.name || portName;
-
-        // Get saved geometry or use defaults
-        const saved = WorkspacePersistence.getWindowState(windowId);
-
-        WindowManager.create({
-            id: windowId,
-            title: `${deviceName} Firmware`,
-            x: saved?.x ?? 200,
-            y: saved?.y ?? 100,
-            width: saved?.width ?? 350,
-            height: saved?.height ?? 300,
-            content: container,
-            onClose: () => {}
-        });
-
-        // Mark as open for persistence
-        WorkspacePersistence.setWasOpen(windowId, true);
-
-        ReactDOM.render(
-            <FirmwareWindow
-                device={portName}
-                deviceInfo={device?.deviceInfo}
-                api={deviceApisRef.current[portName]}
-                onClose={() => WindowManager.close(windowId)}
-                addLog={addLog}
-            />,
-            container
-        );
-    };
-
-    const openLanguageWindow = (portName) => {
-        const windowId = `language-${portName}`;
-        if (WindowManager.exists(windowId)) {
-            WindowManager.focus(windowId);
-            return;
-        }
-
-        const container = document.createElement('div');
-        const device = devices[portName];
-        const deviceName = device?.deviceInfo?.name || portName;
-
-        // Get saved geometry or use defaults
-        const saved = WorkspacePersistence.getWindowState(windowId);
-
-        WindowManager.create({
-            id: windowId,
-            title: `${deviceName} Language`,
-            x: saved?.x ?? 250,
-            y: saved?.y ?? 150,
-            width: saved?.width ?? 300,
-            height: saved?.height ?? 250,
-            content: container,
-            onClose: () => {}
-        });
-
-        // Mark as open for persistence
-        WorkspacePersistence.setWasOpen(windowId, true);
-
-        ReactDOM.render(
-            <LanguageWindow
-                device={portName}
-                api={deviceApisRef.current[portName]}
-                deviceInfo={device?.deviceInfo}
-                onClose={() => WindowManager.close(windowId)}
-                addLog={addLog}
-            />,
-            container
-        );
     };
 
     const openExpressionPad = () => {
@@ -859,7 +710,6 @@ function App() {
         container.style.height = '100%';
         windowContainersRef.current['expression-pad'] = container;
 
-        // Get saved geometry or use defaults
         const saved = WorkspacePersistence.getWindowState('expression-pad');
 
         WindowManager.create({
@@ -875,7 +725,6 @@ function App() {
             }
         });
 
-        // Mark as open for persistence
         WorkspacePersistence.setWasOpen('expression-pad', true);
 
         const synthDevice = synthPortName ? devices[synthPortName] : null;
@@ -903,7 +752,6 @@ function App() {
         container.style.height = '100%';
         windowContainersRef.current['log-window'] = container;
 
-        // Get saved geometry or use defaults
         const saved = WorkspacePersistence.getWindowState('log-window');
 
         WindowManager.create({
@@ -919,7 +767,6 @@ function App() {
             }
         });
 
-        // Mark as open for persistence
         WorkspacePersistence.setWasOpen('log-window', true);
 
         ReactDOM.render(
@@ -932,65 +779,24 @@ function App() {
     // RENDER
     //------------------------------------------------------------------
 
-    // Build device states for sidebar (compatibility layer)
-    const deviceStatesForSidebar = useMemo(() => {
-        const result = {};
-        for (const [portName, device] of Object.entries(devices)) {
-            result[portName] = {
-                connected: device.status === 'connected',
-                name: device.deviceInfo?.name || portName,
-                capabilities: device.capabilities || []
-            };
-        }
-        return result;
-    }, [devices]);
-
     const isLinked = controllerPortName && synthPortName &&
                      devices[controllerPortName]?.status === 'connected' &&
                      devices[synthPortName]?.status === 'connected';
 
     return (
         <div className="ap-container">
-            <DeviceSidebar
-                devices={deviceStatesForSidebar}
-                onDeviceAction={handleDeviceAction}
-                onToolClick={handleToolClick}
-            />
-
-            <div id="workspace">
-                {/* Windows are rendered here by WindowManager */}
-            </div>
-
-            <StatusBar
+            <MenuBar
                 devices={devices}
                 isLinked={isLinked}
+                focusedApp={focusedApp}
+                onLogClick={() => openLogWindow()}
+                onSyncClick={() => triggerExchange()}
             />
-        </div>
-    );
-}
-
-//======================================================================
-// STATUS BAR
-//======================================================================
-
-function StatusBar({ devices, isLinked }) {
-    return (
-        <div className="ap-status-bar">
-            {Object.entries(devices).map(([portName, device]) => (
-                <div key={portName} className="ap-status-item">
-                    <span className={`ap-status-led ${device.status === 'connected' ? 'connected' : ''}`}></span>
-                    <span>{device.deviceInfo?.name || portName}</span>
-                </div>
-            ))}
-            {Object.keys(devices).length === 0 && (
-                <div className="ap-status-item">
-                    <span className="ap-status-led"></span>
-                    <span>No devices</span>
-                </div>
-            )}
-            {isLinked && (
-                <span className="ap-status-linked">LINKED</span>
-            )}
+            <Desktop
+                devices={devices}
+                onDeviceOpen={handleDeviceOpen}
+                onToolOpen={handleToolOpen}
+            />
         </div>
     );
 }
