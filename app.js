@@ -29,6 +29,7 @@ function App() {
     // Device APIs - indexed by port name
     const deviceApisRef = useRef({});
     const deviceRegistryRef = useRef(null);
+    const midiStateRef = useRef(null);
 
     // Patch state (for devices with PATCHES capability)
     const [patchList, setPatchList] = useState([]);
@@ -61,6 +62,10 @@ function App() {
     useEffect(() => {
         const registry = new DeviceRegistry();
         deviceRegistryRef.current = registry;
+
+        const midiState = new MidiState();
+        midiStateRef.current = midiState;
+        registry.onMidiThrough((data) => midiState.handleMidiThrough(data));
 
         registry.onDeviceConnected((portName) => {
             addLog(`Device connected: ${portName}`, 'success');
@@ -252,6 +257,7 @@ function App() {
         }
         if (controllerPortName === portName) {
             setControllerPortName(null);
+            midiStateRef.current?.reset();
         }
 
         setConfigByDevice(prev => {
@@ -566,6 +572,7 @@ function App() {
                         deviceInfo={device?.deviceInfo}
                         onConfigChange={(cfg) => updateConfig(portName, cfg)}
                         onSave={() => saveDevice(portName)}
+                        midiState={midiStateRef.current}
                     />,
                     container
                 );
@@ -578,6 +585,7 @@ function App() {
         const container = windowContainersRef.current['patch-editor'];
         if (container && WindowManager.exists('patch-editor')) {
             const synthDevice = synthPortName ? devices[synthPortName] : null;
+            const controllerConfig = controllerPortName ? configByDevice[controllerPortName] : null;
             ReactDOM.render(
                 <PatchEditorWindow
                     topology={topology}
@@ -595,11 +603,13 @@ function App() {
                     onUpdateModAmount={updateModulationAmount}
                     isConnected={synthDevice?.status === 'connected'}
                     addLog={addLog}
+                    midiState={midiStateRef.current}
+                    controllerConfig={controllerConfig}
                 />,
                 container
             );
         }
-    }, [topology, patchList, currentPatchIndex, currentPatch, synthPortName, devices, addLog]);
+    }, [topology, patchList, currentPatchIndex, currentPatch, synthPortName, devices, addLog, configByDevice, controllerPortName]);
 
     // Re-render Log window when logs or topology change
     useEffect(() => {
@@ -623,6 +633,7 @@ function App() {
                     candideApi={synthApi}
                     isConnected={synthDevice?.status === 'connected'}
                     deviceRegistry={deviceRegistryRef.current}
+                    midiState={midiStateRef.current}
                     addLog={addLog}
                 />,
                 container
@@ -689,6 +700,7 @@ function App() {
                 deviceInfo={device?.deviceInfo}
                 onConfigChange={(cfg) => updateConfig(portName, cfg)}
                 onSave={() => saveDevice(portName)}
+                midiState={midiStateRef.current}
             />,
             container
         );
@@ -728,6 +740,7 @@ function App() {
         // Mark as open for persistence
         WorkspacePersistence.setWasOpen('patch-editor', true);
 
+        const controllerConfig = controllerPortName ? configByDevice[controllerPortName] : null;
         ReactDOM.render(
             <PatchEditorWindow
                 topology={topology}
@@ -745,6 +758,8 @@ function App() {
                 onUpdateModAmount={updateModulationAmount}
                 isConnected={device?.status === 'connected'}
                 addLog={addLog}
+                midiState={midiStateRef.current}
+                controllerConfig={controllerConfig}
             />,
             container
         );
@@ -871,6 +886,7 @@ function App() {
                 candideApi={synthApi}
                 isConnected={synthDevice?.status === 'connected'}
                 deviceRegistry={deviceRegistryRef.current}
+                midiState={midiStateRef.current}
                 addLog={addLog}
             />,
             container
@@ -1271,7 +1287,7 @@ const NOTE_COLORS = [
     '#aa44ff',
 ];
 
-function ExpressionPadWindow({ candideApi, isConnected, deviceRegistry, addLog }) {
+function ExpressionPadWindow({ candideApi, isConnected, deviceRegistry, midiState, addLog }) {
     const canvasRef = useRef(null);
     const [velocity, setVelocity] = useState(0.8);
     const [activeNotes, setActiveNotes] = useState(new Map());
@@ -1395,50 +1411,51 @@ function ExpressionPadWindow({ candideApi, isConnected, deviceRegistry, addLog }
     }, [isConnected, candideApi, mpeEnabled, addLog]);
 
     useEffect(() => {
-        if (!deviceRegistry) return;
+        if (!midiState) return;
 
-        const handleIncomingMidi = (data) => {
-            const status = data[0] & 0xF0;
-            const channel = data[0] & 0x0F;
-
-            if (status === 0x90 && data[2] > 0) {
+        const unsubscribe = midiState.subscribe((eventType, data) => {
+            if (eventType === 'noteOn') {
                 setActiveNotes(prev => {
                     const next = new Map(prev);
                     const colorIndex = colorIndexRef.current++;
-                    next.set(channel, { note: data[1], bend: 0, pressure: 0.5, colorIndex });
+                    next.set(data.channel, {
+                        note: data.note,
+                        velocity: data.velocity,
+                        bend: 0,
+                        pressure: 0.5,
+                        colorIndex
+                    });
                     return next;
                 });
-            } else if (status === 0x80 || (status === 0x90 && data[2] === 0)) {
+            } else if (eventType === 'noteOff') {
                 setActiveNotes(prev => {
                     const next = new Map(prev);
-                    next.delete(channel);
+                    next.delete(data.channel);
                     return next;
                 });
-            } else if (status === 0xE0) {
-                const raw = data[1] | (data[2] << 7);
-                const bend = (raw - 8192) / 8192;
+            } else if (eventType === 'bend') {
                 setActiveNotes(prev => {
-                    const existing = prev.get(channel);
+                    const existing = prev.get(data.channel);
                     if (!existing) return prev;
                     const next = new Map(prev);
-                    next.set(channel, { ...existing, bend });
+                    next.set(data.channel, { ...existing, bend: data.bend });
                     return next;
                 });
-            } else if (status === 0xD0) {
-                const pressure = data[1] / 127;
+            } else if (eventType === 'pressure') {
                 setActiveNotes(prev => {
-                    const existing = prev.get(channel);
+                    const existing = prev.get(data.channel);
                     if (!existing) return prev;
                     const next = new Map(prev);
-                    next.set(channel, { ...existing, pressure });
+                    next.set(data.channel, { ...existing, pressure: data.pressure });
                     return next;
                 });
+            } else if (eventType === 'reset') {
+                setActiveNotes(new Map());
             }
-        };
+        });
 
-        deviceRegistry.onMidiThrough(handleIncomingMidi);
-        return () => deviceRegistry.onMidiThrough(null);
-    }, [deviceRegistry]);
+        return unsubscribe;
+    }, [midiState]);
 
     const handleMouseDown = useCallback((e) => {
         if (!isConnected || !candideApi) return;
@@ -1601,6 +1618,7 @@ function ExpressionPadWindow({ candideApi, isConnected, deviceRegistry, addLog }
             </div>
 
             <div className="ap-pad-labels">
+                <span>Vel: {Math.round((currentNote?.velocity ?? 0) * 127)}</span>
                 <span>Bend: {(currentNote?.bend ?? 0).toFixed(2)}</span>
                 <span>Pres: {Math.round((currentNote?.pressure ?? 0.5) * 100)}%</span>
             </div>

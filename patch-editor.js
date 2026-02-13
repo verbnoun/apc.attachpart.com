@@ -25,7 +25,8 @@ const DEFAULT_MODULE_DEFINITIONS = {
         { id: 'OSC1', name: 'OSC 1', type: 'audio', category: 'oscillator' },
         { id: 'OSC2', name: 'OSC 2', type: 'audio', category: 'oscillator' },
         { id: 'FILTER', name: 'FILTER', type: 'audio', category: 'filter' },
-        { id: 'VAMP', name: 'Amp', type: 'audio', category: 'amp' }
+        { id: 'VAMP', name: 'Amp', type: 'audio', category: 'amp' },
+        { id: 'CHORDS', name: 'Chords', type: 'audio', category: 'meta' }
     ],
     // Modulation sources - user wires to targets
     mod: [
@@ -56,6 +57,7 @@ function buildModuleDefinitions(topology) {
         if (moduleId.startsWith('OSC')) return 'oscillator';
         if (moduleId.includes('FILTER')) return 'filter';
         if (moduleId === 'VAMP') return 'amp';
+        if (moduleId === 'CHORDS') return 'meta';
         if (moduleId.includes('ENV')) return 'envelope';
         if (moduleId.includes('LFO')) return 'lfo';
         return defaultCategory;
@@ -271,7 +273,9 @@ function PatchEditorWindow({
     onToggleModulation,
     onUpdateModAmount,
     isConnected = true,
-    addLog = (msg, type) => console.log(`[${type}] ${msg}`)  // Default to console if not provided
+    addLog = (msg, type) => console.log(`[${type}] ${msg}`),
+    midiState,
+    controllerConfig
 }) {
     // Create logger that uses the addLog prop
     const log = useMemo(() => createPatchLogger(addLog), [addLog]);
@@ -737,6 +741,8 @@ function PatchEditorWindow({
                     onUpdateParam={onUpdateParam}
                     onUpdateModAmount={onUpdateModAmount}
                     log={log}
+                    midiState={midiState}
+                    controllerConfig={controllerConfig}
                 />
                 <LoadingOverlay isLoading={isLoading} isVisible={isLoading} />
             </div>
@@ -1094,7 +1100,9 @@ function NodeWorkspace({
     modConnections,
     onUpdateParam,
     onUpdateModAmount,
-    log = () => {}  // Default to no-op if not provided
+    log = () => {},  // Default to no-op if not provided
+    midiState,
+    controllerConfig
 }) {
     const workspaceRef = useRef(null);
     const [draggingNode, setDraggingNode] = useState(null);
@@ -1156,6 +1164,7 @@ function NodeWorkspace({
         VAMP:     { x: 450, y: 50 },
         DISTORT:  { x: 650, y: 50 },
         DELAY:    { x: 650, y: 160 },
+        CHORDS:   { x: 450, y: 160 },
 
         // Mod sources - below audio
         MOD_ENV:  { x: 50, y: 420 },
@@ -1544,6 +1553,8 @@ function NodeWorkspace({
                         selectedWireTarget={selectedWireTarget}
                         onUpdateParam={onUpdateParam}
                         onUpdateModAmount={onUpdateModAmount}
+                        midiState={module.id === 'VELOCITY' ? midiState : undefined}
+                        controllerConfig={module.id === 'VELOCITY' ? controllerConfig : undefined}
                     />
                 );
             })}
@@ -1841,6 +1852,150 @@ function PriorityBadge({ priority, paramKey, existingPriorities, onUpdatePriorit
 }
 
 //======================================================================
+// VELOCITY CURVE PREVIEW (for VELOCITY node)
+//======================================================================
+
+function VelocityCurvePreview({ curve, midiState }) {
+    const canvasRef = useRef(null);
+    const velocityDotsRef = useRef([]);
+    const animFrameRef = useRef(null);
+    const [drawTrigger, setDrawTrigger] = useState(0);
+    const resolvedColorRef = useRef('#92cc41');
+
+    // Resolve CSS variable for canvas drawing
+    useEffect(() => {
+        const el = document.documentElement;
+        const computed = getComputedStyle(el).getPropertyValue('--ap-accent-green').trim();
+        if (computed) resolvedColorRef.current = computed;
+    }, []);
+
+    const cx = curve?.x ?? 0.5;
+    const cy = curve?.y ?? 0.5;
+
+    // Subscribe to MidiState for velocity dots
+    useEffect(() => {
+        if (!midiState) return;
+
+        const unsubscribe = midiState.subscribe((eventType, data) => {
+            if (eventType === 'noteOn') {
+                velocityDotsRef.current.push({
+                    input: data.velocity,
+                    timestamp: performance.now()
+                });
+                if (velocityDotsRef.current.length > 10) {
+                    velocityDotsRef.current.shift();
+                }
+                setDrawTrigger(prev => prev + 1);
+            }
+        });
+
+        return unsubscribe;
+    }, [midiState]);
+
+    const drawCanvas = useCallback(() => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+
+        const ctx = canvas.getContext('2d');
+        const w = canvas.width;
+        const h = canvas.height;
+        const color = resolvedColorRef.current;
+
+        // Dark background
+        ctx.fillStyle = '#1a1a2e';
+        ctx.fillRect(0, 0, w, h);
+
+        if (!curve) {
+            // No config fallback
+            ctx.fillStyle = '#6c757d';
+            ctx.font = '8px "Press Start 2P"';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('No config', w / 2, h / 2);
+            return;
+        }
+
+        // 2x2 grid
+        ctx.strokeStyle = '#2a2a3e';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(w / 2, 0); ctx.lineTo(w / 2, h);
+        ctx.moveTo(0, h / 2); ctx.lineTo(w, h / 2);
+        ctx.stroke();
+
+        // Linear reference (dashed)
+        ctx.strokeStyle = '#3a3a4e';
+        ctx.setLineDash([2, 2]);
+        ctx.beginPath();
+        ctx.moveTo(0, h);
+        ctx.lineTo(w, 0);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Bezier curve
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(0, h);
+        ctx.quadraticCurveTo(cx * w, h - cy * h, w, 0);
+        ctx.stroke();
+
+        // Velocity dots (fade trail)
+        const now = performance.now();
+        const DOT_LIFETIME = 2000;
+        velocityDotsRef.current = velocityDotsRef.current.filter(dot => now - dot.timestamp < DOT_LIFETIME);
+
+        for (const dot of velocityDotsRef.current) {
+            const age = now - dot.timestamp;
+            const alpha = 1 - age / DOT_LIFETIME;
+            const outputY = evaluateQuadraticBezierY(dot.input, cx, cy);
+            const dotX = dot.input * w;
+            const dotY = h - outputY * h;
+
+            ctx.globalAlpha = alpha;
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.arc(dotX, dotY, 3, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.globalAlpha = 1;
+        }
+    }, [cx, cy, curve]);
+
+    // Draw on state changes
+    useEffect(() => {
+        drawCanvas();
+    }, [drawCanvas, drawTrigger]);
+
+    // Animation loop for fading dots
+    useEffect(() => {
+        if (!midiState || velocityDotsRef.current.length === 0) return;
+
+        const animate = () => {
+            drawCanvas();
+            if (velocityDotsRef.current.length > 0) {
+                animFrameRef.current = requestAnimationFrame(animate);
+            }
+        };
+        animFrameRef.current = requestAnimationFrame(animate);
+
+        return () => {
+            if (animFrameRef.current) {
+                cancelAnimationFrame(animFrameRef.current);
+            }
+        };
+    }, [drawTrigger, midiState, drawCanvas]);
+
+    return (
+        <canvas
+            ref={canvasRef}
+            width="120"
+            height="60"
+            className="ap-velocity-preview-canvas"
+        />
+    );
+}
+
+//======================================================================
 // NODE COMPONENT
 //======================================================================
 
@@ -1864,7 +2019,9 @@ function Node({
     onUpdateParam,
     onUpdateModAmount,
     otherEnvelopeParams,  // For envelope overlay
-    otherEnvelopeColor    // Color for the other envelope curve
+    otherEnvelopeColor,   // Color for the other envelope curve
+    midiState,            // For velocity preview (VELOCITY node only)
+    controllerConfig      // For velocity curve data (VELOCITY node only)
 }) {
     const moduleData = patch?.[module.id];
 
@@ -2083,6 +2240,15 @@ function Node({
                 />
             </div>
             <div className="ap-node-body">
+                {/* Velocity curve preview (VELOCITY node only) */}
+                {module.id === 'VELOCITY' && (
+                    <div className="ap-node-velocity-viz">
+                        <VelocityCurvePreview
+                            curve={controllerConfig?.keyboard?.velocity}
+                            midiState={midiState}
+                        />
+                    </div>
+                )}
                 {/* Envelope curve visualization */}
                 {isEnvelopeModule && envelopeParams && (
                     <div className="ap-node-envelope-viz">

@@ -2100,6 +2100,20 @@ html, body {
 }
 
 /* ============================================================
+   VELOCITY CURVE PREVIEW (in VELOCITY node)
+   ============================================================ */
+
+.ap-node-velocity-viz {
+    margin: 2px 4px 4px 4px;
+}
+
+.ap-velocity-preview-canvas {
+    display: block;
+    width: 120px;
+    height: 60px;
+}
+
+/* ============================================================
    ENVELOPE CURVE VISUALIZATION
    ============================================================ */
 

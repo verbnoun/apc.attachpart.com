@@ -12,7 +12,7 @@ const { useState, useEffect, useCallback, useRef } = React;
 // BARTLEBY CONFIG WINDOW
 //======================================================================
 
-function BartlebyConfigWindow({ config, saveStatus, deviceInfo, onConfigChange, onSave }) {
+function BartlebyConfigWindow({ config, saveStatus, deviceInfo, onConfigChange, onSave, midiState }) {
     const [activeTab, setActiveTab] = useState('curves');
 
     if (!config) {
@@ -44,7 +44,7 @@ function BartlebyConfigWindow({ config, saveStatus, deviceInfo, onConfigChange, 
             {/* Tab content */}
             <div className="ap-bartleby-content">
                 {activeTab === 'curves' && (
-                    <CurvesTab config={config} onConfigChange={onConfigChange} />
+                    <CurvesTab config={config} onConfigChange={onConfigChange} midiState={midiState} />
                 )}
                 {activeTab === 'pots' && (
                     <PotsTab config={config} onConfigChange={onConfigChange} />
@@ -102,7 +102,7 @@ function SaveStatusIndicator({ status, onSave }) {
 // CURVES TAB
 //======================================================================
 
-function CurvesTab({ config, onConfigChange }) {
+function CurvesTab({ config, onConfigChange, midiState }) {
     const keyboard = config.keyboard || {};
 
     const handleCurveChange = (curveType, axis, value) => {
@@ -123,6 +123,7 @@ function CurvesTab({ config, onConfigChange }) {
                 curve={keyboard.velocity || { x: 0.5, y: 0.5 }}
                 color="var(--ap-accent-green)"
                 onChange={(axis, value) => handleCurveChange('velocity', axis, value)}
+                midiState={midiState}
             />
             <CurveEditor
                 label="Pressure"
@@ -144,10 +145,13 @@ function CurvesTab({ config, onConfigChange }) {
 // CURVE EDITOR
 //======================================================================
 
-function CurveEditor({ label, curve, color, onChange }) {
+function CurveEditor({ label, curve, color, onChange, midiState }) {
     const canvasRef = useRef(null);
     const [editX, setEditX] = useState(curve.x);
     const [editY, setEditY] = useState(curve.y);
+    const velocityDotsRef = useRef([]);
+    const animFrameRef = useRef(null);
+    const [drawTrigger, setDrawTrigger] = useState(0);
 
     // Sync with external curve
     useEffect(() => {
@@ -155,8 +159,29 @@ function CurveEditor({ label, curve, color, onChange }) {
         setEditY(curve.y);
     }, [curve.x, curve.y]);
 
-    // Draw curve
+    // Subscribe to MidiState for velocity dots
     useEffect(() => {
+        if (!midiState) return;
+
+        const unsubscribe = midiState.subscribe((eventType, data) => {
+            if (eventType === 'noteOn') {
+                velocityDotsRef.current.push({
+                    input: data.velocity,
+                    timestamp: performance.now()
+                });
+                // Keep last 10
+                if (velocityDotsRef.current.length > 10) {
+                    velocityDotsRef.current.shift();
+                }
+                setDrawTrigger(prev => prev + 1);
+            }
+        });
+
+        return unsubscribe;
+    }, [midiState]);
+
+    // Draw canvas function
+    const drawCanvas = useCallback(() => {
         const canvas = canvasRef.current;
         if (!canvas) return;
 
@@ -209,11 +234,55 @@ function CurveEditor({ label, curve, color, onChange }) {
         ctx.arc(cpX, cpY, 6, 0, Math.PI * 2);
         ctx.fill();
 
+        // Velocity dots (fade trail)
+        const now = performance.now();
+        const DOT_LIFETIME = 2000;
+        velocityDotsRef.current = velocityDotsRef.current.filter(dot => now - dot.timestamp < DOT_LIFETIME);
+
+        for (const dot of velocityDotsRef.current) {
+            const age = now - dot.timestamp;
+            const alpha = 1 - age / DOT_LIFETIME;
+            const outputY = evaluateQuadraticBezierY(dot.input, editX, editY);
+            const dotX = dot.input * w;
+            const dotY = h - outputY * h;
+
+            ctx.globalAlpha = alpha;
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.arc(dotX, dotY, 4, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.globalAlpha = 1;
+        }
+
         // Border
         ctx.strokeStyle = '#adafbc';
         ctx.lineWidth = 2;
         ctx.strokeRect(0, 0, w, h);
     }, [editX, editY, color]);
+
+    // Draw on state changes
+    useEffect(() => {
+        drawCanvas();
+    }, [drawCanvas, drawTrigger]);
+
+    // Animation loop for fading dots
+    useEffect(() => {
+        if (!midiState || velocityDotsRef.current.length === 0) return;
+
+        const animate = () => {
+            drawCanvas();
+            if (velocityDotsRef.current.length > 0) {
+                animFrameRef.current = requestAnimationFrame(animate);
+            }
+        };
+        animFrameRef.current = requestAnimationFrame(animate);
+
+        return () => {
+            if (animFrameRef.current) {
+                cancelAnimationFrame(animFrameRef.current);
+            }
+        };
+    }, [drawTrigger, midiState, drawCanvas]);
 
     const handleCommit = (axis, value) => {
         onChange(axis, value);
