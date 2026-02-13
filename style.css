@@ -10,12 +10,12 @@
    ============================================================ */
 
 :root {
-    /* Colors */
-    --ap-bg-primary: #212529;
-    --ap-bg-secondary: #1a1a2e;
-    --ap-bg-tertiary: #2a2a3e;
+    /* Colors — System 7 Platinum dark mode */
+    --ap-bg-primary: #1e1e1e;
+    --ap-bg-secondary: #2a2a2a;
+    --ap-bg-tertiary: #3a3a3a;
     --ap-text-primary: #ffffff;
-    --ap-text-secondary: #adafbc;
+    --ap-text-secondary: #a0a0a0;
     --ap-text-muted: #6c757d;
 
     /* Accent colors */
@@ -32,11 +32,16 @@
     --ap-wire-lfo: #209cee;
     --ap-wire-control: #92869b;
 
-    /* Window chrome */
-    --ap-window-border: #212529;
-    --ap-window-shadow-light: #fff;
-    --ap-window-shadow-dark: #adafbc;
-    --ap-window-titlebar: #209cee;
+    /* Window chrome — System 7 Platinum */
+    --ap-window-border: #1e1e1e;
+    --ap-window-shadow-light: #c0c0c0;
+    --ap-window-shadow-dark: #606060;
+    --ap-window-titlebar: #4a4a4a;
+
+    /* Per-app theming (defaults, overridden by [data-theme]) */
+    --ap-app-accent: #a0a0a0;
+    --ap-app-titlebar: #4a4a4a;
+    --ap-app-tab-active: #a0a0a0;
 
     /* Spacing */
     --ap-spacing-xs: 4px;
@@ -50,6 +55,31 @@
     --ap-font-size-sm: 10px;
     --ap-font-size-md: 12px;
     --ap-font-size-lg: 14px;
+}
+
+/* ============================================================
+   PER-APP THEMES
+   ============================================================ */
+
+/* Bartleby / Controller — warm beige */
+[data-theme="controller"] {
+    --ap-app-accent: #d4a574;
+    --ap-app-titlebar: #8b7355;
+    --ap-app-tab-active: #d4a574;
+}
+
+/* Candide / Synth — lilac */
+[data-theme="synth"] {
+    --ap-app-accent: #b8a0d2;
+    --ap-app-titlebar: #7b6b8a;
+    --ap-app-tab-active: #b8a0d2;
+}
+
+/* Tools (Log, Sync, Pad) — neutral */
+[data-theme="tool"] {
+    --ap-app-accent: #a0a0a0;
+    --ap-app-titlebar: #4a4a4a;
+    --ap-app-tab-active: #a0a0a0;
 }
 
 /* ============================================================
@@ -88,8 +118,8 @@ html, body {
 
 .ap-menubar {
     height: 28px;
-    background: var(--ap-bg-primary);
-    border-bottom: 2px solid var(--ap-text-secondary);
+    background: var(--ap-bg-tertiary);
+    border-bottom: 2px solid var(--ap-window-shadow-dark);
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -98,6 +128,7 @@ html, body {
     z-index: 10000;
     box-shadow:
         inset 0 -1px 0 var(--ap-window-shadow-dark),
+        inset 0 1px 0 var(--ap-window-shadow-light),
         0 1px 0 rgba(0,0,0,0.3);
 }
 
@@ -230,11 +261,11 @@ html, body {
 }
 
 .ap-desktop-icon-synth .ap-desktop-icon-image {
-    border-color: var(--ap-accent-green);
+    border-color: #b8a0d2;
 }
 
 .ap-desktop-icon-controller .ap-desktop-icon-image {
-    border-color: var(--ap-accent-purple);
+    border-color: #d4a574;
 }
 
 .ap-desktop-icon-tool .ap-desktop-icon-image {
@@ -322,6 +353,7 @@ html, body {
     color: var(--ap-text-primary);
     background: var(--ap-bg-primary);
     border-bottom: 2px solid var(--ap-bg-primary);
+    border-top: 2px solid var(--ap-app-tab-active, var(--ap-accent-blue));
 }
 
 .ap-device-app-content {
@@ -391,9 +423,9 @@ html, body {
     height: 24px;
 }
 
-/* Active window title bar */
+/* Active window title bar — uses per-app theme */
 .ap-window-active .ap-window-titlebar {
-    background: var(--ap-window-titlebar);
+    background: var(--ap-app-titlebar, var(--ap-window-titlebar));
 }
 
 /* Close box - outlined square (System 7) */
@@ -436,8 +468,8 @@ html, body {
         to bottom,
         transparent,
         transparent 1px,
-        var(--ap-bg-primary) 1px,
-        var(--ap-bg-primary) 2px
+        var(--ap-app-accent, var(--ap-bg-primary)) 1px,
+        var(--ap-app-accent, var(--ap-bg-primary)) 2px
     );
 }
 
@@ -1861,6 +1893,99 @@ html, body {
 }
 
 /* ============================================================
+   SYNC WINDOW
+   ============================================================ */
+
+.ap-sync-window {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    gap: var(--ap-spacing-sm);
+}
+
+.ap-sync-devices {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ap-spacing-xs);
+}
+
+.ap-sync-no-devices {
+    font-size: var(--ap-font-size-xs);
+    color: var(--ap-text-muted);
+    text-align: center;
+    padding: var(--ap-spacing-sm);
+}
+
+.ap-sync-device-row {
+    display: flex;
+    align-items: center;
+    gap: var(--ap-spacing-sm);
+    padding: var(--ap-spacing-xs) var(--ap-spacing-sm);
+    background: var(--ap-bg-secondary);
+    border: 1px solid var(--ap-bg-tertiary);
+}
+
+.ap-sync-device-led {
+    width: 6px;
+    height: 6px;
+    background: var(--ap-text-muted);
+    flex-shrink: 0;
+}
+
+.ap-sync-device-led.connected {
+    background: var(--ap-accent-green);
+    box-shadow: 0 0 4px var(--ap-accent-green);
+}
+
+.ap-sync-device-name {
+    font-size: var(--ap-font-size-xs);
+    color: var(--ap-text-primary);
+    flex: 1;
+}
+
+.ap-sync-device-role {
+    font-size: 7px;
+    color: var(--ap-text-muted);
+    text-transform: uppercase;
+}
+
+.ap-sync-btn {
+    align-self: center;
+    margin: var(--ap-spacing-xs) 0;
+}
+
+.ap-sync-output {
+    flex: 1;
+    overflow-y: auto;
+    background: var(--ap-bg-secondary);
+    border: 1px solid var(--ap-bg-tertiary);
+    padding: var(--ap-spacing-sm);
+    font-family: var(--ap-font-family);
+    font-size: var(--ap-font-size-xs);
+    line-height: 1.6;
+}
+
+.ap-sync-log-entry {
+    color: var(--ap-text-secondary);
+}
+
+.ap-sync-log-time {
+    color: var(--ap-text-muted);
+}
+
+.ap-sync-log-success {
+    color: var(--ap-accent-green);
+}
+
+.ap-sync-log-error {
+    color: var(--ap-accent-red);
+}
+
+.ap-sync-log-warning {
+    color: var(--ap-accent-yellow);
+}
+
+/* ============================================================
    LOG WINDOW
    ============================================================ */
 
@@ -2186,54 +2311,73 @@ html, body {
 
 
 /* ============================================================
-   PAD SLIDER (Virtual Controller)
+   PAD OUTPUT SELECTOR
    ============================================================ */
 
-.ap-pad-slider {
-    width: 100%;
-    max-width: 200px;
-    margin-top: var(--ap-spacing-md);
-    padding: var(--ap-spacing-sm);
-    background: var(--ap-bg-secondary);
-    border: 2px solid var(--ap-bg-tertiary);
-}
-
-.ap-slider-header {
+.ap-pad-output-select {
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    margin-bottom: var(--ap-spacing-xs);
+    gap: var(--ap-spacing-xs);
+    margin-bottom: var(--ap-spacing-sm);
+    width: 100%;
 }
 
-.ap-slider-label {
+.ap-pad-output-label {
     font-size: var(--ap-font-size-xs);
+    color: var(--ap-text-muted);
+    flex-shrink: 0;
+}
+
+.ap-pad-output-btn {
+    font-family: var(--ap-font-family);
+    font-size: 7px;
+    padding: 2px var(--ap-spacing-sm);
+    background: var(--ap-bg-secondary);
+    border: 1px solid var(--ap-bg-tertiary);
+    color: var(--ap-text-secondary);
+    cursor: pointer;
+}
+
+.ap-pad-output-btn:hover {
+    background: var(--ap-bg-tertiary);
     color: var(--ap-text-primary);
 }
 
-.ap-slider-cc {
-    font-size: 7px;
-    color: var(--ap-text-muted);
+.ap-pad-output-btn.active {
+    background: var(--ap-accent-blue);
+    border-color: var(--ap-accent-blue);
+    color: var(--ap-bg-primary);
 }
 
-.ap-pad-slider .ap-slider {
+/* ============================================================
+   PAD MIDI MONITOR
+   ============================================================ */
+
+.ap-pad-monitor {
     width: 100%;
-    margin-bottom: var(--ap-spacing-xs);
+    flex: 1;
+    min-height: 60px;
+    overflow-y: auto;
+    background: var(--ap-bg-secondary);
+    border: 1px solid var(--ap-bg-tertiary);
+    padding: var(--ap-spacing-xs);
+    margin-top: var(--ap-spacing-sm);
+    font-size: 7px;
+    line-height: 1.5;
 }
 
-.ap-slider-value {
-    display: block;
-    text-align: center;
-    font-size: var(--ap-font-size-xs);
-    color: var(--ap-accent-yellow);
+.ap-monitor-entry {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
-.ap-pad-slider .ap-slider:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
+.ap-monitor-source {
+    font-weight: bold;
 }
 
-.ap-pad-slider .ap-slider:disabled + .ap-slider-value {
-    color: var(--ap-text-muted);
+.ap-monitor-desc {
+    color: var(--ap-text-secondary);
 }
 
 /* ============================================================

@@ -73,6 +73,31 @@ class MidiState {
     }
 
     /**
+     * Handle raw MIDI bytes from any connected device (all-input monitor)
+     * Similar to handleMidiThrough but tags events with source portName
+     * @param {string} portName - Source device port name
+     * @param {Uint8Array} data - Raw MIDI bytes
+     */
+    handleAllMidiInput(portName, data) {
+        const status = data[0] & 0xF0;
+        const channel = data[0] & 0x0F;
+
+        if (status === 0x90 && data[2] > 0) {
+            this._notify('allNoteOn', { source: portName, channel, note: data[1], velocity: data[2] / 127 });
+        } else if (status === 0x80 || (status === 0x90 && data[2] === 0)) {
+            this._notify('allNoteOff', { source: portName, channel, note: data[1] });
+        } else if (status === 0xE0) {
+            const raw = data[1] | (data[2] << 7);
+            const bend = (raw - 8192) / 8192;
+            this._notify('allBend', { source: portName, channel, bend });
+        } else if (status === 0xD0) {
+            this._notify('allPressure', { source: portName, channel, pressure: data[1] / 127 });
+        } else if (status === 0xB0) {
+            this._notify('allCC', { source: portName, channel, cc: data[1], value: data[2] });
+        }
+    }
+
+    /**
      * Get the most recent velocity value (0.0-1.0)
      * @returns {number|null}
      */

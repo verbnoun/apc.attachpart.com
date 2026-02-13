@@ -41,7 +41,8 @@ const WindowManager = {
             width = 400,
             height = 300,
             content = '',
-            onClose = null
+            onClose = null,
+            theme = null
         } = options;
 
         // Don't create duplicate windows
@@ -59,6 +60,7 @@ const WindowManager = {
         win.style.width = `${width}px`;
         win.style.height = `${height}px`;
         win.style.zIndex = this.nextZIndex++;
+        if (theme) win.dataset.theme = theme;
 
         // Title bar
         const titleBar = document.createElement('div');

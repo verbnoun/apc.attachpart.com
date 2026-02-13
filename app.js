@@ -57,6 +57,14 @@ function App() {
         setLogs(prev => [...prev.slice(-99), { message, type, timestamp }]);
     }, []);
 
+    // Sync logs (separate from main log)
+    const [syncLogs, setSyncLogs] = useState([]);
+
+    const addSyncLog = useCallback((message, type = 'info') => {
+        const timestamp = new Date().toLocaleTimeString();
+        setSyncLogs(prev => [...prev.slice(-49), { message, type, timestamp }]);
+    }, []);
+
     //------------------------------------------------------------------
     // DEVICE REGISTRY SETUP
     //------------------------------------------------------------------
@@ -68,6 +76,7 @@ function App() {
         const midiState = new MidiState();
         midiStateRef.current = midiState;
         registry.onMidiThrough((data) => midiState.handleMidiThrough(data));
+        registry.onAllMidiInput((portName, data) => midiState.handleAllMidiInput(portName, data));
 
         registry.onDeviceConnected((portName) => {
             addLog(`Device connected: ${portName}`, 'success');
@@ -108,6 +117,8 @@ function App() {
                     openLogWindow();
                 } else if (windowId === 'expression-pad') {
                     openExpressionPad();
+                } else if (windowId === 'sync-window') {
+                    openSyncWindow();
                 }
             }
         }, 0);
@@ -493,10 +504,12 @@ function App() {
 
         if (!synth) {
             addLog('No synth connected', 'warn');
+            addSyncLog('No synth connected', 'warning');
             return;
         }
         if (!controller) {
             addLog('No controller connected', 'warn');
+            addSyncLog('No controller connected', 'warning');
             return;
         }
 
@@ -510,6 +523,7 @@ function App() {
         }
 
         addLog(`Triggering exchange: ${synthDevice.deviceInfo?.name || synthPort} → ${controllerDevice.deviceInfo?.name || controllerPort}`, 'info');
+        addSyncLog(`Syncing: ${synthDevice.deviceInfo?.name || synthPort} → ${controllerDevice.deviceInfo?.name || controllerPort}`, 'info');
 
         // Enable SysEx relay between synth and controller
         const registry = deviceRegistryRef.current;
@@ -525,14 +539,24 @@ function App() {
             };
             await synthApi.sendControllerAvailable(controllerInfo);
             addLog('Exchange initiated', 'success');
+            addSyncLog('Exchange initiated', 'success');
         } catch (err) {
             addLog(`Exchange failed: ${err.message}`, 'error');
+            addSyncLog(`Exchange failed: ${err.message}`, 'error');
             // Disable relay on failure
             if (registry) {
                 registry.disableExchangeRelay();
             }
         }
     };
+
+    //------------------------------------------------------------------
+    // DERIVED STATE
+    //------------------------------------------------------------------
+
+    const isLinked = controllerPortName && synthPortName &&
+                     devices[controllerPortName]?.status === 'connected' &&
+                     devices[synthPortName]?.status === 'connected';
 
     //------------------------------------------------------------------
     // WINDOW CONTAINERS (for re-rendering)
@@ -593,16 +617,15 @@ function App() {
         }
     }, [logs, topology]);
 
-    // Re-render Expression Pad when synth connection changes
+    // Re-render Expression Pad when devices change
     useEffect(() => {
         const container = windowContainersRef.current['expression-pad'];
         if (container && WindowManager.exists('expression-pad')) {
-            const synthDevice = synthPortName ? devices[synthPortName] : null;
-            const synthApi = synthPortName ? deviceApisRef.current[synthPortName] : null;
             ReactDOM.render(
                 <ExpressionPadWindow
-                    candideApi={synthApi}
-                    isConnected={synthDevice?.status === 'connected'}
+                    devices={devices}
+                    deviceApisRef={deviceApisRef}
+                    synthPortName={synthPortName}
                     deviceRegistry={deviceRegistryRef.current}
                     midiState={midiStateRef.current}
                     addLog={addLog}
@@ -611,6 +634,22 @@ function App() {
             );
         }
     }, [synthPortName, devices, addLog]);
+
+    // Re-render Sync window when devices or sync logs change
+    useEffect(() => {
+        const container = windowContainersRef.current['sync-window'];
+        if (container && WindowManager.exists('sync-window')) {
+            ReactDOM.render(
+                <SyncWindow
+                    devices={devices}
+                    isLinked={isLinked}
+                    onSync={triggerExchange}
+                    syncLogs={syncLogs}
+                />,
+                container
+            );
+        }
+    }, [devices, syncLogs, isLinked]);
 
     //------------------------------------------------------------------
     // WINDOW OPENERS
@@ -628,6 +667,8 @@ function App() {
         const capabilities = device.capabilities || [];
         const deviceName = device.deviceInfo?.name || portName;
         const hasPatch = capabilities.includes(CAPABILITIES.PATCHES);
+        const isController = capabilities.includes(CAPABILITIES.CONTROLLER);
+        const theme = isController ? 'controller' : 'synth';
 
         // Ensure config is loaded
         const api = deviceApisRef.current[portName];
@@ -656,6 +697,7 @@ function App() {
             width: saved?.width ?? (hasPatch ? 1280 : 500),
             height: saved?.height ?? (hasPatch ? 800 : 450),
             content: container,
+            theme,
             onClose: () => {
                 delete windowContainersRef.current[windowId];
             }
@@ -720,6 +762,7 @@ function App() {
             width: saved?.width ?? 320,
             height: saved?.height ?? 420,
             content: container,
+            theme: 'tool',
             onClose: () => {
                 delete windowContainersRef.current['expression-pad'];
             }
@@ -727,13 +770,11 @@ function App() {
 
         WorkspacePersistence.setWasOpen('expression-pad', true);
 
-        const synthDevice = synthPortName ? devices[synthPortName] : null;
-        const synthApi = synthPortName ? deviceApisRef.current[synthPortName] : null;
-
         ReactDOM.render(
             <ExpressionPadWindow
-                candideApi={synthApi}
-                isConnected={synthDevice?.status === 'connected'}
+                devices={devices}
+                deviceApisRef={deviceApisRef}
+                synthPortName={synthPortName}
                 deviceRegistry={deviceRegistryRef.current}
                 midiState={midiStateRef.current}
                 addLog={addLog}
@@ -762,6 +803,7 @@ function App() {
             width: saved?.width ?? 450,
             height: saved?.height ?? 350,
             content: container,
+            theme: 'tool',
             onClose: () => {
                 delete windowContainersRef.current['log-window'];
             }
@@ -775,13 +817,48 @@ function App() {
         );
     };
 
+    const openSyncWindow = () => {
+        if (WindowManager.exists('sync-window')) {
+            WindowManager.focus('sync-window');
+            return;
+        }
+
+        const container = document.createElement('div');
+        container.style.height = '100%';
+        windowContainersRef.current['sync-window'] = container;
+
+        const saved = WorkspacePersistence.getWindowState('sync-window');
+
+        WindowManager.create({
+            id: 'sync-window',
+            title: 'Sync',
+            x: saved?.x ?? 300,
+            y: saved?.y ?? 80,
+            width: saved?.width ?? 380,
+            height: saved?.height ?? 350,
+            content: container,
+            theme: 'tool',
+            onClose: () => {
+                delete windowContainersRef.current['sync-window'];
+            }
+        });
+
+        WorkspacePersistence.setWasOpen('sync-window', true);
+
+        ReactDOM.render(
+            <SyncWindow
+                devices={devices}
+                isLinked={isLinked}
+                onSync={triggerExchange}
+                syncLogs={syncLogs}
+            />,
+            container
+        );
+    };
+
     //------------------------------------------------------------------
     // RENDER
     //------------------------------------------------------------------
-
-    const isLinked = controllerPortName && synthPortName &&
-                     devices[controllerPortName]?.status === 'connected' &&
-                     devices[synthPortName]?.status === 'connected';
 
     return (
         <div className="ap-container">
@@ -790,7 +867,7 @@ function App() {
                 isLinked={isLinked}
                 focusedApp={focusedApp}
                 onLogClick={() => openLogWindow()}
-                onSyncClick={() => triggerExchange()}
+                onSyncClick={() => openSyncWindow()}
             />
             <Desktop
                 devices={devices}
@@ -1093,7 +1170,7 @@ const NOTE_COLORS = [
     '#aa44ff',
 ];
 
-function ExpressionPadWindow({ candideApi, isConnected, deviceRegistry, midiState, addLog }) {
+function ExpressionPadWindow({ devices, deviceApisRef, synthPortName, deviceRegistry, midiState, addLog }) {
     const canvasRef = useRef(null);
     const [velocity, setVelocity] = useState(0.8);
     const [activeNotes, setActiveNotes] = useState(new Map());
@@ -1114,9 +1191,22 @@ function ExpressionPadWindow({ candideApi, isConnected, deviceRegistry, midiStat
     const THROTTLE_INTERVAL_MS = 50;
     const CHANGE_THRESHOLD = 0.02;
 
-    // Slider state (disabled - was used with virtual controller)
-    const [sliderValue, setSliderValue] = useState(0);
-    const sliderState = { label: 'Slider', cc: null, enabled: false };
+    // Output target selection (which device receives pad output)
+    const [selectedOutput, setSelectedOutput] = useState(null);
+
+    // MIDI monitor — recent incoming events from all devices
+    const [midiMonitor, setMidiMonitor] = useState([]);
+    const monitorScrollRef = useRef(null);
+
+    // Resolve output API — prefer selected, fallback to synth
+    const outputPort = selectedOutput || synthPortName;
+    const outputApi = outputPort ? deviceApisRef.current[outputPort] : null;
+    const isConnected = outputApi && devices[outputPort]?.status === 'connected';
+
+    // Build list of connected devices for output selector
+    const connectedDevices = Object.entries(devices)
+        .filter(([_, d]) => d.status === 'connected')
+        .map(([portName, d]) => ({ portName, name: d.deviceInfo?.name || portName }));
 
     const PAD_SIZE = 200;
     const CENTER = PAD_SIZE / 2;
@@ -1162,7 +1252,7 @@ function ExpressionPadWindow({ candideApi, isConnected, deviceRegistry, midiStat
         if (!canvas) return;
         const ctx = canvas.getContext('2d');
 
-        ctx.fillStyle = '#1a1a2e';
+        ctx.fillStyle = '#2a2a2a';
         ctx.fillRect(0, 0, PAD_SIZE, PAD_SIZE);
 
         ctx.strokeStyle = '#333';
@@ -1204,22 +1294,25 @@ function ExpressionPadWindow({ candideApi, isConnected, deviceRegistry, midiStat
         drawPad(Array.from(activeNotes.values()));
     }, [activeNotes, drawPad]);
 
+    // Send MPE config when output connects
     useEffect(() => {
-        if (isConnected && candideApi?.isConnected() && mpeEnabled && !mpeSentRef.current) {
+        if (isConnected && outputApi?.isConnected() && mpeEnabled && !mpeSentRef.current) {
             const msg = new Uint8Array([0xB0, 0x7F, 15]);
-            candideApi.sendRaw(msg);
+            outputApi.sendRaw(msg);
             addLog('TX: MPE Config [B0 7F 0F] - 15 member channels');
             mpeSentRef.current = true;
         }
         if (!isConnected) {
             mpeSentRef.current = false;
         }
-    }, [isConnected, candideApi, mpeEnabled, addLog]);
+    }, [isConnected, outputApi, mpeEnabled, addLog]);
 
+    // Subscribe to all-input MIDI events for the monitor
     useEffect(() => {
         if (!midiState) return;
 
         const unsubscribe = midiState.subscribe((eventType, data) => {
+            // Handle routed notes (from controller->synth through) for pad display
             if (eventType === 'noteOn') {
                 setActiveNotes(prev => {
                     const next = new Map(prev);
@@ -1258,13 +1351,44 @@ function ExpressionPadWindow({ candideApi, isConnected, deviceRegistry, midiStat
             } else if (eventType === 'reset') {
                 setActiveNotes(new Map());
             }
+
+            // All-input events for MIDI monitor
+            if (eventType.startsWith('all')) {
+                const time = new Date().toLocaleTimeString([], { hour12: false });
+                let desc = '';
+                if (eventType === 'allNoteOn') {
+                    desc = `NoteOn ${data.note} vel=${Math.round(data.velocity * 127)} ch${data.channel}`;
+                } else if (eventType === 'allNoteOff') {
+                    desc = `NoteOff ${data.note} ch${data.channel}`;
+                } else if (eventType === 'allBend') {
+                    desc = `Bend ${data.bend.toFixed(2)} ch${data.channel}`;
+                } else if (eventType === 'allPressure') {
+                    desc = `Pres ${Math.round(data.pressure * 127)} ch${data.channel}`;
+                } else if (eventType === 'allCC') {
+                    desc = `CC${data.cc}=${data.value} ch${data.channel}`;
+                }
+                if (desc) {
+                    setMidiMonitor(prev => [...prev.slice(-29), {
+                        time,
+                        source: data.source,
+                        desc
+                    }]);
+                }
+            }
         });
 
         return unsubscribe;
     }, [midiState]);
 
+    // Auto-scroll monitor
+    useEffect(() => {
+        if (monitorScrollRef.current) {
+            monitorScrollRef.current.scrollTop = monitorScrollRef.current.scrollHeight;
+        }
+    }, [midiMonitor]);
+
     const handleMouseDown = useCallback((e) => {
-        if (!isConnected || !candideApi) return;
+        if (!isConnected || !outputApi) return;
 
         const rect = canvasRef.current.getBoundingClientRect();
         const x = e.clientX - rect.left;
@@ -1290,17 +1414,17 @@ function ExpressionPadWindow({ candideApi, isConnected, deviceRegistry, midiStat
         lastBendRef.current = bend;
         lastPressureRef.current = pressure;
 
-        candideApi.sendPitchBend(channel, bend);
-        candideApi.sendChannelPressure(channel, pressure);
-        candideApi.sendNoteOn(channel, note, velocity);
+        outputApi.sendPitchBend(channel, bend);
+        outputApi.sendChannelPressure(channel, pressure);
+        outputApi.sendNoteOn(channel, note, velocity);
 
         const vel7 = Math.round(velocity * 127);
         const mpeInfo = mpeEnabled ? ` [MPE ch${channel}]` : '';
         addLog(`TX: Note On note=${note} vel=${vel7}${mpeInfo}`);
-    }, [isConnected, candideApi, velocity, positionToValues, getNextNote, mpeEnabled, addLog]);
+    }, [isConnected, outputApi, velocity, positionToValues, getNextNote, mpeEnabled, addLog]);
 
     const handleMouseMove = useCallback((e) => {
-        if (!playingRef.current || !candideApi) return;
+        if (!playingRef.current || !outputApi) return;
 
         const rect = canvasRef.current.getBoundingClientRect();
         const x = e.clientX - rect.left;
@@ -1326,21 +1450,21 @@ function ExpressionPadWindow({ candideApi, isConnected, deviceRegistry, midiStat
                           (bendDelta >= CHANGE_THRESHOLD || pressureDelta >= CHANGE_THRESHOLD);
 
         if (shouldSend) {
-            candideApi.sendPitchBend(channel, bend);
-            candideApi.sendChannelPressure(channel, pressure);
+            outputApi.sendPitchBend(channel, bend);
+            outputApi.sendChannelPressure(channel, pressure);
             lastSendTimeRef.current = now;
             lastBendRef.current = bend;
             lastPressureRef.current = pressure;
         }
-    }, [candideApi, positionToValues]);
+    }, [outputApi, positionToValues]);
 
     const handleMouseUp = useCallback(() => {
-        if (!playingRef.current || !candideApi) return;
+        if (!playingRef.current || !outputApi) return;
 
         const channel = currentChannelRef.current;
         const note = mouseNoteRef.current;
 
-        candideApi.sendNoteOff(channel, note, 0);
+        outputApi.sendNoteOff(channel, note, 0);
 
         if (mpeEnabled) {
             mpeAllocatorRef.current.release(note);
@@ -1359,7 +1483,7 @@ function ExpressionPadWindow({ candideApi, isConnected, deviceRegistry, midiStat
 
         playingRef.current = false;
         mouseNoteRef.current = null;
-    }, [candideApi, mpeEnabled, addLog]);
+    }, [outputApi, mpeEnabled, addLog]);
 
     useEffect(() => {
         const handleGlobalMouseUp = () => {
@@ -1373,8 +1497,32 @@ function ExpressionPadWindow({ candideApi, isConnected, deviceRegistry, midiStat
 
     const currentNote = Array.from(activeNotes.values())[0];
 
+    // Source colors for MIDI monitor
+    const sourceColors = {};
+    let colorIdx = 0;
+    const MONITOR_COLORS = ['#d4a574', '#b8a0d2', '#92cc41', '#209cee', '#f7d51d', '#e76e55'];
+
     return (
         <div className="ap-expression-pad">
+            {/* Output target selector */}
+            {connectedDevices.length > 1 && (
+                <div className="ap-pad-output-select">
+                    <span className="ap-pad-output-label">Output:</span>
+                    {connectedDevices.map(d => (
+                        <button
+                            key={d.portName}
+                            className={`ap-pad-output-btn ${(outputPort === d.portName) ? 'active' : ''}`}
+                            onClick={() => {
+                                setSelectedOutput(d.portName);
+                                mpeSentRef.current = false;
+                            }}
+                        >
+                            {d.name}
+                        </button>
+                    ))}
+                </div>
+            )}
+
             <div className="ap-pad-controls">
                 <div className="ap-velocity-control">
                     <span>Velocity</span>
@@ -1398,10 +1546,10 @@ function ExpressionPadWindow({ candideApi, isConnected, deviceRegistry, midiStat
                             const enabled = e.target.checked;
                             setMpeEnabled(enabled);
                             mpeAllocatorRef.current.reset();
-                            if (candideApi?.isConnected()) {
+                            if (outputApi?.isConnected()) {
                                 const value = enabled ? 15 : 0;
                                 const msg = new Uint8Array([0xB0, 0x7F, value]);
-                                candideApi.sendRaw(msg);
+                                outputApi.sendRaw(msg);
                                 addLog(`TX: MPE Config - ${enabled ? 'enabled' : 'disabled'}`);
                             }
                         }}
@@ -1439,27 +1587,88 @@ function ExpressionPadWindow({ candideApi, isConnected, deviceRegistry, midiStat
                 )}
             </div>
 
-            {/* Virtual Controller Slider */}
-            <div className="ap-pad-slider">
-                <div className="ap-slider-header">
-                    <span className="ap-slider-label">{sliderState.label}</span>
-                    {sliderState.cc !== null && (
-                        <span className="ap-slider-cc">CC{sliderState.cc}</span>
-                    )}
-                </div>
-                <input
-                    type="range"
-                    className="ap-slider"
-                    min="0"
-                    max="127"
-                    value={sliderValue}
-                    onChange={(e) => {
-                        const val = parseInt(e.target.value);
-                        setSliderValue(val);
-                    }}
-                    disabled={!sliderState.enabled}
-                />
-                <span className="ap-slider-value">{sliderValue}</span>
+            {/* MIDI Monitor */}
+            <div className="ap-pad-monitor" ref={monitorScrollRef}>
+                {midiMonitor.length === 0 ? (
+                    <span className="ap-text-muted">MIDI monitor</span>
+                ) : (
+                    midiMonitor.map((entry, i) => {
+                        if (!sourceColors[entry.source]) {
+                            sourceColors[entry.source] = MONITOR_COLORS[colorIdx++ % MONITOR_COLORS.length];
+                        }
+                        return (
+                            <div key={i} className="ap-monitor-entry">
+                                <span className="ap-monitor-source" style={{ color: sourceColors[entry.source] }}>
+                                    {entry.source.split(' ')[0]}
+                                </span>
+                                {' '}
+                                <span className="ap-monitor-desc">{entry.desc}</span>
+                            </div>
+                        );
+                    })
+                )}
+            </div>
+        </div>
+    );
+}
+
+//======================================================================
+// SYNC WINDOW
+//======================================================================
+
+function SyncWindow({ devices, isLinked, onSync, syncLogs }) {
+    const scrollRef = useRef(null);
+
+    useEffect(() => {
+        if (scrollRef.current) {
+            scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+        }
+    }, [syncLogs]);
+
+    const deviceEntries = Object.entries(devices).filter(([_, d]) => d.status === 'connected');
+
+    const getRole = (device) => {
+        if (device.capabilities?.includes('CONTROLLER')) return 'Controller';
+        if (device.capabilities?.includes('SYNTH')) return 'Synth';
+        return 'Device';
+    };
+
+    return (
+        <div className="ap-sync-window">
+            <div className="ap-sync-devices">
+                {deviceEntries.length === 0 ? (
+                    <div className="ap-sync-no-devices">No devices connected</div>
+                ) : (
+                    deviceEntries.map(([portName, device]) => (
+                        <div key={portName} className="ap-sync-device-row">
+                            <span className="ap-sync-device-led connected"></span>
+                            <span className="ap-sync-device-name">
+                                {device.deviceInfo?.name || portName}
+                            </span>
+                            <span className="ap-sync-device-role">{getRole(device)}</span>
+                        </div>
+                    ))
+                )}
+            </div>
+            <button
+                className="ap-btn ap-sync-btn"
+                onClick={onSync}
+                disabled={!isLinked}
+            >
+                {isLinked ? 'SYNC DEVICES' : 'LINK REQUIRED'}
+            </button>
+            <div className="ap-sync-output" ref={scrollRef}>
+                {syncLogs.length === 0 ? (
+                    <span className="ap-text-muted">Sync output will appear here</span>
+                ) : (
+                    syncLogs.map((log, i) => (
+                        <div key={i} className={`ap-sync-log-entry ap-sync-log-${log.type}`}>
+                            <span className="ap-sync-log-time">[{log.timestamp}]</span>
+                            {' '}
+                            <span>{log.message}</span>
+                        </div>
+                    ))
+                )}
             </div>
         </div>
     );

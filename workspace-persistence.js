@@ -15,7 +15,7 @@ const WorkspacePersistence = {
     STORAGE_KEY: 'attachpart-workspace',
 
     // Tool windows (always available, no device dependency)
-    TOOL_WINDOWS: ['log-window', 'expression-pad'],
+    TOOL_WINDOWS: ['log-window', 'expression-pad', 'sync-window'],
 
     /**
      * Get stored state for a window

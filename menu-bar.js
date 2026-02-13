@@ -9,14 +9,13 @@ function MenuBar({ devices, isLinked, focusedApp, onLogClick, onSyncClick }) {
     return (
         <div className="ap-menubar">
             <div className="ap-menubar-left">
-                <span className="ap-menubar-app-name">{focusedApp || 'Finder'}</span>
+                <span className="ap-menubar-app-name">{focusedApp || 'APConsole'}</span>
                 <button className="ap-menubar-btn" onClick={onLogClick}>
                     Log
                 </button>
                 <button
                     className="ap-menubar-btn"
                     onClick={onSyncClick}
-                    disabled={!isLinked}
                 >
                     Sync
                 </button>

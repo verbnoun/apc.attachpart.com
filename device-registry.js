@@ -28,6 +28,7 @@ class DeviceRegistry {
         this._onDeviceConnected = null;
         this._onDeviceDisconnected = null;
         this._onMidiThrough = null;
+        this._onAllMidiInput = null;
 
         // Logging
         this._logFn = null;
@@ -134,6 +135,15 @@ class DeviceRegistry {
      */
     onMidiThrough(callback) {
         this._onMidiThrough = callback;
+    }
+
+    /**
+     * Set callback for ALL incoming MIDI (non-SysEx) from any device
+     * Used by Expression Pad MIDI monitor
+     * @param {Function} callback - Called with (portName, data)
+     */
+    onAllMidiInput(callback) {
+        this._onAllMidiInput = callback;
     }
 
     //==================================================================
@@ -352,6 +362,9 @@ class DeviceRegistry {
             }
             return;
         }
+
+        // Fire all-input callback for MIDI monitor (all non-SysEx from any device)
+        this._onAllMidiInput?.(portName, data);
 
         // Non-SysEx: forward controller -> synth if routing enabled
         if (this._controllerPortName === portName && this._synthPortName) {
