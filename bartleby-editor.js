@@ -206,11 +206,11 @@ function BartlebyCurveEditor({ label, curve, onChange, disabled }) {
         const h = canvas.height;
 
         // Clear
-        ctx.fillStyle = '#0d1117';
+        ctx.fillStyle = '#ffffff';
         ctx.fillRect(0, 0, w, h);
 
         // Grid
-        ctx.strokeStyle = '#21262d';
+        ctx.strokeStyle = '#d0d0d0';
         ctx.lineWidth = 1;
         for (let i = 0; i <= 4; i++) {
             const x = (w / 4) * i;
@@ -226,7 +226,7 @@ function BartlebyCurveEditor({ label, curve, onChange, disabled }) {
         }
 
         // Linear reference line
-        ctx.strokeStyle = '#374151';
+        ctx.strokeStyle = '#c0c0c0';
         ctx.setLineDash([4, 4]);
         ctx.beginPath();
         ctx.moveTo(0, h);

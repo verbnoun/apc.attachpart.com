@@ -189,12 +189,12 @@ function CurveEditor({ label, curve, color, onChange, midiState }) {
         const w = canvas.width;
         const h = canvas.height;
 
-        // Clear with dark background
-        ctx.fillStyle = '#1a1a2e';
+        // Clear with light background
+        ctx.fillStyle = '#ffffff';
         ctx.fillRect(0, 0, w, h);
 
         // Grid
-        ctx.strokeStyle = '#2a2a3e';
+        ctx.strokeStyle = '#d0d0d0';
         ctx.lineWidth = 1;
         for (let i = 0; i <= 4; i++) {
             const x = (w / 4) * i;
@@ -210,7 +210,7 @@ function CurveEditor({ label, curve, color, onChange, midiState }) {
         }
 
         // Linear reference
-        ctx.strokeStyle = '#3a3a4e';
+        ctx.strokeStyle = '#c0c0c0';
         ctx.setLineDash([4, 4]);
         ctx.beginPath();
         ctx.moveTo(0, h);
@@ -247,7 +247,7 @@ function CurveEditor({ label, curve, color, onChange, midiState }) {
             const dotY = h - outputY * h;
 
             ctx.globalAlpha = alpha;
-            ctx.fillStyle = '#ffffff';
+            ctx.fillStyle = '#000000';
             ctx.beginPath();
             ctx.arc(dotX, dotY, 4, 0, Math.PI * 2);
             ctx.fill();
@@ -255,7 +255,7 @@ function CurveEditor({ label, curve, color, onChange, midiState }) {
         }
 
         // Border
-        ctx.strokeStyle = '#adafbc';
+        ctx.strokeStyle = '#808080';
         ctx.lineWidth = 2;
         ctx.strokeRect(0, 0, w, h);
     }, [editX, editY, color]);

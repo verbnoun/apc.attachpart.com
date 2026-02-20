@@ -1,24 +1,37 @@
 /**
- * Attach Part Console - New UI Styles
+ * Attach Part Console - Classic Mac OS Style
  *
- * Uses NES.css as base, with CSS custom properties for theming.
- * Structure: Sidebar (devices/tools) | Workspace (windows)
+ * System 7-inspired light mode with selective color.
+ * Shell (desktop, window chrome, menu bar) is pure B&W.
+ * Color lives inside app content (nodes, wires, status indicators).
  */
 
 /* ============================================================
-   CSS CUSTOM PROPERTIES - For future theming
+   FONT
+   ============================================================ */
+
+@font-face {
+    font-family: 'ChicagoFLF';
+    src: url('fonts/ChicagoFLF.woff') format('woff');
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap;
+}
+
+/* ============================================================
+   CSS CUSTOM PROPERTIES
    ============================================================ */
 
 :root {
-    /* Colors — System 7 Platinum dark mode */
-    --ap-bg-primary: #1e1e1e;
-    --ap-bg-secondary: #2a2a2a;
-    --ap-bg-tertiary: #3a3a3a;
-    --ap-text-primary: #ffffff;
-    --ap-text-secondary: #a0a0a0;
-    --ap-text-muted: #6c757d;
+    /* Colors — Classic Mac OS light mode */
+    --ap-bg-primary: #ffffff;
+    --ap-bg-secondary: #eeeeee;
+    --ap-bg-tertiary: #c0c0c0;
+    --ap-text-primary: #000000;
+    --ap-text-secondary: #555555;
+    --ap-text-muted: #808080;
 
-    /* Accent colors */
+    /* Accent colors (used inside app content only) */
     --ap-accent-blue: #209cee;
     --ap-accent-green: #92cc41;
     --ap-accent-yellow: #f7d51d;
@@ -32,16 +45,16 @@
     --ap-wire-lfo: #209cee;
     --ap-wire-control: #92869b;
 
-    /* Window chrome — System 7 Platinum */
-    --ap-window-border: #1e1e1e;
-    --ap-window-shadow-light: #c0c0c0;
-    --ap-window-shadow-dark: #606060;
-    --ap-window-titlebar: #4a4a4a;
+    /* Window chrome — pure B&W */
+    --ap-window-border: #000000;
+    --ap-window-shadow-light: #ffffff;
+    --ap-window-shadow-dark: #808080;
+    --ap-window-titlebar: #c0c0c0;
 
     /* Per-app theming (defaults, overridden by [data-theme]) */
-    --ap-app-accent: #a0a0a0;
-    --ap-app-titlebar: #4a4a4a;
-    --ap-app-tab-active: #a0a0a0;
+    --ap-app-accent: #808080;
+    --ap-app-titlebar: #c0c0c0;
+    --ap-app-tab-active: #000000;
 
     /* Spacing */
     --ap-spacing-xs: 4px;
@@ -50,7 +63,7 @@
     --ap-spacing-lg: 24px;
 
     /* Fonts */
-    --ap-font-family: 'Press Start 2P', cursive;
+    --ap-font-family: 'ChicagoFLF', 'Chicago', system-ui, sans-serif;
     --ap-font-size-xs: 8px;
     --ap-font-size-sm: 10px;
     --ap-font-size-md: 12px;
@@ -61,25 +74,25 @@
    PER-APP THEMES
    ============================================================ */
 
-/* Bartleby / Controller — warm beige */
+/* Bartleby / Controller — warm beige (content only, not titlebar) */
 [data-theme="controller"] {
     --ap-app-accent: #d4a574;
-    --ap-app-titlebar: #8b7355;
+    --ap-app-titlebar: #c0c0c0;
     --ap-app-tab-active: #d4a574;
 }
 
-/* Candide / Synth — lilac */
+/* Candide / Synth — lilac (content only, not titlebar) */
 [data-theme="synth"] {
     --ap-app-accent: #b8a0d2;
-    --ap-app-titlebar: #7b6b8a;
+    --ap-app-titlebar: #c0c0c0;
     --ap-app-tab-active: #b8a0d2;
 }
 
 /* Tools (Log, Sync, Pad) — neutral */
 [data-theme="tool"] {
-    --ap-app-accent: #a0a0a0;
-    --ap-app-titlebar: #4a4a4a;
-    --ap-app-tab-active: #a0a0a0;
+    --ap-app-accent: #808080;
+    --ap-app-titlebar: #c0c0c0;
+    --ap-app-tab-active: #808080;
 }
 
 /* ============================================================
@@ -157,13 +170,13 @@ html, body {
 }
 
 .ap-menubar-btn:hover {
-    background: var(--ap-accent-blue);
-    color: var(--ap-bg-primary);
+    background: #000000;
+    color: #ffffff;
 }
 
 .ap-menubar-btn:active {
-    background: var(--ap-accent-blue);
-    color: var(--ap-bg-primary);
+    background: #000000;
+    color: #ffffff;
 }
 
 .ap-menubar-btn:disabled {
@@ -218,10 +231,10 @@ html, body {
     flex: 1;
     position: relative;
     overflow: hidden;
-    background:
-        radial-gradient(circle, rgba(50,50,60,0.3) 1px, transparent 1px),
-        var(--ap-bg-secondary);
-    background-size: 16px 16px;
+    background: repeating-conic-gradient(
+        #000000 0% 25%,
+        #ffffff 25% 50%
+    ) 0 0 / 2px 2px;
 }
 
 .ap-desktop-icons {
@@ -248,54 +261,56 @@ html, body {
 .ap-desktop-icon-image {
     width: 48px;
     height: 48px;
-    background: var(--ap-bg-tertiary);
-    border: 3px solid var(--ap-window-border);
+    background: #ffffff;
+    border: 2px solid #000000;
     box-shadow:
-        inset -3px -3px var(--ap-window-shadow-dark),
-        inset 3px 3px var(--ap-window-shadow-light);
+        inset -2px -2px #808080,
+        inset 2px 2px #ffffff;
     display: flex;
     align-items: center;
     justify-content: center;
     font-size: 20px;
-    color: var(--ap-text-primary);
+    color: #000000;
 }
 
 .ap-desktop-icon-synth .ap-desktop-icon-image {
-    border-color: #b8a0d2;
+    border-color: #000000;
 }
 
 .ap-desktop-icon-controller .ap-desktop-icon-image {
-    border-color: #d4a574;
+    border-color: #000000;
 }
 
 .ap-desktop-icon-tool .ap-desktop-icon-image {
-    border-color: var(--ap-text-secondary);
+    border-color: #000000;
 }
 
 .ap-desktop-icon-label {
     font-size: var(--ap-font-size-xs);
-    color: var(--ap-text-primary);
+    color: #000000;
     text-align: center;
     word-break: break-word;
     line-height: 1.3;
+    text-shadow: 0 0 2px #ffffff, 0 0 2px #ffffff;
 }
 
 .ap-desktop-icon.selected .ap-desktop-icon-image {
     box-shadow:
-        inset -3px -3px var(--ap-window-shadow-dark),
-        inset 3px 3px var(--ap-window-shadow-light),
-        0 0 8px var(--ap-accent-blue);
+        inset -2px -2px #808080,
+        inset 2px 2px #ffffff,
+        0 0 0 2px #000000;
 }
 
 .ap-desktop-icon.selected .ap-desktop-icon-label {
-    background: var(--ap-accent-blue);
-    color: var(--ap-bg-primary);
+    background: #000000;
+    color: #ffffff;
+    text-shadow: none;
 }
 
 .ap-desktop-icon:active .ap-desktop-icon-image {
     box-shadow:
-        inset 3px 3px var(--ap-window-shadow-dark),
-        inset -3px -3px var(--ap-window-shadow-light);
+        inset 2px 2px #808080,
+        inset -2px -2px #ffffff;
 }
 
 /* ============================================================
@@ -324,19 +339,19 @@ html, body {
 .ap-device-app-tabs {
     display: flex;
     gap: 0;
-    background: var(--ap-bg-tertiary);
+    background: #c0c0c0;
     padding: 0 var(--ap-spacing-xs);
     flex-shrink: 0;
-    border-bottom: 2px solid var(--ap-window-border);
+    border-bottom: 2px solid #000000;
 }
 
 .ap-device-tab {
     padding: var(--ap-spacing-sm) var(--ap-spacing-md);
     font-family: var(--ap-font-family);
     font-size: var(--ap-font-size-sm);
-    color: var(--ap-text-secondary);
-    background: var(--ap-bg-secondary);
-    border: 2px solid var(--ap-window-border);
+    color: #555555;
+    background: #d0d0d0;
+    border: 2px solid #000000;
     border-bottom: none;
     cursor: pointer;
     margin-top: var(--ap-spacing-xs);
@@ -345,14 +360,14 @@ html, body {
 }
 
 .ap-device-tab:hover {
-    color: var(--ap-text-primary);
-    background: var(--ap-bg-tertiary);
+    color: #000000;
+    background: #e0e0e0;
 }
 
 .ap-device-tab.active {
-    color: var(--ap-text-primary);
-    background: var(--ap-bg-primary);
-    border-bottom: 2px solid var(--ap-bg-primary);
+    color: #000000;
+    background: #ffffff;
+    border-bottom: 2px solid #ffffff;
     border-top: 2px solid var(--ap-app-tab-active, var(--ap-accent-blue));
 }
 
@@ -393,10 +408,10 @@ html, body {
 .ap-window {
     position: absolute;
     background: var(--ap-bg-primary);
-    border: 4px solid var(--ap-window-border);
+    border: 2px solid #000000;
     box-shadow:
-        inset -4px -4px var(--ap-window-shadow-dark),
-        inset 4px 4px var(--ap-window-shadow-light);
+        inset -2px -2px var(--ap-window-shadow-dark),
+        inset 2px 2px var(--ap-window-shadow-light);
     display: flex;
     flex-direction: column;
     min-width: 200px;
@@ -405,9 +420,9 @@ html, body {
 
 .ap-window-active {
     box-shadow:
-        inset -4px -4px var(--ap-window-shadow-dark),
-        inset 4px 4px var(--ap-window-shadow-light),
-        0 4px 16px rgba(0, 0, 0, 0.4);
+        inset -2px -2px var(--ap-window-shadow-dark),
+        inset 2px 2px var(--ap-window-shadow-light),
+        2px 2px 0 rgba(0, 0, 0, 0.25);
 }
 
 /* Title bar - System 7 style */
@@ -432,20 +447,20 @@ html, body {
 .ap-window-close {
     width: 14px;
     height: 14px;
-    background: transparent;
-    border: 2px solid var(--ap-text-secondary);
+    background: #ffffff;
+    border: 2px solid #000000;
     cursor: pointer;
     flex-shrink: 0;
     padding: 0;
 }
 
 .ap-window-active .ap-window-close {
-    border-color: var(--ap-bg-primary);
+    border-color: #000000;
 }
 
 .ap-window-close:hover {
-    background: var(--ap-accent-red);
-    border-color: var(--ap-accent-red);
+    background: #c0c0c0;
+    border-color: #000000;
 }
 
 /* Title bar stripes (System 7 horizontal lines) */
@@ -468,22 +483,24 @@ html, body {
         to bottom,
         transparent,
         transparent 1px,
-        var(--ap-app-accent, var(--ap-bg-primary)) 1px,
-        var(--ap-app-accent, var(--ap-bg-primary)) 2px
+        #000000 1px,
+        #000000 2px
     );
 }
 
 .ap-window-title {
     font-size: var(--ap-font-size-xs);
-    color: var(--ap-text-secondary);
+    color: #808080;
     text-transform: uppercase;
     white-space: nowrap;
     flex-shrink: 0;
     padding: 0 var(--ap-spacing-xs);
+    background: #c0c0c0;
 }
 
 .ap-window-active .ap-window-title {
-    color: var(--ap-bg-primary);
+    color: #000000;
+    background: #c0c0c0;
 }
 
 /* Content area */
@@ -523,12 +540,12 @@ html, body {
     background:
         linear-gradient(135deg,
             transparent 50%,
-            var(--ap-text-secondary) 50%,
-            var(--ap-text-secondary) 60%,
+            #000000 50%,
+            #000000 60%,
             transparent 60%,
             transparent 70%,
-            var(--ap-text-secondary) 70%,
-            var(--ap-text-secondary) 80%,
+            #000000 70%,
+            #000000 80%,
             transparent 80%
         );
 }
@@ -584,23 +601,23 @@ html, body {
     font-family: var(--ap-font-family);
     font-size: var(--ap-font-size-sm);
     padding: var(--ap-spacing-sm) var(--ap-spacing-md);
-    background: var(--ap-bg-primary);
-    color: var(--ap-text-primary);
-    border: 4px solid var(--ap-window-border);
+    background: #c0c0c0;
+    color: #000000;
+    border: 2px solid #000000;
     box-shadow:
-        inset -4px -4px var(--ap-window-shadow-dark),
-        inset 4px 4px var(--ap-window-shadow-light);
+        inset -2px -2px #808080,
+        inset 2px 2px #ffffff;
     cursor: pointer;
 }
 
 .ap-btn:hover {
-    background: var(--ap-bg-tertiary);
+    background: #d0d0d0;
 }
 
 .ap-btn:active {
     box-shadow:
-        inset 4px 4px var(--ap-window-shadow-dark),
-        inset -4px -4px var(--ap-window-shadow-light);
+        inset 2px 2px #808080,
+        inset -2px -2px #ffffff;
 }
 
 .ap-btn:disabled {
@@ -610,22 +627,22 @@ html, body {
 
 .ap-btn-primary {
     background: var(--ap-accent-blue);
-    color: var(--ap-bg-primary);
+    color: #ffffff;
 }
 
 .ap-btn-success {
     background: var(--ap-accent-green);
-    color: var(--ap-bg-primary);
+    color: #000000;
 }
 
 .ap-btn-warning {
     background: var(--ap-accent-yellow);
-    color: var(--ap-bg-primary);
+    color: #000000;
 }
 
 .ap-btn-danger {
     background: var(--ap-accent-red);
-    color: var(--ap-bg-primary);
+    color: #ffffff;
 }
 
 /* ============================================================
@@ -636,14 +653,15 @@ html, body {
     font-family: var(--ap-font-family);
     font-size: var(--ap-font-size-sm);
     padding: var(--ap-spacing-sm);
-    background: var(--ap-bg-secondary);
-    color: var(--ap-text-primary);
-    border: 2px solid var(--ap-text-secondary);
+    background: #ffffff;
+    color: #000000;
+    border: 2px solid #000000;
+    box-shadow: inset 1px 1px #808080;
 }
 
 .ap-input:focus {
-    outline: none;
-    border-color: var(--ap-accent-blue);
+    outline: 1px solid #000000;
+    border-color: #000000;
 }
 
 .ap-checkbox {
@@ -658,8 +676,9 @@ html, body {
     -webkit-appearance: none;
     appearance: none;
     height: 8px;
-    background: var(--ap-bg-tertiary);
-    border: 2px solid var(--ap-text-secondary);
+    background: #ffffff;
+    border: 2px solid #000000;
+    box-shadow: inset 1px 1px #808080;
 }
 
 .ap-slider::-webkit-slider-thumb {
@@ -667,7 +686,9 @@ html, body {
     appearance: none;
     width: 16px;
     height: 16px;
-    background: var(--ap-accent-blue);
+    background: #c0c0c0;
+    border: 1px solid #000000;
+    box-shadow: inset -1px -1px #808080, inset 1px 1px #ffffff;
     cursor: pointer;
 }
 
@@ -676,25 +697,27 @@ html, body {
    ============================================================ */
 
 ::-webkit-scrollbar {
-    width: 12px;
-    height: 12px;
+    width: 16px;
+    height: 16px;
 }
 
 ::-webkit-scrollbar-track {
-    background: var(--ap-bg-secondary);
+    background: #ffffff;
+    border-left: 1px solid #000000;
 }
 
 ::-webkit-scrollbar-thumb {
-    background: var(--ap-text-secondary);
-    border: 2px solid var(--ap-bg-secondary);
+    background: #c0c0c0;
+    border: 1px solid #000000;
+    box-shadow: inset -1px -1px #808080, inset 1px 1px #ffffff;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-    background: var(--ap-text-primary);
+    background: #d0d0d0;
 }
 
 ::-webkit-scrollbar-corner {
-    background: var(--ap-bg-secondary);
+    background: #c0c0c0;
 }
 
 /* ============================================================
@@ -1067,11 +1090,11 @@ html, body {
     width: 600px;
     max-width: 90vw;
     max-height: 80vh;
-    background: var(--ap-bg-primary);
-    border: 4px solid var(--ap-window-border);
+    background: #ffffff;
+    border: 2px solid #000000;
     box-shadow:
-        inset -4px -4px var(--ap-window-shadow-dark),
-        inset 4px 4px var(--ap-window-shadow-light);
+        inset -2px -2px #808080,
+        inset 2px 2px #ffffff;
     z-index: 1000;
     display: flex;
     flex-direction: column;
@@ -1120,9 +1143,9 @@ html, body {
 .ap-node-workspace {
     flex: 1;
     background:
-        linear-gradient(90deg, rgba(50,50,60,0.15) 1px, transparent 1px),
-        linear-gradient(rgba(50,50,60,0.15) 1px, transparent 1px),
-        var(--ap-bg-secondary);
+        linear-gradient(90deg, rgba(0,0,0,0.06) 1px, transparent 1px),
+        linear-gradient(rgba(0,0,0,0.06) 1px, transparent 1px),
+        #ffffff;
     background-size: 16px 16px;
     position: relative;
     overflow: hidden;
@@ -1163,11 +1186,11 @@ html, body {
 /* Nodes */
 .ap-node {
     position: absolute;
-    background: var(--ap-bg-primary);
-    border: 3px solid var(--ap-window-border);
+    background: #ffffff;
+    border: 2px solid #000000;
     box-shadow:
-        inset -3px -3px var(--ap-window-shadow-dark),
-        inset 3px 3px var(--ap-window-shadow-light);
+        inset -2px -2px #808080,
+        inset 2px 2px #ffffff;
     min-width: 140px;
     cursor: move;
     user-select: none;
@@ -1178,7 +1201,7 @@ html, body {
     align-items: center;
     justify-content: space-between;
     background: var(--ap-accent-green);
-    color: var(--ap-bg-primary);
+    color: #000000;
     padding: var(--ap-spacing-xs) 0;
     font-size: var(--ap-font-size-xs);
     font-weight: bold;
@@ -1262,8 +1285,9 @@ html, body {
     max-width: 50px;
     -webkit-appearance: none;
     appearance: none;
-    background: var(--ap-bg-tertiary);
-    border: 1px solid var(--ap-text-muted);
+    background: #ffffff;
+    border: 1px solid #000000;
+    box-shadow: inset 1px 1px #808080;
     cursor: pointer;
 }
 
@@ -1312,8 +1336,9 @@ html, body {
     max-width: 60px;
     -webkit-appearance: none;
     appearance: none;
-    background: var(--ap-bg-tertiary);
-    border: 1px solid var(--ap-text-muted);
+    background: #ffffff;
+    border: 1px solid #000000;
+    box-shadow: inset 1px 1px #808080;
     cursor: pointer;
 }
 
@@ -1375,12 +1400,12 @@ html, body {
 /* Context Menu */
 .ap-context-menu {
     position: fixed;
-    background: var(--ap-bg-primary);
-    border: 4px solid var(--ap-window-border);
+    background: #ffffff;
+    border: 2px solid #000000;
     box-shadow:
-        inset -4px -4px var(--ap-window-shadow-dark),
-        inset 4px 4px var(--ap-window-shadow-light),
-        0 4px 16px rgba(0, 0, 0, 0.4);
+        inset -2px -2px #808080,
+        inset 2px 2px #ffffff,
+        2px 2px 0 rgba(0, 0, 0, 0.25);
     min-width: 200px;
     max-width: 300px;
     z-index: 10001;
@@ -1420,8 +1445,8 @@ html, body {
 /* Node being used as wire source */
 .ap-node.wiring-source {
     box-shadow:
-        inset -3px -3px var(--ap-window-shadow-dark),
-        inset 3px 3px var(--ap-window-shadow-light),
+        inset -2px -2px #808080,
+        inset 2px 2px #ffffff,
         0 0 12px var(--ap-accent-yellow);
 }
 
@@ -1710,11 +1735,11 @@ html, body {
 .ap-progress-bar {
     width: 100%;
     height: 20px;
-    background: var(--ap-bg-secondary);
-    border: 3px solid var(--ap-window-border);
+    background: #ffffff;
+    border: 2px solid #000000;
     box-shadow:
-        inset 3px 3px var(--ap-window-shadow-dark),
-        inset -3px -3px var(--ap-window-shadow-light);
+        inset 2px 2px #808080,
+        inset -2px -2px #ffffff;
 }
 
 .ap-progress-fill {
@@ -1862,10 +1887,10 @@ html, body {
 }
 
 .ap-pad-canvas {
-    border: 3px solid var(--ap-window-border);
+    border: 2px solid #000000;
     box-shadow:
-        inset 3px 3px var(--ap-window-shadow-dark),
-        inset -3px -3px var(--ap-window-shadow-light);
+        inset 2px 2px #808080,
+        inset -2px -2px #ffffff;
 }
 
 .ap-pad-labels {
@@ -2083,8 +2108,7 @@ html, body {
 /* Selected node */
 .ap-node.selected {
     box-shadow:
-        0 0 0 2px var(--ap-accent-blue),
-        0 0 10px 2px rgba(32, 156, 238, 0.4);
+        0 0 0 2px #000000;
 }
 
 .ap-node.selected .ap-node-header {
@@ -2156,11 +2180,11 @@ html, body {
 }
 
 .ap-confirm-dialog {
-    background: var(--ap-bg-secondary);
-    border: 4px solid var(--ap-window-border);
+    background: #eeeeee;
+    border: 2px solid #000000;
     box-shadow:
-        inset -4px -4px var(--ap-window-shadow-dark),
-        inset 4px 4px var(--ap-window-shadow-light);
+        inset -2px -2px #808080,
+        inset 2px 2px #ffffff;
     min-width: 300px;
     max-width: 450px;
 }
@@ -2195,12 +2219,12 @@ html, body {
    ============================================================ */
 
 .ap-btn-secondary {
-    background: var(--ap-bg-tertiary);
-    color: var(--ap-text-primary);
+    background: #c0c0c0;
+    color: #000000;
 }
 
 .ap-btn-secondary:hover {
-    background: var(--ap-bg-primary);
+    background: #d0d0d0;
 }
 
 .ap-btn-danger {
@@ -2263,14 +2287,14 @@ html, body {
     left: 0;
     right: 0;
     bottom: 0;
-    background: rgba(0, 0, 0, 0.95);
+    background: rgba(255, 255, 255, 0.95);
     display: flex;
     align-items: center;
     justify-content: center;
     z-index: 100;
     opacity: 0;
     visibility: hidden;
-    pointer-events: none;  /* Allow drag events to pass through when hidden */
+    pointer-events: none;
     transition: opacity 0.3s ease-out, visibility 0.3s ease-out;
 }
 
@@ -2332,15 +2356,15 @@ html, body {
     font-family: var(--ap-font-family);
     font-size: 7px;
     padding: 2px var(--ap-spacing-sm);
-    background: var(--ap-bg-secondary);
-    border: 1px solid var(--ap-bg-tertiary);
-    color: var(--ap-text-secondary);
+    background: #eeeeee;
+    border: 1px solid #000000;
+    color: #555555;
     cursor: pointer;
 }
 
 .ap-pad-output-btn:hover {
-    background: var(--ap-bg-tertiary);
-    color: var(--ap-text-primary);
+    background: #c0c0c0;
+    color: #000000;
 }
 
 .ap-pad-output-btn.active {
@@ -2402,8 +2426,8 @@ html, body {
     position: relative;
     height: 40px;
     margin: 0 4px 4px 4px;
-    background: var(--ap-bg-secondary);
-    border: 1px solid var(--ap-bg-tertiary);
+    background: #ffffff;
+    border: 1px solid #000000;
     border-radius: 2px;
 }
 
@@ -2422,14 +2446,7 @@ html, body {
 .ap-wave-selector {
     display: flex;
     align-items: center;
-    gap: var(--ap-spacing-xs);
-    padding: 2px 0;
-}
-
-.ap-wave-label {
-    font-size: 7px;
-    color: var(--ap-text-muted);
-    min-width: 30px;
+    margin-left: auto;
 }
 
 .ap-wave-options {
@@ -2441,13 +2458,13 @@ html, body {
     width: 18px;
     height: 18px;
     padding: 2px;
-    background: var(--ap-bg-secondary);
-    border: 1px solid var(--ap-bg-tertiary);
+    background: #ffffff;
+    border: 1px solid #000000;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    color: var(--ap-text-secondary);
+    color: #555555;
     transition: all 0.1s;
 }
 
@@ -2480,7 +2497,7 @@ html, body {
 }
 
 .ap-node-param-value.clickable:hover {
-    background: var(--ap-bg-tertiary);
+    background: #eeeeee;
     color: var(--ap-accent-blue);
 }
 
@@ -2489,9 +2506,9 @@ html, body {
     font-family: var(--ap-font-family);
     font-size: 7px;
     padding: 1px 3px;
-    background: var(--ap-bg-secondary);
-    border: 1px solid var(--ap-accent-blue);
-    color: var(--ap-text-primary);
+    background: #ffffff;
+    border: 1px solid #000000;
+    color: #000000;
     text-align: right;
     outline: none;
 }
@@ -2514,18 +2531,18 @@ html, body {
     margin-right: 4px;
     font-size: 8px;
     font-weight: 600;
-    background: var(--ap-bg-tertiary);
-    border: 1px solid var(--ap-border-primary);
+    background: #c0c0c0;
+    border: 1px solid #000000;
     border-radius: 3px;
     cursor: pointer;
-    color: var(--ap-text-secondary);
+    color: #555555;
     flex-shrink: 0;
 }
 
 .ap-priority-badge:hover {
-    background: var(--ap-bg-secondary);
-    color: var(--ap-text-primary);
-    border-color: var(--ap-accent-blue);
+    background: #eeeeee;
+    color: #000000;
+    border-color: #000000;
 }
 
 .ap-priority-edit {
@@ -2537,10 +2554,10 @@ html, body {
     font-size: 8px;
     font-weight: 600;
     text-align: center;
-    background: var(--ap-bg-secondary);
-    border: 1px solid var(--ap-accent-blue);
+    background: #ffffff;
+    border: 1px solid #000000;
     border-radius: 3px;
-    color: var(--ap-text-primary);
+    color: #000000;
     outline: none;
     flex-shrink: 0;
 }
@@ -2591,19 +2608,7 @@ html, body {
     min-width: 150px;
 }
 
-.ap-node-oscillator .ap-wave-selector {
-    border-bottom: 1px solid var(--ap-bg-tertiary);
-    padding-bottom: var(--ap-spacing-xs);
-    margin-bottom: var(--ap-spacing-xs);
-}
-
 /* LFO module layout */
 .ap-node-lfo {
     min-width: 150px;
-}
-
-.ap-node-lfo .ap-wave-selector {
-    border-bottom: 1px solid var(--ap-bg-tertiary);
-    padding-bottom: var(--ap-spacing-xs);
-    margin-bottom: var(--ap-spacing-xs);
 }

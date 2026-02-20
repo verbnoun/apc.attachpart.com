@@ -1665,28 +1665,27 @@ function WaveIcon({ type }) {
 //======================================================================
 
 function WaveSelector({ param, waves, onUpdateParam }) {
-    // waves is an array like [{ id: 0, name: 'Sine' }, { id: 1, name: 'Square' }, ...]
-    // If waves not provided, use default OSC waves
-    const defaultWaves = [
-        { id: 0, name: 'Sine' },
-        { id: 1, name: 'Triangle' },
-        { id: 2, name: 'Saw' },
-        { id: 3, name: 'Square' },
-        { id: 4, name: 'Noise' }
-    ];
-    const waveList = waves || defaultWaves;
-    const currentWaveId = Math.round(param.value);
+    // Local state for immediate visual feedback (same pattern as NodeParamSlider)
+    const [localValue, setLocalValue] = useState(Math.round(param.value));
+
+    // Sync with external value changes (device round-trip)
+    useEffect(() => {
+        setLocalValue(Math.round(param.value));
+    }, [param.value]);
+
+    // No waves from topology = don't render
+    if (!waves || waves.length === 0) return null;
 
     return (
         <div className="ap-wave-selector">
-            <span className="ap-wave-label">{param.name}</span>
             <div className="ap-wave-options">
-                {waveList.map(wave => (
+                {waves.map(wave => (
                     <button
                         key={wave.id}
-                        className={`ap-wave-btn ${wave.id === currentWaveId ? 'active' : ''}`}
+                        className={`ap-wave-btn ${wave.id === localValue ? 'active' : ''}`}
                         onClick={(e) => {
                             e.stopPropagation();
+                            setLocalValue(wave.id);
                             onUpdateParam(param.key, wave.id);
                         }}
                         onMouseDown={(e) => e.stopPropagation()}
@@ -1901,14 +1900,14 @@ function VelocityCurvePreview({ curve, midiState }) {
         const h = canvas.height;
         const color = resolvedColorRef.current;
 
-        // Dark background
-        ctx.fillStyle = '#1a1a2e';
+        // Light background
+        ctx.fillStyle = '#ffffff';
         ctx.fillRect(0, 0, w, h);
 
         if (!curve) {
             // No config fallback
-            ctx.fillStyle = '#6c757d';
-            ctx.font = '8px "Press Start 2P"';
+            ctx.fillStyle = '#808080';
+            ctx.font = '8px "ChicagoFLF"';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.fillText('No config', w / 2, h / 2);
@@ -1916,7 +1915,7 @@ function VelocityCurvePreview({ curve, midiState }) {
         }
 
         // 2x2 grid
-        ctx.strokeStyle = '#2a2a3e';
+        ctx.strokeStyle = '#d0d0d0';
         ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.moveTo(w / 2, 0); ctx.lineTo(w / 2, h);
@@ -1924,7 +1923,7 @@ function VelocityCurvePreview({ curve, midiState }) {
         ctx.stroke();
 
         // Linear reference (dashed)
-        ctx.strokeStyle = '#3a3a4e';
+        ctx.strokeStyle = '#c0c0c0';
         ctx.setLineDash([2, 2]);
         ctx.beginPath();
         ctx.moveTo(0, h);
@@ -1953,7 +1952,7 @@ function VelocityCurvePreview({ curve, midiState }) {
             const dotY = h - outputY * h;
 
             ctx.globalAlpha = alpha;
-            ctx.fillStyle = '#ffffff';
+            ctx.fillStyle = '#000000';
             ctx.beginPath();
             ctx.arc(dotX, dotY, 3, 0, Math.PI * 2);
             ctx.fill();
@@ -2194,16 +2193,15 @@ function Node({
                           module.id === 'MOD_ENV' ? 'var(--ap-accent-yellow)' :
                           'var(--ap-wire-env)';
 
-    // Determine which params are WAVE params (to use WaveSelector)
-    const isWaveParam = (paramKey) => paramKey.includes('_WAVE');
-
-    // Get wave list for this module type from topology
-    const getWavesForParam = (paramKey) => {
+    // Get wave list for this param from topology (data-driven, no string checks)
+    const getWavesForParam = (param) => {
         if (!topology?.waves) return null;
-        // OSC waves for oscillator modules
-        if (isOscillatorModule) return topology.waves.osc;
-        // LFO waves for LFO modules
-        if (isLfoModule) return topology.waves.lfo;
+        let waveList = null;
+        if (isOscillatorModule) waveList = topology.waves.osc;
+        else if (isLfoModule) waveList = topology.waves.lfo;
+        if (!waveList || waveList.length === 0) return null;
+        // Param range must match wave list indices
+        if (param.min === 0 && param.max === waveList.length - 1) return waveList;
         return null;
     };
 
@@ -2286,43 +2284,42 @@ function Node({
                     // Find AMOUNT params for this param
                     const amountParams = findAmountParamsForTarget(moduleData, param.key);
 
-                    // Check if this is a WAVE param
-                    const isWave = isWaveParam(param.key);
-                    const waves = isWave ? getWavesForParam(param.key) : null;
+                    // Check if topology provides waves for this param
+                    const waves = getWavesForParam(param);
+                    const isWaveControl = waves && waves.length > 0;
 
                     return (
                         <div key={param.key} className="ap-node-param-container">
-                            {isWave ? (
-                                /* Wave selector for WAVE params */
-                                <WaveSelector
-                                    param={param}
-                                    waves={waves}
-                                    onUpdateParam={onUpdateParam}
-                                />
-                            ) : (
+                            <div
+                                className={`ap-node-param ${canReceiveWire ? 'drop-target' : ''} ${isWireTarget ? 'wire-target' : ''}`}
+                                onMouseDown={canReceiveWire ? (e) => e.stopPropagation() : undefined}
+                                onMouseUp={canReceiveWire ? (e) => handleParamDrop(param.key, e) : undefined}
+                            >
+                                {/* Param input port for modulation targets */}
                                 <div
-                                    className={`ap-node-param ${canReceiveWire ? 'drop-target' : ''} ${isWireTarget ? 'wire-target' : ''}`}
-                                    onMouseDown={canReceiveWire ? (e) => e.stopPropagation() : undefined}
-                                    onMouseUp={canReceiveWire ? (e) => handleParamDrop(param.key, e) : undefined}
-                                >
-                                    {/* Param input port for modulation targets */}
-                                    <div
-                                        ref={el => paramPortRefs.current[param.key] = el}
-                                        className="ap-node-port ap-node-port-param-in"
+                                    ref={el => paramPortRefs.current[param.key] = el}
+                                    className="ap-node-port ap-node-port-param-in"
+                                />
+                                <PriorityBadge
+                                    priority={param.priority}
+                                    paramKey={param.key}
+                                    existingPriorities={existingPriorities}
+                                    onUpdatePriority={(key, pri) => onUpdateParam(key, { priority: pri })}
+                                />
+                                <span className="ap-node-param-key">{param.name}</span>
+                                {isWaveControl ? (
+                                    <WaveSelector
+                                        param={param}
+                                        waves={waves}
+                                        onUpdateParam={onUpdateParam}
                                     />
-                                    <PriorityBadge
-                                        priority={param.priority}
-                                        paramKey={param.key}
-                                        existingPriorities={existingPriorities}
-                                        onUpdatePriority={(key, pri) => onUpdateParam(key, { priority: pri })}
-                                    />
-                                    <span className="ap-node-param-key">{param.name}</span>
+                                ) : (
                                     <NodeParamSlider
                                         param={param}
                                         onUpdateParam={onUpdateParam}
                                     />
-                                </div>
-                            )}
+                                )}
+                            </div>
                             {/* Amount sliders under param */}
                             {amountParams.map(amt => (
                                 <div key={amt.source} className="ap-node-mod-amount">
@@ -2372,13 +2369,7 @@ function NodeParamSlider({ param, onUpdateParam }) {
 
     // Determine step size based on parameter type
     const getStep = () => {
-        const key = param.key || '';
         const range = param.max - param.min;
-
-        // WAVE params are always discrete
-        if (key.includes('_WAVE')) {
-            return 1;
-        }
 
         // Small ranges (like 0-1, -1 to 1) need fine control
         if (range <= 2) {
@@ -2718,7 +2709,9 @@ function NodeContextMenu({
                         targets.push({
                             module: modKey,
                             param: targetParam,
-                            amount: amount || 0
+                            amount: amount || 0,
+                            min: amountData?.range?.[0] ?? -100,
+                            max: amountData?.range?.[1] ?? 100
                         });
                     }
                 }
@@ -2802,13 +2795,13 @@ function NodeContextMenu({
                                 <input
                                     type="range"
                                     className="ap-slider ap-target-slider"
-                                    min="-100"
-                                    max="100"
+                                    min={target.min}
+                                    max={target.max}
                                     value={target.amount}
                                     onChange={(e) => onUpdateModAmount(
                                         target.param,
                                         moduleId,
-                                        parseInt(e.target.value)
+                                        parseFloat(e.target.value)
                                     )}
                                 />
                                 <span className="ap-target-amount">{target.amount}</span>
@@ -2939,6 +2932,8 @@ function ModulationControl({ moduleId, param, moduleData, patch, onToggle, onAmo
                     const amountData = moduleData?.[amountKey];
                     const isActive = amountData !== undefined;
                     const amount = isActive ? (typeof amountData === 'object' ? amountData.initial : amountData) : 0;
+                    const amtMin = amountData?.range?.[0] ?? -100;
+                    const amtMax = amountData?.range?.[1] ?? 100;
 
                     return (
                         <div key={source} className="ap-mod-source-row">
@@ -2956,10 +2951,10 @@ function ModulationControl({ moduleId, param, moduleData, patch, onToggle, onAmo
                                 <input
                                     type="range"
                                     className="ap-slider ap-mod-amount-slider"
-                                    min="-100"
-                                    max="100"
+                                    min={amtMin}
+                                    max={amtMax}
                                     value={amount}
-                                    onChange={(e) => onAmountChange(param.key, source, parseInt(e.target.value))}
+                                    onChange={(e) => onAmountChange(param.key, source, parseFloat(e.target.value))}
                                 />
                             )}
                         </div>

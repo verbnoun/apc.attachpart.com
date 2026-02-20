@@ -1252,10 +1252,10 @@ function ExpressionPadWindow({ devices, deviceApisRef, synthPortName, deviceRegi
         if (!canvas) return;
         const ctx = canvas.getContext('2d');
 
-        ctx.fillStyle = '#2a2a2a';
+        ctx.fillStyle = '#ffffff';
         ctx.fillRect(0, 0, PAD_SIZE, PAD_SIZE);
 
-        ctx.strokeStyle = '#333';
+        ctx.strokeStyle = '#c0c0c0';
         ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.moveTo(CENTER, 0);
@@ -1264,7 +1264,7 @@ function ExpressionPadWindow({ devices, deviceApisRef, synthPortName, deviceRegi
         ctx.lineTo(PAD_SIZE, CENTER);
         ctx.stroke();
 
-        ctx.strokeStyle = '#444';
+        ctx.strokeStyle = '#808080';
         ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.arc(CENTER, CENTER, NEUTRAL_RADIUS, 0, Math.PI * 2);
