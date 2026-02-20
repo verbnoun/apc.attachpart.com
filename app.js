@@ -105,7 +105,13 @@ function App() {
         };
 
         WindowManager.onWindowFocus = (windowId, title) => {
-            setFocusedApp(title || null);
+            // Tool windows are part of APConsole — don't change the app name
+            const toolWindows = ['log-window', 'expression-pad', 'sync-window', 'preferences'];
+            if (!windowId || toolWindows.includes(windowId)) {
+                setFocusedApp(null);
+            } else {
+                setFocusedApp(title || null);
+            }
         };
 
         // Restore tool windows that were previously open
@@ -763,6 +769,7 @@ function App() {
             height: saved?.height ?? 420,
             content: container,
             theme: 'tool',
+            resizable: false,
             onClose: () => {
                 delete windowContainersRef.current['expression-pad'];
             }
@@ -838,6 +845,7 @@ function App() {
             height: saved?.height ?? 350,
             content: container,
             theme: 'tool',
+            resizable: false,
             onClose: () => {
                 delete windowContainersRef.current['sync-window'];
             }
@@ -856,6 +864,36 @@ function App() {
         );
     };
 
+    const openPreferencesWindow = () => {
+        if (WindowManager.exists('preferences')) {
+            WindowManager.focus('preferences');
+            return;
+        }
+
+        const container = document.createElement('div');
+        container.style.height = '100%';
+        windowContainersRef.current['preferences'] = container;
+
+        const saved = WorkspacePersistence.getWindowState('preferences');
+
+        WindowManager.create({
+            id: 'preferences',
+            title: 'Preferences',
+            x: saved?.x ?? 200,
+            y: saved?.y ?? 100,
+            width: saved?.width ?? 360,
+            height: saved?.height ?? 280,
+            content: container,
+            theme: 'tool',
+            resizable: false,
+            onClose: () => {
+                delete windowContainersRef.current['preferences'];
+            }
+        });
+
+        container.innerHTML = '<div style="padding: 24px; font-family: Chicago_12; font-size: 16px; color: #808080; text-align: center; margin-top: 60px;">Preferences coming soon.</div>';
+    };
+
     //------------------------------------------------------------------
     // RENDER
     //------------------------------------------------------------------
@@ -868,6 +906,8 @@ function App() {
                 focusedApp={focusedApp}
                 onLogClick={() => openLogWindow()}
                 onSyncClick={() => openSyncWindow()}
+                onExpressionPadClick={() => openExpressionPad()}
+                onPreferencesClick={() => openPreferencesWindow()}
             />
             <Desktop
                 devices={devices}

@@ -81,11 +81,11 @@
     --ap-app-tab-active: #d4a574;
 }
 
-/* Candide / Synth — lilac (content only, not titlebar) */
+/* Candide / Synth — lilac tinted titlebar + content accent */
 [data-theme="synth"] {
     --ap-app-accent: #b8a0d2;
-    --ap-app-titlebar: #c0c0c0;
-    --ap-app-tab-active: #b8a0d2;
+    --ap-app-titlebar: #d0c5e0;
+    --ap-app-tab-active: #000000;
 }
 
 /* Tools (Log, Sync, Pad) — neutral */
@@ -125,25 +125,7 @@ html, body {
     width: 100vw;
 }
 
-/* ============================================================
-   MENU BAR - System 7 style top bar
-   ============================================================ */
-
-.ap-menubar {
-    height: 28px;
-    background: var(--ap-bg-tertiary);
-    border-bottom: 2px solid var(--ap-window-shadow-dark);
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 var(--ap-spacing-sm);
-    flex-shrink: 0;
-    z-index: 10000;
-    box-shadow:
-        inset 0 -1px 0 var(--ap-window-shadow-dark),
-        inset 0 1px 0 var(--ap-window-shadow-light),
-        0 1px 0 rgba(0,0,0,0.3);
-}
+/* Menu bar — moved to apc-bridge.css (base) + apc-app.css (device LEDs, etc.) */
 
 .ap-menubar-left {
     display: flex;
@@ -152,59 +134,29 @@ html, body {
 }
 
 .ap-menubar-app-name {
-    font-size: var(--ap-font-size-xs);
+    font-size: 8px;
     font-weight: bold;
-    color: var(--ap-text-primary);
-    padding: 2px var(--ap-spacing-sm);
-    margin-right: var(--ap-spacing-xs);
-}
-
-.ap-menubar-btn {
-    font-family: var(--ap-font-family);
-    font-size: var(--ap-font-size-xs);
-    background: transparent;
-    border: none;
-    color: var(--ap-text-primary);
-    padding: 2px var(--ap-spacing-sm);
-    cursor: pointer;
-}
-
-.ap-menubar-btn:hover {
-    background: #000000;
-    color: #ffffff;
-}
-
-.ap-menubar-btn:active {
-    background: #000000;
-    color: #ffffff;
-}
-
-.ap-menubar-btn:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-}
-
-.ap-menubar-btn:disabled:hover {
-    background: transparent;
-    color: var(--ap-text-primary);
+    color: #000000;
+    padding: 2px 8px;
+    margin-right: 4px;
 }
 
 .ap-menubar-right {
     display: flex;
     align-items: center;
-    gap: var(--ap-spacing-md);
+    gap: 16px;
 }
 
 .ap-menubar-device {
     display: flex;
     align-items: center;
-    gap: var(--ap-spacing-xs);
+    gap: 4px;
 }
 
 .ap-menubar-led {
     width: 6px;
     height: 6px;
-    background: var(--ap-text-muted);
+    background: #808080;
 }
 
 .ap-menubar-led.connected {
@@ -213,12 +165,12 @@ html, body {
 }
 
 .ap-menubar-device-name {
-    font-size: var(--ap-font-size-xs);
-    color: var(--ap-text-secondary);
+    font-size: 8px;
+    color: #555555;
 }
 
 .ap-menubar-linked {
-    font-size: var(--ap-font-size-xs);
+    font-size: 8px;
     color: var(--ap-accent-yellow);
     font-weight: bold;
 }
@@ -336,40 +288,7 @@ html, body {
     height: 100%;
 }
 
-.ap-device-app-tabs {
-    display: flex;
-    gap: 0;
-    background: #c0c0c0;
-    padding: 0 var(--ap-spacing-xs);
-    flex-shrink: 0;
-    border-bottom: 2px solid #000000;
-}
-
-.ap-device-tab {
-    padding: var(--ap-spacing-sm) var(--ap-spacing-md);
-    font-family: var(--ap-font-family);
-    font-size: var(--ap-font-size-sm);
-    color: #555555;
-    background: #d0d0d0;
-    border: 2px solid #000000;
-    border-bottom: none;
-    cursor: pointer;
-    margin-top: var(--ap-spacing-xs);
-    position: relative;
-    top: 2px;
-}
-
-.ap-device-tab:hover {
-    color: #000000;
-    background: #e0e0e0;
-}
-
-.ap-device-tab.active {
-    color: #000000;
-    background: #ffffff;
-    border-bottom: 2px solid #ffffff;
-    border-top: 2px solid var(--ap-app-tab-active, var(--ap-accent-blue));
-}
+/* Device app tabs — moved to apc-bridge.css */
 
 .ap-device-app-content {
     flex: 1;
@@ -401,275 +320,57 @@ html, body {
     padding: var(--ap-spacing-md);
 }
 
-/* ============================================================
-   WINDOW SYSTEM
-   ============================================================ */
+/* Window system — moved to apc-bridge.css */
 
-.ap-window {
-    position: absolute;
-    background: var(--ap-bg-primary);
-    border: 2px solid #000000;
-    box-shadow:
-        inset -2px -2px var(--ap-window-shadow-dark),
-        inset 2px 2px var(--ap-window-shadow-light);
-    display: flex;
-    flex-direction: column;
-    min-width: 200px;
-    min-height: 150px;
-}
-
-.ap-window-active {
-    box-shadow:
-        inset -2px -2px var(--ap-window-shadow-dark),
-        inset 2px 2px var(--ap-window-shadow-light),
-        2px 2px 0 rgba(0, 0, 0, 0.25);
-}
-
-/* Title bar - System 7 style */
-.ap-window-titlebar {
-    background: var(--ap-bg-tertiary);
-    padding: 3px var(--ap-spacing-xs);
-    display: flex;
-    align-items: center;
-    gap: var(--ap-spacing-xs);
-    cursor: move;
-    user-select: none;
-    flex-shrink: 0;
-    height: 24px;
-}
-
-/* Active window title bar — uses per-app theme */
-.ap-window-active .ap-window-titlebar {
-    background: var(--ap-app-titlebar, var(--ap-window-titlebar));
-}
-
-/* Close box - outlined square (System 7) */
-.ap-window-close {
-    width: 14px;
-    height: 14px;
-    background: #ffffff;
-    border: 2px solid #000000;
-    cursor: pointer;
-    flex-shrink: 0;
-    padding: 0;
-}
-
-.ap-window-active .ap-window-close {
-    border-color: #000000;
-}
-
-.ap-window-close:hover {
-    background: #c0c0c0;
-    border-color: #000000;
-}
-
-/* Title bar stripes (System 7 horizontal lines) */
-.ap-window-stripes {
-    flex: 1;
-    height: 12px;
-    background: repeating-linear-gradient(
-        to bottom,
-        transparent,
-        transparent 1px,
-        var(--ap-text-secondary) 1px,
-        var(--ap-text-secondary) 2px
-    );
-    opacity: 0;
-}
-
-.ap-window-active .ap-window-stripes {
-    opacity: 1;
-    background: repeating-linear-gradient(
-        to bottom,
-        transparent,
-        transparent 1px,
-        #000000 1px,
-        #000000 2px
-    );
-}
-
-.ap-window-title {
-    font-size: var(--ap-font-size-xs);
-    color: #808080;
-    text-transform: uppercase;
-    white-space: nowrap;
-    flex-shrink: 0;
-    padding: 0 var(--ap-spacing-xs);
-    background: #c0c0c0;
-}
-
-.ap-window-active .ap-window-title {
-    color: #000000;
-    background: #c0c0c0;
-}
-
-/* Content area */
-.ap-window-content {
-    flex: 1;
-    overflow: auto;
-    padding: var(--ap-spacing-md);
-    background: var(--ap-bg-primary);
-}
-
-/* No padding for device app windows (tabs manage their own) */
-.ap-window-content:has(.ap-device-app) {
-    padding: 0;
-    overflow: hidden;
-}
-
-/* Dimensions display */
-.ap-window-dims {
-    position: absolute;
-    bottom: 4px;
-    right: 24px;
-    font-size: 10px;
-    font-family: var(--ap-font-mono);
-    color: var(--ap-text-secondary);
-    pointer-events: none;
-    opacity: 0.7;
-}
-
-/* Resize handle */
-.ap-window-resize {
-    position: absolute;
-    bottom: 0;
-    right: 0;
-    width: 16px;
-    height: 16px;
-    cursor: se-resize;
-    background:
-        linear-gradient(135deg,
-            transparent 50%,
-            #000000 50%,
-            #000000 60%,
-            transparent 60%,
-            transparent 70%,
-            #000000 70%,
-            #000000 80%,
-            transparent 80%
-        );
-}
-
-/* (Action menu removed — replaced by desktop icon double-click) */
-
-/* ============================================================
-   TABS
-   ============================================================ */
-
-.ap-tabs {
-    display: flex;
-    gap: 2px;
-    background: var(--ap-bg-tertiary);
-    padding: var(--ap-spacing-xs);
-}
-
-.ap-tab {
-    padding: var(--ap-spacing-sm) var(--ap-spacing-md);
-    font-size: var(--ap-font-size-xs);
-    color: var(--ap-text-secondary);
-    background: var(--ap-bg-secondary);
-    border: 2px solid var(--ap-window-border);
-    cursor: pointer;
-}
-
-.ap-tab:hover {
-    color: var(--ap-text-primary);
-}
-
-.ap-tab.active {
-    color: var(--ap-text-primary);
-    background: var(--ap-bg-primary);
-    border-bottom-color: var(--ap-bg-primary);
-}
+/* Tabs — moved to apc-bridge.css */
 
 .ap-tab-content {
     display: none;
-    padding: var(--ap-spacing-md);
+    padding: 16px;
 }
 
 .ap-tab-content.active {
     display: block;
 }
 
-/* (Status bar removed — replaced by menu bar) */
-
-/* ============================================================
-   BUTTONS - NES.css style
-   ============================================================ */
-
-.ap-btn {
-    font-family: var(--ap-font-family);
-    font-size: var(--ap-font-size-sm);
-    padding: var(--ap-spacing-sm) var(--ap-spacing-md);
-    background: #c0c0c0;
-    color: #000000;
-    border: 2px solid #000000;
-    box-shadow:
-        inset -2px -2px #808080,
-        inset 2px 2px #ffffff;
-    cursor: pointer;
-}
-
-.ap-btn:hover {
-    background: #d0d0d0;
-}
-
-.ap-btn:active {
-    box-shadow:
-        inset 2px 2px #808080,
-        inset -2px -2px #ffffff;
-}
-
-.ap-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-}
+/* Buttons — base moved to apc-bridge.css, colored variants below */
 
 .ap-btn-primary {
     background: var(--ap-accent-blue);
     color: #ffffff;
+    border-color: var(--ap-accent-blue);
+}
+
+.ap-btn-primary:hover {
+    background: #1a7cc0;
 }
 
 .ap-btn-success {
     background: var(--ap-accent-green);
     color: #000000;
+    border-color: var(--ap-accent-green);
 }
 
 .ap-btn-warning {
     background: var(--ap-accent-yellow);
     color: #000000;
+    border-color: var(--ap-accent-yellow);
 }
 
 .ap-btn-danger {
     background: var(--ap-accent-red);
     color: #ffffff;
+    border-color: var(--ap-accent-red);
 }
 
-/* ============================================================
-   FORMS
-   ============================================================ */
-
-.ap-input {
-    font-family: var(--ap-font-family);
-    font-size: var(--ap-font-size-sm);
-    padding: var(--ap-spacing-sm);
-    background: #ffffff;
-    color: #000000;
-    border: 2px solid #000000;
-    box-shadow: inset 1px 1px #808080;
-}
-
-.ap-input:focus {
-    outline: 1px solid #000000;
-    border-color: #000000;
-}
+/* Forms/scrollbars — base input moved to apc-bridge.css, scrollbars to system.css */
 
 .ap-checkbox {
     display: flex;
     align-items: center;
-    gap: var(--ap-spacing-sm);
+    gap: 8px;
     cursor: pointer;
-    font-size: var(--ap-font-size-sm);
+    font-size: 10px;
 }
 
 .ap-slider {
@@ -677,8 +378,8 @@ html, body {
     appearance: none;
     height: 8px;
     background: #ffffff;
-    border: 2px solid #000000;
-    box-shadow: inset 1px 1px #808080;
+    border: 1.5px solid #000000;
+    box-shadow: none;
 }
 
 .ap-slider::-webkit-slider-thumb {
@@ -686,38 +387,9 @@ html, body {
     appearance: none;
     width: 16px;
     height: 16px;
-    background: #c0c0c0;
-    border: 1px solid #000000;
-    box-shadow: inset -1px -1px #808080, inset 1px 1px #ffffff;
-    cursor: pointer;
-}
-
-/* ============================================================
-   SCROLLBARS
-   ============================================================ */
-
-::-webkit-scrollbar {
-    width: 16px;
-    height: 16px;
-}
-
-::-webkit-scrollbar-track {
     background: #ffffff;
-    border-left: 1px solid #000000;
-}
-
-::-webkit-scrollbar-thumb {
-    background: #c0c0c0;
-    border: 1px solid #000000;
-    box-shadow: inset -1px -1px #808080, inset 1px 1px #ffffff;
-}
-
-::-webkit-scrollbar-thumb:hover {
-    background: #d0d0d0;
-}
-
-::-webkit-scrollbar-corner {
-    background: #c0c0c0;
+    border: 1.5px solid #000000;
+    cursor: pointer;
 }
 
 /* ============================================================
@@ -2190,15 +1862,7 @@ html, body {
     z-index: 1000;
 }
 
-.ap-confirm-dialog {
-    background: #eeeeee;
-    border: 2px solid #000000;
-    box-shadow:
-        inset -2px -2px #808080,
-        inset 2px 2px #ffffff;
-    min-width: 300px;
-    max-width: 450px;
-}
+/* .ap-confirm-dialog base — moved to apc-bridge.css */
 
 .ap-confirm-header {
     background: var(--ap-accent-red);
@@ -2225,26 +1889,17 @@ html, body {
     justify-content: flex-end;
 }
 
-/* ============================================================
-   BUTTON VARIANTS
-   ============================================================ */
+/* Button variants — base moved to apc-bridge.css */
 
 .ap-btn-secondary {
-    background: #c0c0c0;
+    background: #eeeeee;
     color: #000000;
+    border-color: #000000;
 }
 
 .ap-btn-secondary:hover {
-    background: #d0d0d0;
-}
-
-.ap-btn-danger {
-    background: var(--ap-accent-red);
-    color: white;
-}
-
-.ap-btn-danger:hover {
-    background: #c0392b;
+    background: #000000;
+    color: #ffffff;
 }
 
 /* ============================================================

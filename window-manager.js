@@ -42,7 +42,8 @@ const WindowManager = {
             height = 300,
             content = '',
             onClose = null,
-            theme = null
+            theme = null,
+            resizable = true
         } = options;
 
         // Don't create duplicate windows
@@ -53,7 +54,7 @@ const WindowManager = {
 
         // Create window structure
         const win = document.createElement('div');
-        win.className = 'ap-window';
+        win.className = `ap-window${resizable ? ' ap-window-resizable' : ''}`;
         win.id = `window-${id}`;
         win.style.left = `${x}px`;
         win.style.top = `${y}px`;
@@ -101,14 +102,8 @@ const WindowManager = {
         const resizeHandle = document.createElement('div');
         resizeHandle.className = 'ap-window-resize';
 
-        // Dimensions display (for sizing reference)
-        const dimsDisplay = document.createElement('div');
-        dimsDisplay.className = 'ap-window-dims';
-        dimsDisplay.textContent = `${width}×${height}`;
-
         win.appendChild(titleBar);
         win.appendChild(contentArea);
-        win.appendChild(dimsDisplay);
         win.appendChild(resizeHandle);
 
         // Add to workspace
@@ -124,7 +119,6 @@ const WindowManager = {
             element: win,
             titleBar,
             contentArea,
-            dimsDisplay,
             onClose
         });
 
@@ -275,16 +269,11 @@ const WindowManager = {
             if (!isResizing) return;
             const dx = e.clientX - startX;
             const dy = e.clientY - startY;
-            const newWidth = Math.max(200, startWidth + dx);
+            const newWidth = Math.max(250, startWidth + dx);
             const newHeight = Math.max(150, startHeight + dy);
             win.style.width = `${newWidth}px`;
             win.style.height = `${newHeight}px`;
 
-            // Update dimensions display
-            const windowInfo = this.windows.get(id);
-            if (windowInfo && windowInfo.dimsDisplay) {
-                windowInfo.dimsDisplay.textContent = `${newWidth}×${newHeight}`;
-            }
         });
 
         document.addEventListener('mouseup', () => {

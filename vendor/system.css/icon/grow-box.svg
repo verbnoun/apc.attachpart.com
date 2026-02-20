@@ -1,0 +1,8 @@
+<svg width="22" height="22" viewBox="0 0 22 22" fill="none" xmlns="http://www.w3.org/2000/svg">
+<!-- Outer border -->
+<rect x="0.5" y="0.5" width="21" height="21" fill="white" stroke="black"/>
+<!-- Larger square (bottom-right) — drawn first -->
+<rect x="8" y="8" width="11" height="11" fill="white" stroke="black" stroke-width="1"/>
+<!-- Smaller square (top-left) — drawn last, on top -->
+<rect x="3" y="3" width="8" height="8" fill="white" stroke="black" stroke-width="1"/>
+</svg>

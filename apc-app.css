@@ -1,0 +1,2639 @@
+/**
+ * APC App CSS
+ *
+ * All app-specific component styles: patch editor, expression pad,
+ * config windows, nodes, wires, animations, etc.
+ *
+ * Loaded after system.css and apc-bridge.css.
+ */
+
+/* ============================================================
+   FONT (legacy path — also available via vendor/system.css)
+   ============================================================ */
+
+@font-face {
+    font-family: 'ChicagoFLF';
+    src: url('fonts/ChicagoFLF.woff') format('woff');
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap;
+}
+
+/* ============================================================
+   CSS CUSTOM PROPERTIES
+   ============================================================ */
+
+:root {
+    /* Colors — Classic Mac OS light mode */
+    --ap-bg-primary: #ffffff;
+    --ap-bg-secondary: #eeeeee;
+    --ap-bg-tertiary: #c0c0c0;
+    --ap-text-primary: #000000;
+    --ap-text-secondary: #555555;
+    --ap-text-muted: #808080;
+
+    /* Accent colors (used inside app content only) */
+    --ap-accent-blue: #209cee;
+    --ap-accent-green: #92cc41;
+    --ap-accent-yellow: #f7d51d;
+    --ap-accent-red: #e76e55;
+    --ap-accent-purple: #92869b;
+
+    /* Wire colors */
+    --ap-wire-audio: #92cc41;
+    --ap-wire-mod: #f7d51d;
+    --ap-wire-env: #e76e55;
+    --ap-wire-lfo: #209cee;
+    --ap-wire-control: #92869b;
+
+    /* Window chrome — pure B&W */
+    --ap-window-border: #000000;
+    --ap-window-shadow-light: #ffffff;
+    --ap-window-shadow-dark: #808080;
+    --ap-window-titlebar: #c0c0c0;
+
+    /* Per-app theming (defaults, overridden by [data-theme]) */
+    --ap-app-accent: #808080;
+    --ap-app-titlebar: #c0c0c0;
+    --ap-app-tab-active: #000000;
+
+    /* Spacing */
+    --ap-spacing-xs: 4px;
+    --ap-spacing-sm: 8px;
+    --ap-spacing-md: 16px;
+    --ap-spacing-lg: 24px;
+
+    /* Fonts */
+    --ap-font-family: Chicago_12, Chicago, 'ChicagoFLF', system-ui, sans-serif;
+    --ap-font-size-xs: 8px;
+    --ap-font-size-sm: 10px;
+    --ap-font-size-md: 12px;
+    --ap-font-size-lg: 14px;
+}
+
+/* ============================================================
+   PER-APP THEMES
+   ============================================================ */
+
+/* Bartleby / Controller — warm beige */
+[data-theme="controller"] {
+    --ap-app-accent: #d4a574;
+    --ap-app-titlebar: #c0c0c0;
+    --ap-app-tab-active: #d4a574;
+}
+
+/* Candide / Synth — lilac tinted */
+[data-theme="synth"] {
+    --ap-app-accent: #b8a0d2;
+    --ap-app-titlebar: #d0c5e0;
+    --ap-app-tab-active: #000000;
+}
+
+/* Tools (Log, Sync, Pad) — neutral */
+[data-theme="tool"] {
+    --ap-app-accent: #808080;
+    --ap-app-titlebar: #c0c0c0;
+    --ap-app-tab-active: #808080;
+}
+
+/* ============================================================
+   BASE RESET & TYPOGRAPHY
+   ============================================================ */
+
+*, *::before, *::after {
+    box-sizing: border-box;
+}
+
+html {
+    font-size: 18px;
+}
+
+html, body {
+    height: 100vh;
+    overflow: hidden;
+    color: #000;
+    background: #fff;
+    font-family: Chicago_12, Chicago, 'ChicagoFLF', system-ui, sans-serif;
+}
+
+/* ============================================================
+   WINDOW CHROME — pure B&W, system.css stripe pattern
+   ============================================================ */
+
+.ap-window {
+    position: absolute;
+    background: #ffffff;
+    border: 2px solid #000000;
+    box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.25);
+    display: flex;
+    flex-direction: column;
+    min-width: 200px;
+    min-height: 150px;
+}
+
+.ap-window:not(.ap-window-active) {
+    box-shadow: none;
+}
+
+/* Title bar — system.css scale (1.5rem height, content-box stripes) */
+.ap-window-titlebar {
+    flex: none;
+    display: flex;
+    align-items: center;
+    position: relative;
+    height: 1.5rem;
+    margin: 0.1rem 0;
+    padding: 0.2rem 0.1rem;
+    border-bottom: 1.5px solid #000000;
+    cursor: move;
+    user-select: none;
+    flex-shrink: 0;
+    overflow: hidden;
+    background: #ffffff;
+}
+
+.ap-window-active .ap-window-titlebar {
+    background: linear-gradient(#000 50%, transparent 50%);
+    background-size: 6.67% 13.33%;
+    background-clip: content-box;
+}
+
+/* Per-app tinting */
+[data-theme="synth"] .ap-window-active .ap-window-titlebar {
+    background: linear-gradient(#6b4d8a 50%, transparent 50%);
+    background-size: 6.67% 13.33%;
+    background-clip: content-box;
+    background-color: #d0c5e0;
+}
+
+[data-theme="controller"] .ap-window-active .ap-window-titlebar {
+    background: linear-gradient(#8a6d4d 50%, transparent 50%);
+    background-size: 6.67% 13.33%;
+    background-clip: content-box;
+    background-color: #e8d5c0;
+}
+
+[data-theme="tool"] .ap-window-active .ap-window-titlebar {
+    background: linear-gradient(#000 50%, transparent 50%);
+    background-size: 6.67% 13.33%;
+    background-clip: content-box;
+}
+
+/* Close box — system.css scale (40px at 50% = 20px rendered) */
+.ap-window-close {
+    position: relative;
+    display: block;
+    width: 40px;
+    height: 40px;
+    background: #ffffff;
+    border: 4px solid #000000;
+    cursor: pointer;
+    flex-shrink: 0;
+    padding: 0;
+    margin: 0 0.2rem;
+    transform: scale(0.5);
+}
+
+.ap-window-close::before,
+.ap-window-close::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    opacity: 0;
+}
+
+.ap-window-close::before {
+    background:
+        linear-gradient(#000 0%, #000 100%) left center,
+        linear-gradient(#000 0%, #000 100%) right center,
+        linear-gradient(#000 0%, #000 100%) center top,
+        linear-gradient(#000 0%, #000 100%) center bottom;
+    background-size: 30% 4px, 30% 4px, 4px 30%, 4px 30%;
+    background-repeat: no-repeat;
+}
+
+.ap-window-close::after {
+    background:
+        linear-gradient(#000 0%, #000 100%) left center,
+        linear-gradient(#000 0%, #000 100%) right center,
+        linear-gradient(#000 0%, #000 100%) center top,
+        linear-gradient(#000 0%, #000 100%) center bottom;
+    background-size: 22.5% 3.64px, 22.5% 3.64px, 3.64px 22.5%, 3.64px 22.5%;
+    background-repeat: no-repeat;
+    transform: rotate(45deg) scale(1.1);
+}
+
+.ap-window-close:active::before,
+.ap-window-close:active::after {
+    opacity: 1;
+}
+
+/* Stripes container — hidden, stripes come from titlebar background */
+.ap-window-stripes {
+    flex: 1;
+    height: 100%;
+}
+
+/* Title text — centered within full window width (absolute, not flex) */
+.ap-window-title {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    font-family: Chicago_12;
+    font-size: 1.3rem;
+    font-weight: bold;
+    line-height: 1;
+    color: #808080;
+    text-transform: uppercase;
+    white-space: nowrap;
+    padding: 0 0.5em;
+    background: #fff;
+    cursor: default;
+    z-index: 1;
+}
+
+.ap-window-active .ap-window-title {
+    color: #000000;
+    background: #ffffff;
+}
+
+/* Per-app title pill tint */
+[data-theme="synth"] .ap-window-active .ap-window-title {
+    background: #d0c5e0;
+}
+
+[data-theme="controller"] .ap-window-active .ap-window-title {
+    background: #e8d5c0;
+}
+
+/* Content area */
+.ap-window-content {
+    flex: 1;
+    overflow: auto;
+    padding: 16px;
+    background: #ffffff;
+}
+
+.ap-window-content:has(.ap-device-app),
+.ap-window-content:has(.ap-log-window) {
+    padding: 0;
+    overflow: hidden;
+}
+
+/* Grow box — System 6 size box (two overlapping rectangles) */
+.ap-window-resize {
+    position: absolute;
+    bottom: 0;
+    right: 0;
+    width: 22px;
+    height: 22px;
+    cursor: se-resize;
+    background: url("vendor/system.css/icon/grow-box.svg") no-repeat center;
+    background-size: 22px 22px;
+    display: none;
+}
+
+/* Only show grow box on resizable windows */
+.ap-window-resizable .ap-window-resize {
+    display: block;
+}
+
+/* Reserve space at bottom for grow box so scrollbar ends above it */
+.ap-window-resizable .ap-window-content {
+    margin-bottom: 22px;
+}
+
+/* ============================================================
+   MENU BAR — system.css scale
+   ============================================================ */
+
+.ap-menubar {
+    height: 28px;
+    background: #ffffff;
+    border-bottom: 2px solid #000000;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 8px;
+    flex-shrink: 0;
+    z-index: 10000;
+    box-shadow: none;
+    font-family: Chicago_12;
+    font-size: 1em;
+}
+
+.ap-menubar-btn {
+    font-family: Chicago_12;
+    font-size: 1em;
+    background: transparent;
+    border: none;
+    color: #000000;
+    padding: 6px 10px;
+    cursor: pointer;
+}
+
+.ap-menubar-btn:hover {
+    background: #000000;
+    color: #ffffff;
+}
+
+.ap-menubar-btn:active {
+    background: #000000;
+    color: #ffffff;
+}
+
+.ap-menubar-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.ap-menubar-btn:disabled:hover {
+    background: transparent;
+    color: #000000;
+}
+
+.ap-menubar-btn.active {
+    background: #000000;
+    color: #ffffff;
+}
+
+/* Menu dropdown container — stretches full bar height for dropdown positioning */
+.ap-menubar-menu {
+    position: relative;
+    align-self: stretch;
+    display: flex;
+    align-items: center;
+}
+
+/* Dropdown panel */
+.ap-menubar-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    min-width: 180px;
+    background: #ffffff;
+    border: 2px solid #000000;
+    box-shadow: 2px 2px 0 #000000;
+    padding: 2px 0;
+    z-index: 10001;
+    margin-top: 1px;
+}
+
+.ap-menubar-dropdown-item {
+    display: block;
+    width: 100%;
+    font-family: Chicago_12;
+    font-size: 1em;
+    background: transparent;
+    border: none;
+    color: #000000;
+    padding: 4px 16px;
+    cursor: pointer;
+    text-align: left;
+    white-space: nowrap;
+}
+
+.ap-menubar-dropdown-item:hover {
+    background: #000000;
+    color: #ffffff;
+}
+
+.ap-menubar-dropdown-separator {
+    height: 0;
+    border-top: 1px solid #000000;
+    margin: 2px 0;
+}
+
+/* ============================================================
+   BUTTONS — system.css SVG border-image
+   ============================================================ */
+
+.ap-btn {
+    font-family: Chicago_12;
+    font-size: 18px;
+    padding: 4px 16px;
+    min-width: 59px;
+    min-height: 20px;
+    background: #ffffff;
+    color: #000000;
+    border-style: solid;
+    border-width: 5.5px;
+    border-image: url("vendor/system.css/icon/button.svg") 30 stretch;
+    border-radius: 0;
+    box-shadow: none;
+    cursor: pointer;
+}
+
+.ap-btn:hover {
+    background: #000000;
+    color: #ffffff;
+}
+
+.ap-btn:active {
+    background: #000000;
+    color: #ffffff;
+    border-radius: 0;
+    box-shadow: none;
+}
+
+.ap-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.ap-btn:disabled:hover {
+    background: #ffffff;
+    color: #000000;
+}
+
+/* ============================================================
+   TABS — system.css scale
+   ============================================================ */
+
+.ap-device-app-tabs {
+    display: flex;
+    gap: 0;
+    background: #ffffff;
+    padding: 0 8px;
+    flex-shrink: 0;
+    border-bottom: 1px solid #000000;
+}
+
+.ap-device-tab {
+    padding: 6px 16px;
+    font-family: Chicago_12;
+    font-size: 1em;
+    color: #808080;
+    background: #eeeeee;
+    border: 1px solid #000000;
+    border-bottom: none;
+    cursor: pointer;
+    margin-top: 4px;
+    position: relative;
+    top: 1px;
+    clip-path: polygon(
+        2px 0, calc(100% - 2px) 0,
+        100% 2px, 100% 100%,
+        0 100%, 0 2px
+    );
+}
+
+.ap-device-tab:hover {
+    color: #000000;
+    background: #f0f0f0;
+}
+
+.ap-device-tab.active {
+    color: #000000;
+    font-weight: bold;
+    background: #ffffff;
+    border-bottom: 1px solid #ffffff;
+    border-top: 1px solid #000000;
+    border-left: 1px solid #000000;
+    border-right: 1px solid #000000;
+}
+
+/* ============================================================
+   DIALOGS
+   ============================================================ */
+
+.ap-confirm-dialog {
+    background: #ffffff;
+    border: 2px solid #000000;
+    box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.5);
+    min-width: 300px;
+    max-width: 450px;
+}
+
+.ap-json-popover {
+    background: #ffffff;
+    border: 2px solid #000000;
+    box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.5);
+}
+
+/* ============================================================
+   FORMS — app-specific controls (system.css handles base inputs)
+   ============================================================ */
+
+.ap-input {
+    font-family: Chicago_12;
+    font-size: 18px;
+    padding: 4px 6px;
+    background: #ffffff;
+    color: #000000;
+    border: 1.5px solid #000000;
+    box-shadow: none;
+}
+
+.ap-input:focus {
+    outline: none;
+    border-color: #000000;
+}
+
+/* ============================================================
+   MAIN LAYOUT
+   ============================================================ */
+
+.ap-container {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    width: 100vw;
+}
+
+/* ============================================================
+   MENU BAR — app-specific elements (LEDs, device names)
+   ============================================================ */
+
+.ap-menubar-left {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.ap-menubar-app-name {
+    font-family: Chicago_12;
+    font-size: 1em;
+    font-weight: bold;
+    color: #000000;
+    padding: 6px 10px;
+    margin-right: 4px;
+}
+
+.ap-menubar-right {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.ap-menubar-device {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.ap-menubar-led {
+    width: 6px;
+    height: 6px;
+    background: #808080;
+}
+
+.ap-menubar-led.connected {
+    background: var(--ap-accent-green);
+    box-shadow: 0 0 4px var(--ap-accent-green);
+}
+
+.ap-menubar-device-name {
+    font-size: var(--ap-font-size-xs);
+    color: #555555;
+}
+
+.ap-menubar-linked {
+    font-size: var(--ap-font-size-xs);
+    color: var(--ap-accent-yellow);
+    font-weight: bold;
+}
+
+/* ============================================================
+   DESKTOP — System 7 style icon desktop
+   ============================================================ */
+
+.ap-desktop {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    background: repeating-conic-gradient(
+        #000000 0% 25%,
+        #ffffff 25% 50%
+    ) 0 0 / 2px 2px;
+}
+
+.ap-desktop-icons {
+    position: absolute;
+    top: var(--ap-spacing-md);
+    right: var(--ap-spacing-md);
+    display: flex;
+    flex-direction: column;
+    gap: var(--ap-spacing-sm);
+    z-index: 1;
+}
+
+.ap-desktop-icon {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--ap-spacing-xs);
+    cursor: pointer;
+    padding: var(--ap-spacing-xs);
+    width: 72px;
+    user-select: none;
+}
+
+.ap-desktop-icon-image {
+    width: 48px;
+    height: 48px;
+    background: #ffffff;
+    border: 2px solid #000000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    color: #000000;
+}
+
+.ap-desktop-icon-synth .ap-desktop-icon-image {
+    border-color: #000000;
+}
+
+.ap-desktop-icon-controller .ap-desktop-icon-image {
+    border-color: #000000;
+}
+
+.ap-desktop-icon-tool .ap-desktop-icon-image {
+    border-color: #000000;
+}
+
+.ap-desktop-icon-label {
+    font-size: var(--ap-font-size-xs);
+    color: #000000;
+    text-align: center;
+    word-break: break-word;
+    line-height: 1.3;
+    text-shadow: 0 0 2px #ffffff, 0 0 2px #ffffff;
+}
+
+.ap-desktop-icon.selected .ap-desktop-icon-image {
+    box-shadow: 0 0 0 2px #000000;
+}
+
+.ap-desktop-icon.selected .ap-desktop-icon-label {
+    background: #000000;
+    color: #ffffff;
+    text-shadow: none;
+}
+
+.ap-desktop-icon:active .ap-desktop-icon-image {
+    background: #000000;
+    color: #ffffff;
+}
+
+/* ============================================================
+   WORKSPACE — Where windows live
+   ============================================================ */
+
+#workspace {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    overflow: hidden;
+}
+
+/* ============================================================
+   DEVICE APP WINDOW (Tabbed Views)
+   ============================================================ */
+
+.ap-device-app {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.ap-device-app-content {
+    flex: 1;
+    overflow: auto;
+    background: var(--ap-bg-primary);
+}
+
+/* Override negative margins when patch editor is embedded as tab */
+.ap-device-app-content .ap-patch-editor {
+    margin: 0;
+}
+
+/* Override bartleby config header margin when embedded as tab */
+.ap-device-app-content .ap-bartleby-header {
+    margin: 0;
+    margin-bottom: var(--ap-spacing-sm);
+}
+
+/* Override window content padding for device app (tabs manage own padding) */
+.ap-device-app-content .ap-bartleby-config {
+    padding: var(--ap-spacing-md);
+}
+
+.ap-device-app-content .ap-firmware-window {
+    padding: var(--ap-spacing-md);
+}
+
+.ap-device-app-content .ap-language-window {
+    padding: var(--ap-spacing-md);
+}
+
+/* ============================================================
+   TABS — generic tab buttons
+   ============================================================ */
+
+.ap-tab {
+    font-family: Chicago_12;
+    font-size: 14px;
+    padding: 4px 12px;
+    background: #eeeeee;
+    color: #000000;
+    border: 2px solid #000000;
+    cursor: pointer;
+}
+
+.ap-tab:hover {
+    background: #c0c0c0;
+}
+
+.ap-tab.active {
+    background: #000000;
+    color: #ffffff;
+}
+
+/* ============================================================
+   TABS — generic tab content
+   ============================================================ */
+
+.ap-tab-content {
+    display: none;
+    padding: 16px;
+}
+
+.ap-tab-content.active {
+    display: block;
+}
+
+/* ============================================================
+   BUTTON VARIANTS — colored buttons
+   ============================================================ */
+
+.ap-btn-primary {
+    background: var(--ap-accent-blue);
+    color: #ffffff;
+    border-color: var(--ap-accent-blue);
+}
+
+.ap-btn-primary:hover {
+    background: #1a7cc0;
+}
+
+.ap-btn-success {
+    background: var(--ap-accent-green);
+    color: #000000;
+    border-color: var(--ap-accent-green);
+}
+
+.ap-btn-warning {
+    background: var(--ap-accent-yellow);
+    color: #000000;
+    border-color: var(--ap-accent-yellow);
+}
+
+.ap-btn-danger {
+    background: var(--ap-accent-red);
+    color: #ffffff;
+    border-color: var(--ap-accent-red);
+}
+
+.ap-btn-secondary {
+    background: #eeeeee;
+    color: #000000;
+    border-color: #000000;
+}
+
+.ap-btn-secondary:hover {
+    background: #000000;
+    color: #ffffff;
+}
+
+.ap-btn-small {
+    padding: 2px 12px;
+    font-size: 14px;
+}
+
+/* ============================================================
+   UTILITY CLASSES
+   ============================================================ */
+
+.ap-text-muted {
+    color: var(--ap-text-muted);
+}
+
+.ap-text-success {
+    color: var(--ap-accent-green);
+}
+
+.ap-text-warning {
+    color: var(--ap-accent-yellow);
+}
+
+.ap-text-danger {
+    color: var(--ap-accent-red);
+}
+
+.ap-mt-sm { margin-top: var(--ap-spacing-sm); }
+.ap-mt-md { margin-top: var(--ap-spacing-md); }
+.ap-mb-sm { margin-bottom: var(--ap-spacing-sm); }
+.ap-mb-md { margin-bottom: var(--ap-spacing-md); }
+
+/* ============================================================
+   BARTLEBY CONFIG WINDOW
+   ============================================================ */
+
+.ap-bartleby-config {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.ap-bartleby-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--ap-spacing-sm);
+    background: var(--ap-bg-tertiary);
+    margin: calc(-1 * var(--ap-spacing-md));
+    margin-bottom: var(--ap-spacing-sm);
+}
+
+.ap-bartleby-version {
+    font-size: var(--ap-font-size-xs);
+    color: var(--ap-text-muted);
+}
+
+.ap-save-status {
+    display: flex;
+    align-items: center;
+    gap: var(--ap-spacing-sm);
+    font-size: var(--ap-font-size-xs);
+}
+
+.ap-bartleby-content {
+    flex: 1;
+    overflow: auto;
+    padding-top: var(--ap-spacing-sm);
+}
+
+.ap-bartleby-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--ap-text-muted);
+}
+
+/* Curves Tab */
+.ap-curves-tab {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ap-spacing-md);
+}
+
+.ap-curve-editor {
+    background: var(--ap-bg-secondary);
+    padding: var(--ap-spacing-sm);
+    border: 2px solid var(--ap-bg-tertiary);
+}
+
+.ap-curve-header {
+    margin-bottom: var(--ap-spacing-xs);
+}
+
+.ap-curve-label {
+    font-size: var(--ap-font-size-sm);
+    font-weight: bold;
+}
+
+.ap-curve-canvas {
+    display: block;
+    margin-bottom: var(--ap-spacing-sm);
+}
+
+.ap-curve-sliders {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ap-spacing-xs);
+}
+
+.ap-curve-slider {
+    display: flex;
+    align-items: center;
+    gap: var(--ap-spacing-sm);
+    font-size: var(--ap-font-size-xs);
+}
+
+.ap-curve-slider input[type="range"] {
+    flex: 1;
+}
+
+.ap-curve-value {
+    width: 36px;
+    text-align: right;
+    color: var(--ap-text-secondary);
+}
+
+/* Pots Tab */
+.ap-pots-tab {
+    padding: var(--ap-spacing-sm) 0;
+}
+
+.ap-pots-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: var(--ap-spacing-sm);
+}
+
+.ap-pot-card {
+    background: var(--ap-bg-secondary);
+    border: 2px solid var(--ap-bg-tertiary);
+    padding: var(--ap-spacing-sm);
+    font-size: var(--ap-font-size-xs);
+}
+
+.ap-pot-card.inactive {
+    opacity: 0.5;
+}
+
+.ap-pot-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--ap-spacing-xs);
+}
+
+.ap-pot-index {
+    color: var(--ap-text-muted);
+}
+
+.ap-pot-label {
+    width: 100%;
+    margin-bottom: var(--ap-spacing-xs);
+    font-size: var(--ap-font-size-xs);
+    padding: var(--ap-spacing-xs);
+}
+
+.ap-pot-cc {
+    display: flex;
+    align-items: center;
+    gap: var(--ap-spacing-xs);
+}
+
+.ap-pot-cc-input {
+    width: 50px;
+    font-size: var(--ap-font-size-xs);
+    padding: var(--ap-spacing-xs);
+}
+
+/* Pedal Tab */
+.ap-pedal-tab h3,
+.ap-screen-tab h3 {
+    font-size: var(--ap-font-size-sm);
+    margin-bottom: var(--ap-spacing-sm);
+    color: var(--ap-accent-yellow);
+}
+
+/* ============================================================
+   PATCH EDITOR WINDOW
+   ============================================================ */
+
+.ap-patch-editor {
+    display: flex;
+    height: 100%;
+    gap: 2px;
+    background: var(--ap-bg-tertiary);
+    margin: calc(-1 * var(--ap-spacing-md));
+}
+
+/* Patches List */
+.ap-patches-list {
+    width: 140px;
+    background: var(--ap-bg-primary);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+}
+
+.ap-patches-header,
+.ap-drawer-header {
+    padding: var(--ap-spacing-sm);
+    background: var(--ap-bg-tertiary);
+    font-size: var(--ap-font-size-xs);
+    color: var(--ap-accent-green);
+    text-align: center;
+}
+
+.ap-patches-scroll {
+    flex: 1;
+    overflow-y: auto;
+}
+
+.ap-patch-item {
+    padding: var(--ap-spacing-sm);
+    font-size: var(--ap-font-size-xs);
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid var(--ap-bg-tertiary);
+}
+
+.ap-patch-item:hover {
+    background: var(--ap-bg-tertiary);
+}
+
+.ap-patch-item.selected {
+    background: var(--ap-accent-blue);
+    color: var(--ap-bg-primary);
+}
+
+.ap-patch-item.dragging {
+    opacity: 0.5;
+}
+
+.ap-patch-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ap-patch-name-input {
+    flex: 1;
+    font-size: var(--ap-font-size-xs);
+    padding: 2px 4px;
+}
+
+.ap-patch-actions {
+    display: flex;
+    gap: 2px;
+}
+
+.ap-patch-action {
+    width: 16px;
+    height: 16px;
+    font-size: 8px;
+    padding: 0;
+    background: transparent;
+    border: 1px solid var(--ap-text-muted);
+    color: var(--ap-text-muted);
+    cursor: pointer;
+}
+
+.ap-patch-action:hover {
+    background: var(--ap-bg-tertiary);
+    color: var(--ap-text-primary);
+}
+
+.ap-patch-delete:hover {
+    background: var(--ap-accent-red);
+    border-color: var(--ap-accent-red);
+}
+
+.ap-patches-empty {
+    padding: var(--ap-spacing-md);
+    text-align: center;
+    color: var(--ap-text-muted);
+    font-size: var(--ap-font-size-xs);
+}
+
+.ap-patches-new {
+    margin: var(--ap-spacing-sm);
+    font-size: var(--ap-font-size-xs);
+}
+
+/* Module Drawer */
+.ap-module-drawer {
+    width: 100px;
+    background: var(--ap-bg-primary);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+}
+
+.ap-drawer-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: var(--ap-spacing-xs);
+}
+
+.ap-drawer-section {
+    margin-bottom: var(--ap-spacing-sm);
+}
+
+.ap-drawer-section-title {
+    font-size: 6px;
+    color: var(--ap-text-muted);
+    padding: var(--ap-spacing-xs) 0;
+    border-bottom: 1px solid var(--ap-bg-tertiary);
+    margin-bottom: var(--ap-spacing-xs);
+}
+
+.ap-drawer-module {
+    padding: var(--ap-spacing-xs) var(--ap-spacing-sm);
+    font-size: var(--ap-font-size-xs);
+    background: var(--ap-bg-secondary);
+    border: 2px solid var(--ap-bg-tertiary);
+    margin-bottom: 2px;
+    cursor: grab;
+    text-align: center;
+}
+
+.ap-drawer-module:hover {
+    background: var(--ap-bg-tertiary);
+    border-color: var(--ap-accent-blue);
+}
+
+.ap-drawer-module:active {
+    cursor: grabbing;
+}
+
+.ap-drawer-footer {
+    padding: var(--ap-spacing-xs);
+    border-top: 2px solid var(--ap-bg-tertiary);
+}
+
+/* JSON Popover */
+.ap-json-popover {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 600px;
+    max-width: 90vw;
+    max-height: 80vh;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+}
+
+.ap-json-popover-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--ap-spacing-xs) var(--ap-spacing-sm);
+    background: var(--ap-bg-tertiary);
+    border-bottom: 2px solid var(--ap-window-border);
+    font-size: var(--ap-font-size-sm);
+}
+
+.ap-json-popover-close {
+    background: var(--ap-accent-red);
+    border: none;
+    color: white;
+    width: 20px;
+    height: 20px;
+    font-size: 10px;
+    cursor: pointer;
+    font-family: var(--ap-font-family);
+}
+
+.ap-json-popover-close:hover {
+    background: #ff6b6b;
+}
+
+.ap-json-popover-content {
+    flex: 1;
+    overflow: auto;
+    padding: var(--ap-spacing-sm);
+    font-family: Monaco, monospace;
+    font-size: 10px;
+    line-height: 1.4;
+    color: var(--ap-text-secondary);
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin: 0;
+    background: var(--ap-bg-secondary);
+}
+
+/* Node Workspace */
+.ap-node-workspace {
+    flex: 1;
+    background:
+        linear-gradient(90deg, rgba(0,0,0,0.06) 1px, transparent 1px),
+        linear-gradient(rgba(0,0,0,0.06) 1px, transparent 1px),
+        #ffffff;
+    background-size: 16px 16px;
+    position: relative;
+    overflow: hidden;
+}
+
+.ap-node-workspace.drag-over {
+    background-color: rgba(32, 156, 238, 0.1);
+    outline: 2px dashed var(--ap-accent-blue);
+    outline-offset: -4px;
+}
+
+.ap-node-workspace.panning {
+    cursor: grabbing;
+}
+
+.ap-pan-container {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+}
+
+.ap-workspace-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--ap-text-muted);
+}
+
+.ap-wires-layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    pointer-events: none;
+    overflow: visible;
+}
+
+/* Allow clicking on mod wires for selection */
+.ap-mod-wire {
+    pointer-events: auto;
+}
+
+.ap-wire {
+    transition: stroke 0.1s;
+}
+
+/* ============================================================
+   NODES
+   ============================================================ */
+
+.ap-node {
+    position: absolute;
+    background: #ffffff;
+    border: 2px solid #000000;
+    min-width: 140px;
+    cursor: move;
+    user-select: none;
+}
+
+.ap-node-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--ap-accent-green);
+    color: #000000;
+    padding: var(--ap-spacing-xs) 0;
+    font-size: var(--ap-font-size-xs);
+    font-weight: bold;
+}
+
+.ap-node-title {
+    flex: 1;
+    text-align: center;
+    padding: 0 var(--ap-spacing-xs);
+}
+
+/* Delete button on node header */
+.ap-node-delete-btn {
+    width: 14px;
+    height: 14px;
+    font-size: 8px;
+    font-family: var(--ap-font-family);
+    background: transparent;
+    border: 1px solid currentColor;
+    color: inherit;
+    cursor: pointer;
+    opacity: 0.6;
+    margin-left: 2px;
+    padding: 0;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.ap-node-delete-btn:hover {
+    opacity: 1;
+    background: var(--ap-accent-red);
+    border-color: var(--ap-accent-red);
+}
+
+.ap-node-audio .ap-node-header {
+    background: var(--ap-accent-green);
+}
+
+.ap-node-mod .ap-node-header {
+    background: var(--ap-accent-yellow);
+}
+
+.ap-node-control .ap-node-header {
+    background: var(--ap-accent-purple);
+}
+
+.ap-node-out .ap-node-header {
+    background: var(--ap-text-secondary);
+}
+
+.ap-node-body {
+    padding: var(--ap-spacing-xs);
+    font-size: 7px;
+}
+
+.ap-node-param-container {
+    display: flex;
+    flex-direction: column;
+}
+
+.ap-node-param {
+    display: flex;
+    align-items: center;
+    gap: var(--ap-spacing-xs);
+    padding: 1px 0;
+}
+
+.ap-node-param-key {
+    flex: 1;
+    color: var(--ap-text-muted);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ap-node-param-slider {
+    flex: 1;
+    height: 8px;
+    max-width: 50px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: #ffffff;
+    border: 1px solid #000000;
+    cursor: pointer;
+}
+
+.ap-node-param-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 8px;
+    height: 12px;
+    background: var(--ap-accent-blue);
+    cursor: pointer;
+}
+
+.ap-node-param-slider::-moz-range-thumb {
+    width: 8px;
+    height: 12px;
+    background: var(--ap-accent-blue);
+    cursor: pointer;
+    border: none;
+}
+
+.ap-node-param-value {
+    text-align: right;
+    color: var(--ap-text-primary);
+    min-width: 24px;
+}
+
+/* Modulation amount sliders on target nodes */
+.ap-node-mod-amount {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 0 2px 16px;
+    font-size: var(--ap-font-size-xs);
+    opacity: 0.85;
+}
+
+.ap-mod-source-label {
+    min-width: 40px;
+    font-size: 6px;
+    text-transform: uppercase;
+}
+
+.ap-mod-amount-mini {
+    flex: 1;
+    height: 8px;
+    max-width: 60px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: #ffffff;
+    border: 1px solid #000000;
+    cursor: pointer;
+}
+
+.ap-mod-amount-mini::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 8px;
+    height: 12px;
+    background: var(--ap-accent-yellow);
+    cursor: pointer;
+}
+
+.ap-mod-amount-mini::-moz-range-thumb {
+    width: 8px;
+    height: 12px;
+    background: var(--ap-accent-yellow);
+    cursor: pointer;
+    border: none;
+}
+
+.ap-mod-amount-value {
+    min-width: 24px;
+    text-align: right;
+    font-size: 7px;
+    color: var(--ap-text-secondary);
+}
+
+/* Node ports - Header ports (inline in flexbox header) */
+.ap-node-port {
+    width: 10px;
+    height: 10px;
+    background: var(--ap-text-primary);
+    border: 2px solid var(--ap-bg-primary);
+    flex-shrink: 0;
+}
+
+/* Header input port (left side) - audio modules only */
+.ap-node-port-header-in {
+    margin-left: -5px;
+    margin-right: 2px;
+}
+
+/* Header output port (right side) - all modules */
+.ap-node-port-header-out {
+    margin-right: -5px;
+    margin-left: 2px;
+}
+
+/* Param input ports (left side of each param line) */
+.ap-node-port-param-in {
+    width: 6px;
+    height: 6px;
+    background: var(--ap-text-secondary);
+    border: 1px solid var(--ap-bg-primary);
+    margin-right: 4px;
+    flex-shrink: 0;
+}
+
+/* Context Menu */
+.ap-context-menu {
+    position: fixed;
+    background: #ffffff;
+    border: 2px solid #000000;
+    box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.25);
+    min-width: 200px;
+    max-width: 300px;
+    z-index: 10001;
+}
+
+.ap-context-header {
+    background: var(--ap-accent-blue);
+    color: var(--ap-bg-primary);
+    padding: var(--ap-spacing-sm);
+    font-size: var(--ap-font-size-sm);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.ap-context-close {
+    background: transparent;
+    border: none;
+    color: var(--ap-bg-primary);
+    cursor: pointer;
+    font-size: var(--ap-font-size-sm);
+}
+
+.ap-context-body {
+    padding: var(--ap-spacing-md);
+}
+
+/* ============================================================
+   WIRING INTERACTION STATES
+   ============================================================ */
+
+/* Workspace in wiring mode */
+.ap-node-workspace.wiring {
+    cursor: crosshair;
+}
+
+/* Node being used as wire source */
+.ap-node.wiring-source {
+    box-shadow: 0 0 12px var(--ap-accent-yellow);
+}
+
+/* Node that can receive wire (audio targets) */
+.ap-node.wiring-target {
+    border-color: var(--ap-accent-yellow);
+    cursor: default;
+}
+
+/* Parameter drop zone highlight when wiring */
+.ap-node.wiring-target .ap-node-param.drop-target {
+    background: var(--ap-bg-tertiary);
+    cursor: pointer;
+}
+
+/* Highlight the param port when drop target */
+.ap-node.wiring-target .ap-node-param.drop-target .ap-node-port-param-in {
+    background: var(--ap-accent-yellow);
+    box-shadow: 0 0 4px var(--ap-accent-yellow);
+}
+
+.ap-node.wiring-target .ap-node-param.drop-target:hover {
+    background: rgba(247, 213, 29, 0.2);
+}
+
+.ap-node.wiring-target .ap-node-param.drop-target:hover .ap-node-port-param-in {
+    background: var(--ap-accent-green);
+    box-shadow: 0 0 6px var(--ap-accent-green);
+}
+
+/* Output port for mod/control nodes */
+.ap-node-mod .ap-node-port-header-out,
+.ap-node-control .ap-node-port-header-out {
+    cursor: crosshair;
+    transition: transform 0.1s, background 0.1s;
+}
+
+.ap-node-mod .ap-node-port-header-out:hover,
+.ap-node-control .ap-node-port-header-out:hover {
+    transform: scale(1.3);
+    background: var(--ap-accent-yellow);
+}
+
+.ap-node-mod .ap-node-port-header-out.active,
+.ap-node-control .ap-node-port-header-out.active {
+    background: var(--ap-accent-yellow);
+    box-shadow: 0 0 8px var(--ap-accent-yellow);
+}
+
+/* Modulation wire styling */
+.ap-mod-wire {
+    pointer-events: auto;
+    cursor: pointer;
+}
+
+.ap-mod-wire path {
+    transition: stroke-width 0.1s;
+}
+
+.ap-mod-wire:hover path {
+    stroke-width: 4;
+}
+
+/* Dragging wire animation */
+.ap-dragging-wire {
+    animation: wireFlow 0.5s linear infinite;
+}
+
+@keyframes wireFlow {
+    0% { stroke-dashoffset: 0; }
+    100% { stroke-dashoffset: 12; }
+}
+
+/* ============================================================
+   CONTEXT MENU — Parameter Editing
+   ============================================================ */
+
+.ap-context-scroll {
+    max-height: 320px;
+    overflow-y: auto;
+}
+
+.ap-context-section {
+    margin-bottom: var(--ap-spacing-md);
+}
+
+.ap-context-section:last-child {
+    margin-bottom: 0;
+}
+
+.ap-context-section-title {
+    font-size: 7px;
+    color: var(--ap-accent-green);
+    border-bottom: 1px solid var(--ap-bg-tertiary);
+    padding-bottom: var(--ap-spacing-xs);
+    margin-bottom: var(--ap-spacing-sm);
+}
+
+.ap-context-hint {
+    font-size: var(--ap-font-size-xs);
+    text-align: center;
+    padding: var(--ap-spacing-md) 0;
+}
+
+/* Parameter Control */
+.ap-param-control {
+    margin-bottom: var(--ap-spacing-sm);
+}
+
+.ap-param-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--ap-spacing-xs);
+}
+
+.ap-param-name {
+    font-size: var(--ap-font-size-xs);
+    color: var(--ap-text-secondary);
+}
+
+.ap-param-value {
+    font-size: var(--ap-font-size-xs);
+    color: var(--ap-text-primary);
+    min-width: 30px;
+    text-align: right;
+}
+
+.ap-param-control .ap-slider {
+    width: 100%;
+}
+
+/* Modulation Control */
+.ap-mod-control {
+    margin-bottom: var(--ap-spacing-md);
+    padding: var(--ap-spacing-sm);
+    background: var(--ap-bg-secondary);
+    border: 1px solid var(--ap-bg-tertiary);
+}
+
+.ap-mod-param-name {
+    font-size: var(--ap-font-size-xs);
+    color: var(--ap-accent-yellow);
+    margin-bottom: var(--ap-spacing-xs);
+}
+
+.ap-mod-sources {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ap-spacing-xs);
+}
+
+.ap-mod-source-row {
+    display: flex;
+    align-items: center;
+    gap: var(--ap-spacing-sm);
+}
+
+.ap-mod-source-toggle {
+    display: flex;
+    align-items: center;
+    gap: var(--ap-spacing-xs);
+    cursor: pointer;
+    min-width: 90px;
+}
+
+.ap-mod-source-toggle input {
+    width: 12px;
+    height: 12px;
+}
+
+.ap-mod-source-name {
+    font-size: 7px;
+}
+
+.ap-mod-amount-slider {
+    flex: 1;
+    height: 6px;
+}
+
+/* Routed Targets (for mod sources) */
+.ap-routed-target {
+    display: flex;
+    align-items: center;
+    gap: var(--ap-spacing-sm);
+    margin-bottom: var(--ap-spacing-xs);
+    padding: var(--ap-spacing-xs);
+    background: var(--ap-bg-secondary);
+}
+
+.ap-target-name {
+    font-size: 7px;
+    color: var(--ap-text-secondary);
+    min-width: 70px;
+}
+
+.ap-target-slider {
+    flex: 1;
+    height: 6px;
+}
+
+.ap-target-amount {
+    font-size: 7px;
+    color: var(--ap-text-primary);
+    min-width: 25px;
+    text-align: right;
+}
+
+/* ============================================================
+   FIRMWARE WINDOW
+   ============================================================ */
+
+.ap-firmware-window {
+    text-align: center;
+}
+
+.ap-firmware-device {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: var(--ap-spacing-md);
+    margin-bottom: var(--ap-spacing-lg);
+    padding-bottom: var(--ap-spacing-sm);
+    border-bottom: 2px solid var(--ap-bg-tertiary);
+}
+
+.ap-firmware-device-name {
+    font-size: var(--ap-font-size-md);
+    color: var(--ap-accent-green);
+}
+
+.ap-firmware-version {
+    font-size: var(--ap-font-size-xs);
+    color: var(--ap-text-muted);
+}
+
+.ap-firmware-select {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--ap-spacing-md);
+}
+
+.ap-firmware-file-info {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--ap-spacing-xs);
+    padding: var(--ap-spacing-sm);
+    background: var(--ap-bg-secondary);
+    border: 2px solid var(--ap-bg-tertiary);
+}
+
+.ap-firmware-filename {
+    font-size: var(--ap-font-size-xs);
+    color: var(--ap-text-primary);
+    word-break: break-all;
+}
+
+.ap-firmware-filesize {
+    font-size: var(--ap-font-size-xs);
+    color: var(--ap-text-muted);
+}
+
+.ap-firmware-actions {
+    display: flex;
+    gap: var(--ap-spacing-sm);
+    margin-top: var(--ap-spacing-md);
+}
+
+.ap-firmware-progress,
+.ap-firmware-complete,
+.ap-firmware-error {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--ap-spacing-sm);
+}
+
+.ap-firmware-status {
+    font-size: var(--ap-font-size-sm);
+    color: var(--ap-text-primary);
+}
+
+/* Progress Bar */
+.ap-progress-bar {
+    width: 100%;
+    height: 20px;
+    background: #ffffff;
+    border: 2px solid #000000;
+}
+
+.ap-progress-fill {
+    height: 100%;
+    background: var(--ap-accent-green);
+    transition: width 0.3s;
+}
+
+/* ============================================================
+   LANGUAGE WINDOW
+   ============================================================ */
+
+.ap-language-window {
+    display: flex;
+    flex-direction: column;
+}
+
+.ap-language-device {
+    text-align: center;
+    margin-bottom: var(--ap-spacing-md);
+    padding-bottom: var(--ap-spacing-sm);
+    border-bottom: 2px solid var(--ap-bg-tertiary);
+}
+
+.ap-language-device-name {
+    font-size: var(--ap-font-size-md);
+    color: var(--ap-accent-green);
+}
+
+.ap-language-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ap-spacing-xs);
+    margin-bottom: var(--ap-spacing-md);
+}
+
+.ap-language-option {
+    display: flex;
+    align-items: center;
+    gap: var(--ap-spacing-sm);
+    padding: var(--ap-spacing-sm);
+    background: var(--ap-bg-secondary);
+    border: 2px solid var(--ap-bg-tertiary);
+    cursor: pointer;
+    font-size: var(--ap-font-size-sm);
+}
+
+.ap-language-option:hover {
+    background: var(--ap-bg-tertiary);
+}
+
+.ap-language-option.selected {
+    border-color: var(--ap-accent-blue);
+    background: var(--ap-bg-tertiary);
+}
+
+.ap-language-option input {
+    width: 14px;
+    height: 14px;
+}
+
+.ap-language-name {
+    color: var(--ap-text-primary);
+}
+
+.ap-language-current {
+    font-size: var(--ap-font-size-xs);
+    color: var(--ap-text-muted);
+    margin-left: auto;
+}
+
+.ap-language-note {
+    font-size: var(--ap-font-size-xs);
+    text-align: center;
+    margin-bottom: var(--ap-spacing-md);
+}
+
+.ap-language-actions {
+    display: flex;
+    justify-content: center;
+    gap: var(--ap-spacing-sm);
+}
+
+/* ============================================================
+   EXPRESSION PAD WINDOW
+   ============================================================ */
+
+.ap-expression-pad {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    height: 100%;
+    padding: var(--ap-spacing-sm);
+}
+
+.ap-pad-controls {
+    display: flex;
+    align-items: center;
+    gap: var(--ap-spacing-md);
+    margin-bottom: var(--ap-spacing-md);
+    width: 100%;
+}
+
+.ap-velocity-control {
+    display: flex;
+    align-items: center;
+    gap: var(--ap-spacing-sm);
+    flex: 1;
+}
+
+.ap-velocity-control span:first-child {
+    font-size: var(--ap-font-size-xs);
+    color: var(--ap-text-muted);
+}
+
+.ap-velocity-control .ap-slider {
+    flex: 1;
+}
+
+.ap-velocity-value {
+    font-size: var(--ap-font-size-xs);
+    color: var(--ap-text-primary);
+    min-width: 25px;
+    text-align: right;
+}
+
+.ap-mpe-toggle {
+    display: flex;
+    align-items: center;
+    gap: var(--ap-spacing-xs);
+    font-size: var(--ap-font-size-xs);
+    color: var(--ap-text-muted);
+    cursor: pointer;
+}
+
+.ap-mpe-toggle input {
+    width: 12px;
+    height: 12px;
+}
+
+.ap-pad-canvas-container {
+    display: flex;
+    justify-content: center;
+    margin-bottom: var(--ap-spacing-sm);
+}
+
+.ap-pad-canvas {
+    border: 2px solid #000000;
+}
+
+.ap-pad-labels {
+    display: flex;
+    justify-content: space-between;
+    width: 200px;
+    font-size: var(--ap-font-size-xs);
+    color: var(--ap-text-muted);
+    margin-bottom: var(--ap-spacing-sm);
+}
+
+.ap-pad-note {
+    text-align: center;
+    font-size: var(--ap-font-size-sm);
+    min-height: 24px;
+}
+
+.ap-note-playing {
+    color: var(--ap-accent-yellow);
+    font-weight: bold;
+}
+
+.ap-note-waiting {
+    color: var(--ap-text-muted);
+}
+
+/* ============================================================
+   SYNC WINDOW
+   ============================================================ */
+
+.ap-sync-window {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    gap: var(--ap-spacing-sm);
+}
+
+.ap-sync-devices {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ap-spacing-xs);
+}
+
+.ap-sync-no-devices {
+    font-size: var(--ap-font-size-xs);
+    color: var(--ap-text-muted);
+    text-align: center;
+    padding: var(--ap-spacing-sm);
+}
+
+.ap-sync-device-row {
+    display: flex;
+    align-items: center;
+    gap: var(--ap-spacing-sm);
+    padding: var(--ap-spacing-xs) var(--ap-spacing-sm);
+    background: var(--ap-bg-secondary);
+    border: 1px solid var(--ap-bg-tertiary);
+}
+
+.ap-sync-device-led {
+    width: 6px;
+    height: 6px;
+    background: var(--ap-text-muted);
+    flex-shrink: 0;
+}
+
+.ap-sync-device-led.connected {
+    background: var(--ap-accent-green);
+    box-shadow: 0 0 4px var(--ap-accent-green);
+}
+
+.ap-sync-device-name {
+    font-size: var(--ap-font-size-xs);
+    color: var(--ap-text-primary);
+    flex: 1;
+}
+
+.ap-sync-device-role {
+    font-size: 7px;
+    color: var(--ap-text-muted);
+    text-transform: uppercase;
+}
+
+.ap-sync-btn {
+    align-self: center;
+    margin: var(--ap-spacing-xs) 0;
+}
+
+.ap-sync-output {
+    flex: 1;
+    overflow-y: auto;
+    background: var(--ap-bg-secondary);
+    border: 1px solid var(--ap-bg-tertiary);
+    padding: var(--ap-spacing-sm);
+    font-family: var(--ap-font-family);
+    font-size: var(--ap-font-size-xs);
+    line-height: 1.6;
+}
+
+.ap-sync-log-entry {
+    color: var(--ap-text-secondary);
+}
+
+.ap-sync-log-time {
+    color: var(--ap-text-muted);
+}
+
+.ap-sync-log-success {
+    color: var(--ap-accent-green);
+}
+
+.ap-sync-log-error {
+    color: var(--ap-accent-red);
+}
+
+.ap-sync-log-warning {
+    color: var(--ap-accent-yellow);
+}
+
+/* ============================================================
+   LOG WINDOW
+   ============================================================ */
+
+.ap-log-window {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.ap-log-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--ap-spacing-sm);
+    border-bottom: 1.5px solid #000000;
+}
+
+.ap-log-count {
+    font-size: 14px;
+    color: var(--ap-text-muted);
+}
+
+.ap-log-scroll {
+    flex: 1;
+    overflow-y: auto;
+    background: var(--ap-bg-primary);
+    padding: var(--ap-spacing-xs);
+}
+
+.ap-log-empty {
+    text-align: center;
+    color: var(--ap-text-muted);
+    padding: var(--ap-spacing-lg);
+    font-size: var(--ap-font-size-xs);
+}
+
+.ap-log-entry {
+    display: flex;
+    gap: var(--ap-spacing-sm);
+    padding: var(--ap-spacing-xs);
+    font-size: 9px;
+    font-family: Monaco, monospace;
+    border-bottom: 1px solid var(--ap-bg-secondary);
+}
+
+.ap-log-entry:hover {
+    background: var(--ap-bg-secondary);
+}
+
+.ap-log-time {
+    color: var(--ap-text-muted);
+    white-space: nowrap;
+}
+
+.ap-log-message {
+    color: var(--ap-text-primary);
+    word-break: break-all;
+}
+
+.ap-log-success .ap-log-message {
+    color: var(--ap-accent-green);
+}
+
+.ap-log-error .ap-log-message {
+    color: var(--ap-accent-red);
+}
+
+.ap-log-warning .ap-log-message {
+    color: var(--ap-accent-yellow);
+}
+
+.ap-log-info .ap-log-message {
+    color: var(--ap-text-secondary);
+}
+
+/* Plain text log output */
+.ap-log-text {
+    flex: 1;
+    margin: 0;
+    padding: var(--ap-spacing-sm);
+    background: var(--ap-bg-primary);
+    color: var(--ap-text-secondary);
+    font-family: Monaco, monospace;
+    font-size: 16px;
+    line-height: 1.4;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+/* ============================================================
+   SELECTION & DELETE ANIMATIONS
+   ============================================================ */
+
+/* Selected node */
+.ap-node.selected {
+    box-shadow: 0 0 0 2px #000000;
+}
+
+.ap-node.selected .ap-node-header {
+    background: var(--ap-accent-blue);
+}
+
+/* Node delete animation */
+@keyframes nodeDelete {
+    0% {
+        transform: scale(1);
+        opacity: 1;
+    }
+    50% {
+        transform: scale(1.05);
+        opacity: 0.7;
+    }
+    100% {
+        transform: scale(0);
+        opacity: 0;
+    }
+}
+
+.ap-node.deleting {
+    animation: nodeDelete 0.3s ease-out forwards;
+    pointer-events: none;
+}
+
+/* Pending node (dropped but not yet wired) */
+.ap-node.pending {
+    opacity: 0.7;
+    animation: nodePending 1s ease-in-out infinite;
+}
+
+@keyframes nodePending {
+    0%, 100% { opacity: 0.5; }
+    50% { opacity: 0.9; }
+}
+
+/* Drawer module that requires drag (mod/control) */
+.ap-drawer-module.drag-only {
+    cursor: grab;
+    opacity: 0.85;
+}
+
+.ap-drawer-module.drag-only:hover {
+    cursor: grab;
+}
+
+/* Selected wire glow */
+.ap-mod-wire.selected path {
+    filter: drop-shadow(0 0 4px var(--ap-wire-mod));
+}
+
+/* ============================================================
+   CONFIRMATION DIALOG
+   ============================================================ */
+
+.ap-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.ap-confirm-header {
+    background: var(--ap-accent-red);
+    color: white;
+    padding: var(--ap-spacing-sm) var(--ap-spacing-md);
+    font-size: var(--ap-font-size-sm);
+}
+
+.ap-confirm-body {
+    padding: var(--ap-spacing-md);
+    color: var(--ap-text-secondary);
+    font-size: var(--ap-font-size-xs);
+    line-height: 1.6;
+    white-space: pre-wrap;
+    font-family: var(--ap-font-family);
+    margin: 0;
+}
+
+.ap-confirm-actions {
+    display: flex;
+    gap: var(--ap-spacing-sm);
+    padding: var(--ap-spacing-md);
+    padding-top: 0;
+    justify-content: flex-end;
+}
+
+/* ============================================================
+   WIRING MODE ENHANCEMENTS
+   ============================================================ */
+
+/* Valid drop target during wiring */
+.ap-node-param.drop-target {
+    background: rgba(32, 156, 238, 0.2);
+    outline: 1px dashed var(--ap-accent-blue);
+    cursor: crosshair;
+}
+
+.ap-node-param.drop-target:hover {
+    background: rgba(32, 156, 238, 0.4);
+}
+
+/* Target of a selected wire */
+.ap-node-param.wire-target {
+    background: rgba(247, 213, 29, 0.3);
+    outline: 2px solid var(--ap-accent-yellow);
+}
+
+/* Port hover effect during wiring */
+.ap-node-workspace.wiring .ap-node-port-param-in {
+    background: var(--ap-accent-blue);
+    transform: scale(1.5);
+}
+
+/* ============================================================
+   LOADING OVERLAY
+   ============================================================ */
+
+/* Container for workspace + loading overlay */
+.ap-workspace-container {
+    position: relative;
+    flex: 1;
+    display: flex;
+    min-width: 0;
+}
+
+/* Loading overlay - positioned over workspace */
+.ap-loading-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(255, 255, 255, 0.95);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity 0.3s ease-out, visibility 0.3s ease-out;
+}
+
+.ap-loading-overlay.visible {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+}
+
+.ap-loading-content {
+    text-align: center;
+}
+
+.ap-loading-text {
+    font-family: var(--ap-font-family);
+    font-size: var(--ap-font-size-lg);
+    color: var(--ap-text-primary);
+    letter-spacing: 2px;
+    display: inline-block;
+    min-width: 180px;
+    text-align: left;
+}
+
+/* Patch list item disabled state during loading */
+.ap-patch-item.loading-disabled {
+    cursor: wait;
+    opacity: 0.6;
+}
+
+.ap-patch-item.loading-disabled:hover {
+    background: transparent;
+}
+
+.ap-patch-item.loading-disabled.selected {
+    opacity: 1;
+}
+
+/* ============================================================
+   PAD OUTPUT SELECTOR
+   ============================================================ */
+
+.ap-pad-output-select {
+    display: flex;
+    align-items: center;
+    gap: var(--ap-spacing-xs);
+    margin-bottom: var(--ap-spacing-sm);
+    width: 100%;
+}
+
+.ap-pad-output-label {
+    font-size: var(--ap-font-size-xs);
+    color: var(--ap-text-muted);
+    flex-shrink: 0;
+}
+
+.ap-pad-output-btn {
+    font-family: var(--ap-font-family);
+    font-size: 7px;
+    padding: 2px var(--ap-spacing-sm);
+    background: #eeeeee;
+    border: 1px solid #000000;
+    color: #555555;
+    cursor: pointer;
+}
+
+.ap-pad-output-btn:hover {
+    background: #c0c0c0;
+    color: #000000;
+}
+
+.ap-pad-output-btn.active {
+    background: var(--ap-accent-blue);
+    border-color: var(--ap-accent-blue);
+    color: var(--ap-bg-primary);
+}
+
+/* ============================================================
+   PAD MIDI MONITOR
+   ============================================================ */
+
+.ap-pad-monitor {
+    width: 100%;
+    flex: 1;
+    min-height: 60px;
+    overflow-y: auto;
+    background: var(--ap-bg-secondary);
+    border: 1px solid var(--ap-bg-tertiary);
+    padding: var(--ap-spacing-xs);
+    margin-top: var(--ap-spacing-sm);
+    font-size: 7px;
+    line-height: 1.5;
+}
+
+.ap-monitor-entry {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ap-monitor-source {
+    font-weight: bold;
+}
+
+.ap-monitor-desc {
+    color: var(--ap-text-secondary);
+}
+
+/* ============================================================
+   VELOCITY CURVE PREVIEW (in VELOCITY node)
+   ============================================================ */
+
+.ap-node-velocity-viz {
+    margin: 2px 4px 4px 4px;
+}
+
+.ap-velocity-preview-canvas {
+    display: block;
+    width: 120px;
+    height: 60px;
+}
+
+/* ============================================================
+   ENVELOPE CURVE VISUALIZATION
+   ============================================================ */
+
+.ap-node-envelope-viz {
+    position: relative;
+    height: 40px;
+    margin: 0 4px 4px 4px;
+    background: #ffffff;
+    border: 1px solid #000000;
+}
+
+.ap-envelope-curve {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+}
+
+/* ============================================================
+   WAVE SELECTOR
+   ============================================================ */
+
+.ap-wave-selector {
+    display: flex;
+    align-items: center;
+    margin-left: auto;
+}
+
+.ap-wave-options {
+    display: flex;
+    gap: 2px;
+}
+
+.ap-wave-btn {
+    width: 18px;
+    height: 18px;
+    padding: 2px;
+    background: #ffffff;
+    border: 1px solid #000000;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #555555;
+    transition: all 0.1s;
+}
+
+.ap-wave-btn:hover {
+    background: var(--ap-bg-tertiary);
+    border-color: var(--ap-accent-blue);
+    color: var(--ap-text-primary);
+}
+
+.ap-wave-btn.active {
+    background: var(--ap-accent-blue);
+    border-color: var(--ap-accent-blue);
+    color: var(--ap-bg-primary);
+}
+
+.ap-wave-icon {
+    width: 14px;
+    height: 14px;
+}
+
+/* ============================================================
+   CLICK-TO-EDIT VALUES
+   ============================================================ */
+
+.ap-node-param-value.clickable {
+    cursor: pointer;
+    padding: 1px 3px;
+    transition: background 0.1s;
+}
+
+.ap-node-param-value.clickable:hover {
+    background: #eeeeee;
+    color: var(--ap-accent-blue);
+}
+
+.ap-node-param-edit {
+    width: 36px;
+    font-family: var(--ap-font-family);
+    font-size: 7px;
+    padding: 1px 3px;
+    background: #ffffff;
+    border: 1px solid #000000;
+    color: #000000;
+    text-align: right;
+    outline: none;
+}
+
+.ap-node-param-edit:focus {
+    box-shadow: 0 0 4px var(--ap-accent-blue);
+}
+
+/* ============================================================
+   PRIORITY BADGE
+   ============================================================ */
+
+.ap-priority-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 14px;
+    height: 14px;
+    padding: 0 3px;
+    margin-right: 4px;
+    font-size: 8px;
+    font-weight: 600;
+    background: #c0c0c0;
+    border: 1px solid #000000;
+    cursor: pointer;
+    color: #555555;
+    flex-shrink: 0;
+}
+
+.ap-priority-badge:hover {
+    background: #eeeeee;
+    color: #000000;
+    border-color: #000000;
+}
+
+.ap-priority-edit {
+    width: 24px;
+    height: 14px;
+    padding: 0 2px;
+    margin-right: 4px;
+    font-family: var(--ap-font-family);
+    font-size: 8px;
+    font-weight: 600;
+    text-align: center;
+    background: #ffffff;
+    border: 1px solid #000000;
+    color: #000000;
+    outline: none;
+    flex-shrink: 0;
+}
+
+.ap-priority-edit:focus {
+    box-shadow: 0 0 4px var(--ap-accent-blue);
+}
+
+.ap-priority-edit.error {
+    border-color: var(--ap-error, #f44);
+    background: rgba(255, 68, 68, 0.15);
+}
+
+/* ============================================================
+   NODE LAYOUT VARIANTS
+   ============================================================ */
+
+/* Envelope module layout */
+.ap-node-envelope {
+    min-width: 160px;
+}
+
+.ap-node-envelope .ap-node-body {
+    padding: var(--ap-spacing-xs);
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2px 4px;
+}
+
+/* Envelope curve spans both columns */
+.ap-node-envelope .ap-node-envelope-viz {
+    grid-column: 1 / -1;
+}
+
+/* Param containers fit in grid cells */
+.ap-node-envelope .ap-node-param-container {
+    display: flex;
+    flex-direction: column;
+}
+
+/* Mod amount rows span both columns */
+.ap-node-envelope .ap-node-mod-amount {
+    grid-column: 1 / -1;
+}
+
+/* Oscillator module layout */
+.ap-node-oscillator {
+    min-width: 150px;
+}
+
+/* LFO module layout */
+.ap-node-lfo {
+    min-width: 150px;
+}

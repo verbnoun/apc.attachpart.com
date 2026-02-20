@@ -1,0 +1,14 @@
+/**
+ * APC Bridge CSS
+ *
+ * Minimal overrides where system.css defaults don't fit APC's layout.
+ * Loaded between vendor/system.css and apc-app.css.
+ */
+
+/* Suppress system.css body background — APC has its own checkered desktop */
+body { background: none; }
+
+/* Suppress system.css window margin — APC positions windows absolutely */
+.window { margin: 0; }
+
+/* Let system.css scrollbar width (22px) apply */
