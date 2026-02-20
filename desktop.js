@@ -32,15 +32,6 @@ function Desktop({ devices, onDeviceOpen, onToolOpen }) {
         });
     }
 
-    // Static tool: Expression Pad
-    icons.push({
-        id: 'tool-expression',
-        label: 'Expression Pad',
-        icon: '~',
-        type: 'tool',
-        onOpen: () => onToolOpen('expression')
-    });
-
     return (
         <div className="ap-desktop" onClick={handleBackgroundClick}>
             <div className="ap-desktop-icons">

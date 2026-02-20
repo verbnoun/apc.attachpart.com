@@ -1,14 +1,20 @@
 /**
- * Menu Bar - Classic Mac OS menu bar
+ * Menu Bar - Classic Mac OS menu bar with per-app menus
  *
- * Left: App name (bold), dropdown menus (Tools)
- * Right: per-device status LEDs + names, LINKED badge
+ * Left: App name (bold), context-sensitive dropdown menus
+ *   - APConsole (no device focused): Tools
+ *   - Bartleby focused: Config, Tools (includes Firmware/Language)
+ *   - Candide focused: Tools (includes Firmware/Language)
  *
  * Dropdown behavior: click to open, click item to act, click elsewhere to dismiss.
+ * Hover switches between open menus (Mac behavior).
  */
 
-function MenuBar({ devices, isLinked, focusedApp, onLogClick, onSyncClick, onExpressionPadClick, onPreferencesClick }) {
+function MenuBar({ focusedWindow, configSection, onConfigSection, onLogClick, onSyncClick, onExpressionPadClick, onPreferencesClick, onOpenDeviceTool }) {
     const [openMenu, setOpenMenu] = React.useState(null);
+
+    const appType = focusedWindow?.type || 'apconsole';
+    const appName = focusedWindow?.title || 'APConsole';
 
     // Close menu on any outside click
     React.useEffect(() => {
@@ -20,22 +26,115 @@ function MenuBar({ devices, isLinked, focusedApp, onLogClick, onSyncClick, onExp
 
     const handleMenuClick = (menuName, e) => {
         e.stopPropagation();
-        // Mac behavior: click toggles, or if a different menu is open, switch to it
         setOpenMenu(prev => prev === menuName ? null : menuName);
     };
 
     const handleItemClick = (action, e) => {
         e.stopPropagation();
         setOpenMenu(null);
-        action();
+        if (action) action();
     };
 
-    // Mac behavior: hover to switch between open menus
     const handleMenuHover = (menuName) => {
         if (openMenu && openMenu !== menuName) {
             setOpenMenu(menuName);
         }
     };
+
+    // Shared tool items (appear in all Tools menus)
+    const sharedToolItems = (
+        <>
+            <button className="ap-menubar-dropdown-item" onMouseDown={(e) => handleItemClick(onLogClick, e)}>
+                Console Log
+            </button>
+            <button className="ap-menubar-dropdown-item" onMouseDown={(e) => handleItemClick(onSyncClick, e)}>
+                Sync
+            </button>
+            <button className="ap-menubar-dropdown-item" onMouseDown={(e) => handleItemClick(onExpressionPadClick, e)}>
+                Expression Pad
+            </button>
+            <div className="ap-menubar-dropdown-separator"></div>
+            <button className="ap-menubar-dropdown-item" onMouseDown={(e) => handleItemClick(onPreferencesClick, e)}>
+                Preferences…
+            </button>
+        </>
+    );
+
+    // Build menus based on app type
+    const menus = [];
+
+    if (appType === 'bartleby') {
+        // Bartleby: Config menu (section switcher) + Tools (with Firmware/Language)
+        menus.push({
+            id: 'config',
+            label: 'Config',
+            items: (
+                <>
+                    <button className={`ap-menubar-dropdown-item${configSection === 'curves' ? ' checked' : ''}`} onMouseDown={(e) => handleItemClick(() => switchConfigSection('curves'), e)}>
+                        Curves
+                    </button>
+                    <button className={`ap-menubar-dropdown-item${configSection === 'dials' ? ' checked' : ''}`} onMouseDown={(e) => handleItemClick(() => switchConfigSection('dials'), e)}>
+                        Dials
+                    </button>
+                    <button className={`ap-menubar-dropdown-item${configSection === 'pedal' ? ' checked' : ''}`} onMouseDown={(e) => handleItemClick(() => switchConfigSection('pedal'), e)}>
+                        Pedal
+                    </button>
+                    <button className={`ap-menubar-dropdown-item${configSection === 'screen' ? ' checked' : ''}`} onMouseDown={(e) => handleItemClick(() => switchConfigSection('screen'), e)}>
+                        Screen
+                    </button>
+                </>
+            )
+        });
+        menus.push({
+            id: 'tools',
+            label: 'Tools',
+            items: (
+                <>
+                    <button className="ap-menubar-dropdown-item" onMouseDown={(e) => handleItemClick(() => openDeviceTool('firmware'), e)}>
+                        Firmware
+                    </button>
+                    <button className="ap-menubar-dropdown-item" onMouseDown={(e) => handleItemClick(() => openDeviceTool('language'), e)}>
+                        Language
+                    </button>
+                    <div className="ap-menubar-dropdown-separator"></div>
+                    {sharedToolItems}
+                </>
+            )
+        });
+    } else if (appType === 'candide') {
+        // Candide: Tools (with Firmware/Language)
+        menus.push({
+            id: 'tools',
+            label: 'Tools',
+            items: (
+                <>
+                    <button className="ap-menubar-dropdown-item" onMouseDown={(e) => handleItemClick(() => openDeviceTool('firmware'), e)}>
+                        Firmware
+                    </button>
+                    <button className="ap-menubar-dropdown-item" onMouseDown={(e) => handleItemClick(() => openDeviceTool('language'), e)}>
+                        Language
+                    </button>
+                    <div className="ap-menubar-dropdown-separator"></div>
+                    {sharedToolItems}
+                </>
+            )
+        });
+    } else {
+        // APConsole: just Tools
+        menus.push({
+            id: 'tools',
+            label: 'Tools',
+            items: sharedToolItems
+        });
+    }
+
+    function switchConfigSection(section) {
+        if (onConfigSection) onConfigSection(section);
+    }
+
+    function openDeviceTool(tool) {
+        if (onOpenDeviceTool) onOpenDeviceTool(tool);
+    }
 
     return (
         <div className="ap-menubar">
@@ -45,52 +144,27 @@ function MenuBar({ devices, isLinked, focusedApp, onLogClick, onSyncClick, onExp
                     onMouseDown={(e) => handleMenuClick('app', e)}
                     onMouseEnter={() => handleMenuHover('app')}
                 >
-                    {focusedApp || 'APConsole'}
+                    {appName}
                 </span>
 
-                <div className="ap-menubar-menu" onMouseDown={(e) => e.stopPropagation()}>
-                    <button
-                        className={`ap-menubar-btn${openMenu === 'tools' ? ' active' : ''}`}
-                        onMouseDown={(e) => handleMenuClick('tools', e)}
-                        onMouseEnter={() => handleMenuHover('tools')}
-                    >
-                        Tools
-                    </button>
-                    {openMenu === 'tools' && (
-                        <div className="ap-menubar-dropdown">
-                            <button className="ap-menubar-dropdown-item" onMouseDown={(e) => handleItemClick(onLogClick, e)}>
-                                Console Log
-                            </button>
-                            <button className="ap-menubar-dropdown-item" onMouseDown={(e) => handleItemClick(onSyncClick, e)}>
-                                Sync
-                            </button>
-                            <button className="ap-menubar-dropdown-item" onMouseDown={(e) => handleItemClick(onExpressionPadClick, e)}>
-                                Expression Pad
-                            </button>
-                            <div className="ap-menubar-dropdown-separator"></div>
-                            <button className="ap-menubar-dropdown-item" onMouseDown={(e) => handleItemClick(onPreferencesClick, e)}>
-                                Preferences…
-                            </button>
-                        </div>
-                    )}
-                </div>
-            </div>
-            <div className="ap-menubar-right">
-                {Object.entries(devices).map(([portName, device]) => (
-                    <div key={portName} className="ap-menubar-device">
-                        <span className={`ap-menubar-led ${device.status === 'connected' ? 'connected' : ''}`}></span>
-                        <span className="ap-menubar-device-name">{device.deviceInfo?.name || portName}</span>
+                {menus.map(menu => (
+                    <div key={menu.id} className="ap-menubar-menu" onMouseDown={(e) => e.stopPropagation()}>
+                        <button
+                            className={`ap-menubar-btn${openMenu === menu.id ? ' active' : ''}`}
+                            onMouseDown={(e) => handleMenuClick(menu.id, e)}
+                            onMouseEnter={() => handleMenuHover(menu.id)}
+                        >
+                            {menu.label}
+                        </button>
+                        {openMenu === menu.id && (
+                            <div className="ap-menubar-dropdown">
+                                {menu.items}
+                            </div>
+                        )}
                     </div>
                 ))}
-                {Object.keys(devices).length === 0 && (
-                    <div className="ap-menubar-device">
-                        <span className="ap-menubar-led"></span>
-                        <span className="ap-menubar-device-name">No devices</span>
-                    </div>
-                )}
-                {isLinked && (
-                    <span className="ap-menubar-linked">LINKED</span>
-                )}
+            </div>
+            <div className="ap-menubar-right">
             </div>
         </div>
     );

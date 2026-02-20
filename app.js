@@ -24,6 +24,8 @@ function App() {
     // Device state - indexed by port name
     // { 'Candide MPE': { status, deviceInfo, api, ... }, ... }
     const [devices, setDevices] = useState({});
+    const devicesRef = useRef(devices);
+    devicesRef.current = devices;
 
     // Device APIs - indexed by port name
     const deviceApisRef = useRef({});
@@ -46,8 +48,12 @@ function App() {
     // Ref to track synthPortName for use in callbacks (avoids stale closure)
     const synthPortNameRef = useRef(null);
 
-    // Focused window app name (for menu bar)
-    const [focusedApp, setFocusedApp] = useState(null);
+    // Focused window info (for per-app menu bar)
+    // { id, type: 'apconsole'|'bartleby'|'candide', portName, title }
+    const [focusedWindow, setFocusedWindow] = useState({ id: null, type: 'apconsole', portName: null, title: null });
+
+    // Active config section for Bartleby (driven by menu bar Config dropdown)
+    const [configSection, setConfigSection] = useState('curves');
 
     // Logs
     const [logs, setLogs] = useState([]);
@@ -105,12 +111,20 @@ function App() {
         };
 
         WindowManager.onWindowFocus = (windowId, title) => {
-            // Tool windows are part of APConsole — don't change the app name
             const toolWindows = ['log-window', 'expression-pad', 'sync-window', 'preferences'];
             if (!windowId || toolWindows.includes(windowId)) {
-                setFocusedApp(null);
+                setFocusedWindow({ id: windowId, type: 'apconsole', portName: null, title: null });
+            } else if (windowId.startsWith('device-')) {
+                const portName = windowId.replace('device-', '');
+                // Determine device type from capabilities
+                const device = devicesRef.current[portName];
+                const caps = device?.capabilities || [];
+                const type = caps.includes(CAPABILITIES.CONTROLLER) ? 'bartleby' : 'candide';
+                // Use base device name for menu bar (not the "Name / Section" title bar text)
+                const deviceName = device?.deviceInfo?.name || portName;
+                setFocusedWindow({ id: windowId, type, portName, title: deviceName });
             } else {
-                setFocusedApp(title || null);
+                setFocusedWindow({ id: windowId, type: 'apconsole', portName: null, title: title || null });
             }
         };
 
@@ -578,7 +592,16 @@ function App() {
             if (container && WindowManager.exists(windowId)) {
                 const capabilities = device.capabilities || [];
                 const hasPatch = capabilities.includes(CAPABILITIES.PATCHES);
+                const isController = capabilities.includes(CAPABILITIES.CONTROLLER);
                 const cConfig = controllerPortName ? configByDevice[controllerPortName] : null;
+
+                // Update title bar for controller devices: "Bartleby : Curves"
+                if (isController && configSection) {
+                    const deviceName = device.deviceInfo?.name || portName;
+                    const sectionName = configSection.charAt(0).toUpperCase() + configSection.slice(1);
+                    WindowManager.setTitle(windowId, `${deviceName} / ${sectionName}`);
+                }
+
                 ReactDOM.render(
                     <DeviceAppWindow
                         portName={portName}
@@ -604,13 +627,14 @@ function App() {
                         onSave={() => saveDevice(portName)}
                         api={deviceApisRef.current[portName]}
                         defaultTab={hasPatch ? 'patches' : 'config'}
+                        configSection={configSection}
                     />,
                     container
                 );
             }
         }
     }, [devices, configByDevice, topology, patchList, currentPatchIndex, currentPatch,
-        synthPortName, controllerPortName, addLog]);
+        synthPortName, controllerPortName, addLog, configSection]);
 
     // Re-render Log window when logs or topology change
     useEffect(() => {
@@ -697,13 +721,15 @@ function App() {
 
         WindowManager.create({
             id: windowId,
-            title: deviceName,
+            title: isController ? `${deviceName} / ${configSection.charAt(0).toUpperCase() + configSection.slice(1)}` : deviceName,
             x: saved?.x ?? 100,
             y: saved?.y ?? 30,
             width: saved?.width ?? (hasPatch ? 1280 : 500),
             height: saved?.height ?? (hasPatch ? 800 : 450),
             content: container,
             theme,
+            maxHeight: isController ? 700 : Infinity,
+            resizeDir: isController ? 'vertical' : 'both',
             onClose: () => {
                 delete windowContainersRef.current[windowId];
             }
@@ -811,6 +837,7 @@ function App() {
             height: saved?.height ?? 350,
             content: container,
             theme: 'tool',
+            resizeDir: 'vertical',
             onClose: () => {
                 delete windowContainersRef.current['log-window'];
             }
@@ -894,6 +921,54 @@ function App() {
         container.innerHTML = '<div style="padding: 24px; font-family: Chicago_12; font-size: 16px; color: #808080; text-align: center; margin-top: 60px;">Preferences coming soon.</div>';
     };
 
+    // Open Firmware or Language as a standalone tool window for the focused device
+    const openDeviceToolWindow = (tool) => {
+        const portName = focusedWindow.portName;
+        if (!portName) return;
+        const device = devices[portName];
+        if (!device) return;
+
+        const windowId = `${tool}-${portName}`;
+        if (WindowManager.exists(windowId)) {
+            WindowManager.focus(windowId);
+            return;
+        }
+
+        const deviceName = device.deviceInfo?.name || portName;
+        const container = document.createElement('div');
+        container.style.height = '100%';
+        windowContainersRef.current[windowId] = container;
+
+        const saved = WorkspacePersistence.getWindowState(windowId);
+
+        WindowManager.create({
+            id: windowId,
+            title: `${deviceName} / ${tool.charAt(0).toUpperCase() + tool.slice(1)}`,
+            x: saved?.x ?? 250,
+            y: saved?.y ?? 80,
+            width: saved?.width ?? 360,
+            height: saved?.height ?? (tool === 'firmware' ? 300 : 340),
+            content: container,
+            theme: 'tool',
+            resizable: false,
+            onClose: () => {
+                delete windowContainersRef.current[windowId];
+            }
+        });
+
+        const Component = tool === 'firmware' ? FirmwareWindow : LanguageWindow;
+        ReactDOM.render(
+            <Component
+                device={device}
+                deviceInfo={device.deviceInfo}
+                api={deviceApisRef.current[portName]}
+                onClose={() => WindowManager.close(windowId)}
+                addLog={addLog}
+            />,
+            container
+        );
+    };
+
     //------------------------------------------------------------------
     // RENDER
     //------------------------------------------------------------------
@@ -901,13 +976,14 @@ function App() {
     return (
         <div className="ap-container">
             <MenuBar
-                devices={devices}
-                isLinked={isLinked}
-                focusedApp={focusedApp}
+                focusedWindow={focusedWindow}
+                configSection={configSection}
+                onConfigSection={setConfigSection}
                 onLogClick={() => openLogWindow()}
                 onSyncClick={() => openSyncWindow()}
                 onExpressionPadClick={() => openExpressionPad()}
                 onPreferencesClick={() => openPreferencesWindow()}
+                onOpenDeviceTool={openDeviceToolWindow}
             />
             <Desktop
                 devices={devices}
@@ -1740,20 +1816,14 @@ function LogWindow({ logs, onClear, topology }) {
     return (
         <div className="ap-log-window">
             <div className="ap-log-toolbar">
-                <div className="ap-tabs" style={{ background: 'transparent', padding: 0 }}>
-                    <button
-                        className={`ap-tab ${activeView === 'log' ? 'active' : ''}`}
-                        onClick={() => setActiveView('log')}
-                    >
-                        LOG
-                    </button>
-                    <button
-                        className={`ap-tab ${activeView === 'topo' ? 'active' : ''}`}
-                        onClick={() => setActiveView('topo')}
-                    >
-                        TOPO
-                    </button>
-                </div>
+                <select
+                    className="ap-log-view-select"
+                    value={activeView}
+                    onChange={(e) => setActiveView(e.target.value)}
+                >
+                    <option value="log">Log</option>
+                    <option value="topo">Topology</option>
+                </select>
                 {activeView === 'log' && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <span className="ap-log-count">{logs.length} entries</span>

@@ -1,8 +1,8 @@
 /**
- * Bartleby Config Window - Tabbed configuration interface
+ * Bartleby Config Window
  *
- * Tabs: Curves, Pots, Pedal, Screen
- * Each tab contains its settings section.
+ * Sections: Curves, Dials, Pedal, Screen
+ * Active section driven by menu bar Config dropdown (activeSection prop).
  * Changes auto-save to device via existing debounce behavior.
  */
 
@@ -12,8 +12,8 @@ const { useState, useEffect, useCallback, useRef } = React;
 // BARTLEBY CONFIG WINDOW
 //======================================================================
 
-function BartlebyConfigWindow({ config, saveStatus, deviceInfo, onConfigChange, onSave, midiState }) {
-    const [activeTab, setActiveTab] = useState('curves');
+function BartlebyConfigWindow({ config, saveStatus, deviceInfo, onConfigChange, onSave, midiState, activeSection }) {
+    const section = activeSection || 'curves';
 
     if (!config) {
         return (
@@ -33,26 +33,18 @@ function BartlebyConfigWindow({ config, saveStatus, deviceInfo, onConfigChange, 
                 )}
             </div>
 
-            {/* Tab bar */}
-            <div className="ap-tabs">
-                <TabButton id="curves" label="CURVES" activeTab={activeTab} onClick={setActiveTab} />
-                <TabButton id="pots" label="POTS" activeTab={activeTab} onClick={setActiveTab} />
-                <TabButton id="pedal" label="PEDAL" activeTab={activeTab} onClick={setActiveTab} />
-                <TabButton id="screen" label="SCREEN" activeTab={activeTab} onClick={setActiveTab} />
-            </div>
-
-            {/* Tab content */}
+            {/* Section content — driven by menu bar Config dropdown */}
             <div className="ap-bartleby-content">
-                {activeTab === 'curves' && (
+                {section === 'curves' && (
                     <CurvesTab config={config} onConfigChange={onConfigChange} midiState={midiState} />
                 )}
-                {activeTab === 'pots' && (
+                {section === 'dials' && (
                     <PotsTab config={config} onConfigChange={onConfigChange} />
                 )}
-                {activeTab === 'pedal' && (
+                {section === 'pedal' && (
                     <PedalTab config={config} onConfigChange={onConfigChange} />
                 )}
-                {activeTab === 'screen' && (
+                {section === 'screen' && (
                     <ScreenTab config={config} onConfigChange={onConfigChange} />
                 )}
             </div>
@@ -76,11 +68,7 @@ function TabButton({ id, label, activeTab, onClick }) {
 }
 
 function SaveStatusIndicator({ status, onSave }) {
-    const statusClass = {
-        'saved': 'ap-text-success',
-        'saving': 'ap-text-warning',
-        'unsaved': 'ap-text-danger'
-    }[status] || 'ap-text-success';
+    const statusClass = 'ap-save-status-text';
 
     const statusText = {
         'saved': 'SAVED',
@@ -121,20 +109,17 @@ function CurvesTab({ config, onConfigChange, midiState }) {
             <CurveEditor
                 label="Velocity"
                 curve={keyboard.velocity || { x: 0.5, y: 0.5 }}
-                color="var(--ap-accent-green)"
                 onChange={(axis, value) => handleCurveChange('velocity', axis, value)}
                 midiState={midiState}
             />
             <CurveEditor
                 label="Pressure"
                 curve={keyboard.pressure || { x: 0.5, y: 0.5 }}
-                color="var(--ap-accent-blue)"
                 onChange={(axis, value) => handleCurveChange('pressure', axis, value)}
             />
             <CurveEditor
                 label="Bend"
                 curve={keyboard.bend || { x: 0.5, y: 0.5 }}
-                color="var(--ap-accent-yellow)"
                 onChange={(axis, value) => handleCurveChange('bend', axis, value)}
             />
         </div>
@@ -145,7 +130,7 @@ function CurvesTab({ config, onConfigChange, midiState }) {
 // CURVE EDITOR
 //======================================================================
 
-function CurveEditor({ label, curve, color, onChange, midiState }) {
+function CurveEditor({ label, curve, onChange, midiState }) {
     const canvasRef = useRef(null);
     const [editX, setEditX] = useState(curve.x);
     const [editY, setEditY] = useState(curve.y);
@@ -169,7 +154,6 @@ function CurveEditor({ label, curve, color, onChange, midiState }) {
                     input: data.velocity,
                     timestamp: performance.now()
                 });
-                // Keep last 10
                 if (velocityDotsRef.current.length > 10) {
                     velocityDotsRef.current.shift();
                 }
@@ -180,7 +164,7 @@ function CurveEditor({ label, curve, color, onChange, midiState }) {
         return unsubscribe;
     }, [midiState]);
 
-    // Draw canvas function
+    // Draw canvas — B&W pixel art style
     const drawCanvas = useCallback(() => {
         const canvas = canvasRef.current;
         if (!canvas) return;
@@ -189,14 +173,15 @@ function CurveEditor({ label, curve, color, onChange, midiState }) {
         const w = canvas.width;
         const h = canvas.height;
 
-        // Clear with light background
+        // White background
         ctx.fillStyle = '#ffffff';
         ctx.fillRect(0, 0, w, h);
 
-        // Grid
-        ctx.strokeStyle = '#d0d0d0';
+        // Grid — black dotted lines
+        ctx.strokeStyle = '#000000';
         ctx.lineWidth = 1;
-        for (let i = 0; i <= 4; i++) {
+        ctx.setLineDash([1, 3]);
+        for (let i = 1; i < 4; i++) {
             const x = (w / 4) * i;
             const y = (h / 4) * i;
             ctx.beginPath();
@@ -208,9 +193,11 @@ function CurveEditor({ label, curve, color, onChange, midiState }) {
             ctx.lineTo(w, y);
             ctx.stroke();
         }
+        ctx.setLineDash([]);
 
-        // Linear reference
-        ctx.strokeStyle = '#c0c0c0';
+        // Linear reference — black dashed
+        ctx.strokeStyle = '#808080';
+        ctx.lineWidth = 1;
         ctx.setLineDash([4, 4]);
         ctx.beginPath();
         ctx.moveTo(0, h);
@@ -218,9 +205,9 @@ function CurveEditor({ label, curve, color, onChange, midiState }) {
         ctx.stroke();
         ctx.setLineDash([]);
 
-        // Bezier curve
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 3;
+        // Bezier curve — black
+        ctx.strokeStyle = '#000000';
+        ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.moveTo(0, h);
         const cpX = editX * w;
@@ -228,37 +215,36 @@ function CurveEditor({ label, curve, color, onChange, midiState }) {
         ctx.quadraticCurveTo(cpX, cpY, w, 0);
         ctx.stroke();
 
-        // Control point
-        ctx.fillStyle = color;
+        // Control point — black filled
+        ctx.fillStyle = '#000000';
         ctx.beginPath();
-        ctx.arc(cpX, cpY, 6, 0, Math.PI * 2);
+        ctx.arc(cpX, cpY, 5, 0, Math.PI * 2);
         ctx.fill();
 
-        // Velocity dots (fade trail)
+        // Velocity dots — fade via size (not alpha)
         const now = performance.now();
         const DOT_LIFETIME = 2000;
         velocityDotsRef.current = velocityDotsRef.current.filter(dot => now - dot.timestamp < DOT_LIFETIME);
 
         for (const dot of velocityDotsRef.current) {
             const age = now - dot.timestamp;
-            const alpha = 1 - age / DOT_LIFETIME;
+            const sizeFactor = 1 - age / DOT_LIFETIME;
+            const radius = Math.max(1, 4 * sizeFactor);
             const outputY = evaluateQuadraticBezierY(dot.input, editX, editY);
             const dotX = dot.input * w;
             const dotY = h - outputY * h;
 
-            ctx.globalAlpha = alpha;
             ctx.fillStyle = '#000000';
             ctx.beginPath();
-            ctx.arc(dotX, dotY, 4, 0, Math.PI * 2);
+            ctx.arc(dotX, dotY, radius, 0, Math.PI * 2);
             ctx.fill();
-            ctx.globalAlpha = 1;
         }
 
-        // Border
-        ctx.strokeStyle = '#808080';
+        // Border — black
+        ctx.strokeStyle = '#000000';
         ctx.lineWidth = 2;
         ctx.strokeRect(0, 0, w, h);
-    }, [editX, editY, color]);
+    }, [editX, editY]);
 
     // Draw on state changes
     useEffect(() => {
@@ -290,41 +276,39 @@ function CurveEditor({ label, curve, color, onChange, midiState }) {
 
     return (
         <div className="ap-curve-editor">
-            <div className="ap-curve-header">
-                <span className="ap-curve-label" style={{ color }}>{label}</span>
-            </div>
-            <canvas ref={canvasRef} width="180" height="80" className="ap-curve-canvas" />
-            <div className="ap-curve-sliders">
-                <div className="ap-curve-slider">
-                    <span>X</span>
-                    <input
-                        type="range"
-                        className="ap-slider"
-                        min="0.01"
-                        max="0.99"
-                        step="0.01"
-                        value={editX}
-                        onChange={(e) => setEditX(parseFloat(e.target.value))}
-                        onMouseUp={(e) => handleCommit('x', parseFloat(e.target.value))}
-                        onTouchEnd={() => handleCommit('x', editX)}
-                    />
-                    <span className="ap-curve-value">{editX.toFixed(2)}</span>
+            <div className="ap-curve-label">{label}</div>
+            <div className="ap-curve-body">
+                <div className="ap-curve-sliders">
+                    <div className="ap-curve-slider">
+                        <span className="ap-curve-slider-label">Shape</span>
+                        <input
+                            type="range"
+                            min="0.01"
+                            max="0.99"
+                            step="0.01"
+                            value={editX}
+                            onChange={(e) => setEditX(parseFloat(e.target.value))}
+                            onMouseUp={(e) => handleCommit('x', parseFloat(e.target.value))}
+                            onTouchEnd={() => handleCommit('x', editX)}
+                        />
+                        <span className="ap-curve-value">{editX.toFixed(2)}</span>
+                    </div>
+                    <div className="ap-curve-slider">
+                        <span className="ap-curve-slider-label">Response</span>
+                        <input
+                            type="range"
+                            min="0.01"
+                            max="0.99"
+                            step="0.01"
+                            value={editY}
+                            onChange={(e) => setEditY(parseFloat(e.target.value))}
+                            onMouseUp={(e) => handleCommit('y', parseFloat(e.target.value))}
+                            onTouchEnd={() => handleCommit('y', editY)}
+                        />
+                        <span className="ap-curve-value">{editY.toFixed(2)}</span>
+                    </div>
                 </div>
-                <div className="ap-curve-slider">
-                    <span>Y</span>
-                    <input
-                        type="range"
-                        className="ap-slider"
-                        min="0.01"
-                        max="0.99"
-                        step="0.01"
-                        value={editY}
-                        onChange={(e) => setEditY(parseFloat(e.target.value))}
-                        onMouseUp={(e) => handleCommit('y', parseFloat(e.target.value))}
-                        onTouchEnd={() => handleCommit('y', editY)}
-                    />
-                    <span className="ap-curve-value">{editY.toFixed(2)}</span>
-                </div>
+                <canvas ref={canvasRef} width="180" height="150" className="ap-curve-canvas" />
             </div>
         </div>
     );

@@ -1,0 +1,9 @@
+<svg width="18" height="30" viewBox="0 0 18 30" fill="none" xmlns="http://www.w3.org/2000/svg">
+<!-- System 6 slider handle: two-piece cross, 2px borders -->
+<!-- Behind: wider bar, 1px corner notch, 2px black border, white fill -->
+<polygon points="1,2 17,2 17,3 18,3 18,27 17,27 17,28 1,28 1,27 0,27 0,3 1,3" fill="black"/>
+<rect x="2" y="4" width="14" height="22" fill="white"/>
+<!-- Front: narrower taller knob, 2px black border, white fill -->
+<rect x="4" y="1" width="10" height="28" fill="black"/>
+<rect x="6" y="3" width="6" height="24" fill="white"/>
+</svg>

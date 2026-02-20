@@ -43,7 +43,12 @@ const WindowManager = {
             content = '',
             onClose = null,
             theme = null,
-            resizable = true
+            resizable = true,
+            resizeDir = 'both',  // 'both', 'vertical', 'horizontal'
+            minWidth = 250,
+            minHeight = 150,
+            maxWidth = Infinity,
+            maxHeight = Infinity
         } = options;
 
         // Don't create duplicate windows
@@ -54,12 +59,18 @@ const WindowManager = {
 
         // Create window structure
         const win = document.createElement('div');
-        win.className = `ap-window${resizable ? ' ap-window-resizable' : ''}`;
+        let cls = 'ap-window';
+        if (resizable) {
+            cls += ' ap-window-resizable';
+            if (resizeDir === 'vertical') cls += ' ap-window-resize-v';
+            else if (resizeDir === 'horizontal') cls += ' ap-window-resize-h';
+        }
+        win.className = cls;
         win.id = `window-${id}`;
         win.style.left = `${x}px`;
         win.style.top = `${y}px`;
-        win.style.width = `${width}px`;
-        win.style.height = `${height}px`;
+        win.style.width = `${Math.min(maxWidth, Math.max(minWidth, width))}px`;
+        win.style.height = `${Math.min(maxHeight, Math.max(minHeight, height))}px`;
         win.style.zIndex = this.nextZIndex++;
         if (theme) win.dataset.theme = theme;
 
@@ -119,12 +130,13 @@ const WindowManager = {
             element: win,
             titleBar,
             contentArea,
-            onClose
+            onClose,
+            constraints: { minWidth, minHeight, maxWidth, maxHeight }
         });
 
         // Setup interactions
         this._setupDrag(id, win, titleBar);
-        this._setupResize(id, win, resizeHandle);
+        this._setupResize(id, win, resizeHandle, resizeDir);
         this._setupFocus(id, win);
 
         this.focus(id);
@@ -209,6 +221,26 @@ const WindowManager = {
         if (titleEl) titleEl.textContent = title;
     },
 
+    /**
+     * Update resize constraints for a window
+     * @param {string} id - Window ID
+     * @param {Object} constraints - { minWidth, minHeight, maxWidth, maxHeight }
+     */
+    setConstraints(id, constraints) {
+        const windowInfo = this.windows.get(id);
+        if (!windowInfo) return;
+        Object.assign(windowInfo.constraints, constraints);
+        // Clamp current size to new constraints
+        const win = windowInfo.element;
+        const w = win.offsetWidth;
+        const h = win.offsetHeight;
+        const c = windowInfo.constraints;
+        const newW = Math.min(c.maxWidth || Infinity, Math.max(c.minWidth || 250, w));
+        const newH = Math.min(c.maxHeight || Infinity, Math.max(c.minHeight || 150, h));
+        if (newW !== w) win.style.width = `${newW}px`;
+        if (newH !== h) win.style.height = `${newH}px`;
+    },
+
     // Private: setup drag behavior
     _setupDrag(id, win, titleBar) {
         let isDragging = false;
@@ -250,7 +282,7 @@ const WindowManager = {
     },
 
     // Private: setup resize behavior
-    _setupResize(id, win, handle) {
+    _setupResize(id, win, handle, resizeDir = 'both') {
         let isResizing = false;
         let startX, startY, startWidth, startHeight;
 
@@ -267,13 +299,17 @@ const WindowManager = {
 
         document.addEventListener('mousemove', (e) => {
             if (!isResizing) return;
+            const c = this.windows.get(id)?.constraints || {};
             const dx = e.clientX - startX;
             const dy = e.clientY - startY;
-            const newWidth = Math.max(250, startWidth + dx);
-            const newHeight = Math.max(150, startHeight + dy);
-            win.style.width = `${newWidth}px`;
-            win.style.height = `${newHeight}px`;
-
+            if (resizeDir !== 'vertical') {
+                const w = Math.min(c.maxWidth || Infinity, Math.max(c.minWidth || 250, startWidth + dx));
+                win.style.width = `${w}px`;
+            }
+            if (resizeDir !== 'horizontal') {
+                const h = Math.min(c.maxHeight || Infinity, Math.max(c.minHeight || 150, startHeight + dy));
+                win.style.height = `${h}px`;
+            }
         });
 
         document.addEventListener('mouseup', () => {

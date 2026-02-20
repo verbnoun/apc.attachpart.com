@@ -109,6 +109,7 @@ html {
 }
 
 html, body {
+    margin: 0;
     height: 100vh;
     overflow: hidden;
     color: #000;
@@ -277,23 +278,50 @@ html, body {
     background: #ffffff;
 }
 
-.ap-window-content:has(.ap-device-app),
-.ap-window-content:has(.ap-log-window) {
+/* Resizable windows: always show scrollbar tracks (System 7 behavior) */
+.ap-window-resizable .ap-window-content {
+    overflow: scroll;
+}
+
+/* Full-height app layouts: outer hidden, inner element handles scrolling */
+.ap-window-resizable .ap-window-content:has(.ap-device-app),
+.ap-window-resizable .ap-window-content:has(.ap-log-window) {
     padding: 0;
     overflow: hidden;
 }
 
-/* Grow box — System 6 size box (two overlapping rectangles) */
+/* Horizontal scrollbar: match arrow SVG dimensions (24x23px) */
+::-webkit-scrollbar:horizontal {
+    height: 23px;
+}
+
+/* system.css uses height for horizontal button size — need width instead */
+::-webkit-scrollbar-button:horizontal:start,
+::-webkit-scrollbar-button:horizontal:end {
+    width: 24px;
+}
+
+/* Show grow box SVG in the scrollbar corner (where tracks intersect) */
+.ap-window-resizable ::-webkit-scrollbar-corner {
+    background: url("vendor/system.css/icon/grow-box.svg") no-repeat center;
+    background-size: 22px 22px;
+    background-color: #ffffff;
+}
+
+/* Grow box — resize drag handle, always shows SVG */
+/* Custom B&W cursors to avoid macOS semi-transparent resize arrows */
 .ap-window-resize {
     position: absolute;
     bottom: 0;
     right: 0;
     width: 22px;
     height: 22px;
-    cursor: se-resize;
+    cursor: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><polygon points="11,6 15,10 15,6" fill="black"/><polygon points="6,11 10,15 6,15" fill="black"/><line x1="6" y1="15" x2="15" y2="6" stroke="black" stroke-width="1.5"/></svg>') 8 8, se-resize;
     background: url("vendor/system.css/icon/grow-box.svg") no-repeat center;
     background-size: 22px 22px;
+    background-color: #ffffff;
     display: none;
+    z-index: 2;
 }
 
 /* Only show grow box on resizable windows */
@@ -301,9 +329,32 @@ html, body {
     display: block;
 }
 
-/* Reserve space at bottom for grow box so scrollbar ends above it */
-.ap-window-resizable .ap-window-content {
-    margin-bottom: 22px;
+/* Vertical-only resize: custom B&W up/down cursor */
+.ap-window-resize-v .ap-window-resize {
+    cursor: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="10" height="16"><polygon points="5,0 1,5 9,5" fill="black"/><polygon points="5,16 1,11 9,11" fill="black"/><rect x="4" y="5" width="2" height="6" fill="black"/></svg>') 5 8, s-resize;
+}
+
+.ap-window-resize-v .ap-window-content {
+    overflow-y: scroll;
+    overflow-x: hidden;
+}
+
+/* Inner scroll containers in vertical-only windows: no horizontal scrollbar */
+.ap-window-resize-v .ap-log-text,
+.ap-window-resize-v .ap-log-scroll,
+.ap-window-resize-v .ap-bartleby-content {
+    overflow-y: scroll;
+    overflow-x: hidden;
+}
+
+/* Horizontal-only resize: custom B&W left/right cursor */
+.ap-window-resize-h .ap-window-resize {
+    cursor: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="16" height="10"><polygon points="0,5 5,1 5,9" fill="black"/><polygon points="16,5 11,1 11,9" fill="black"/><rect x="5" y="4" width="6" height="2" fill="black"/></svg>') 8 5, e-resize;
+}
+
+.ap-window-resize-h .ap-window-content {
+    overflow-x: scroll;
+    overflow-y: hidden;
 }
 
 /* ============================================================
@@ -385,6 +436,7 @@ html, body {
 .ap-menubar-dropdown-item {
     display: block;
     width: 100%;
+    position: relative;
     font-family: Chicago_12;
     font-size: 1em;
     background: transparent;
@@ -399,6 +451,12 @@ html, body {
 .ap-menubar-dropdown-item:hover {
     background: #000000;
     color: #ffffff;
+}
+
+.ap-menubar-dropdown-item.checked::before {
+    content: "✓";
+    position: absolute;
+    left: 4px;
 }
 
 .ap-menubar-dropdown-separator {
@@ -576,25 +634,29 @@ html, body {
 }
 
 .ap-menubar-led {
-    width: 6px;
-    height: 6px;
-    background: #808080;
+    width: 8px;
+    height: 8px;
+    background: #ffffff;
+    border: 1.5px solid #000000;
 }
 
 .ap-menubar-led.connected {
-    background: var(--ap-accent-green);
-    box-shadow: 0 0 4px var(--ap-accent-green);
+    background: #000000;
 }
 
 .ap-menubar-device-name {
-    font-size: var(--ap-font-size-xs);
-    color: #555555;
+    font-family: Chicago_12;
+    font-size: 1em;
+    color: #000000;
 }
 
 .ap-menubar-linked {
-    font-size: var(--ap-font-size-xs);
-    color: var(--ap-accent-yellow);
+    font-family: Chicago_12;
+    font-size: 1em;
+    color: #000000;
     font-weight: bold;
+    border: 1.5px solid #000000;
+    padding: 0 6px;
 }
 
 /* ============================================================
@@ -705,7 +767,7 @@ html, body {
 
 .ap-device-app-content {
     flex: 1;
-    overflow: auto;
+    overflow: hidden;
     background: var(--ap-bg-primary);
 }
 
@@ -717,12 +779,11 @@ html, body {
 /* Override bartleby config header margin when embedded as tab */
 .ap-device-app-content .ap-bartleby-header {
     margin: 0;
-    margin-bottom: var(--ap-spacing-sm);
 }
 
-/* Override window content padding for device app (tabs manage own padding) */
+/* Override window content padding for device app — no padding on scroll container */
 .ap-device-app-content .ap-bartleby-config {
-    padding: var(--ap-spacing-md);
+    padding: 0;
 }
 
 .ap-device-app-content .ap-firmware-window {
@@ -856,28 +917,33 @@ html, body {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: var(--ap-spacing-sm);
-    background: var(--ap-bg-tertiary);
-    margin: calc(-1 * var(--ap-spacing-md));
-    margin-bottom: var(--ap-spacing-sm);
+    padding: 4px 8px;
+    background: #ffffff;
+    border-bottom: 1.5px solid #000000;
+    flex-shrink: 0;
 }
 
 .ap-bartleby-version {
-    font-size: var(--ap-font-size-xs);
-    color: var(--ap-text-muted);
+    font-family: Monaco, monospace;
+    font-size: 12px;
+    color: #808080;
 }
 
 .ap-save-status {
     display: flex;
     align-items: center;
-    gap: var(--ap-spacing-sm);
-    font-size: var(--ap-font-size-xs);
+    gap: 8px;
+    font-family: Chicago_12;
+    font-size: 12px;
+}
+
+.ap-save-status-text {
+    color: #000000;
 }
 
 .ap-bartleby-content {
     flex: 1;
-    overflow: auto;
-    padding-top: var(--ap-spacing-sm);
+    overflow: scroll;
 }
 
 .ap-bartleby-loading {
@@ -892,50 +958,132 @@ html, body {
 .ap-curves-tab {
     display: flex;
     flex-direction: column;
-    gap: var(--ap-spacing-md);
+    gap: 10px;
+    padding: 10px;
 }
 
 .ap-curve-editor {
-    background: var(--ap-bg-secondary);
-    padding: var(--ap-spacing-sm);
-    border: 2px solid var(--ap-bg-tertiary);
-}
-
-.ap-curve-header {
-    margin-bottom: var(--ap-spacing-xs);
+    background: #ffffff;
+    padding: 10px 12px;
+    border: 2px solid #000000;
 }
 
 .ap-curve-label {
-    font-size: var(--ap-font-size-sm);
-    font-weight: bold;
+    font-family: Chicago_12;
+    font-size: 18px;
+    color: #000000;
+    margin-bottom: 8px;
+}
+
+.ap-curve-body {
+    display: flex;
+    flex-direction: row;
+    gap: 12px;
+    align-items: center;
 }
 
 .ap-curve-canvas {
     display: block;
-    margin-bottom: var(--ap-spacing-sm);
+    flex-shrink: 0;
 }
 
 .ap-curve-sliders {
     display: flex;
     flex-direction: column;
-    gap: var(--ap-spacing-xs);
+    gap: 12px;
+    flex: 1;
+    min-width: 0;
 }
 
 .ap-curve-slider {
     display: flex;
     align-items: center;
-    gap: var(--ap-spacing-sm);
-    font-size: var(--ap-font-size-xs);
+    gap: 8px;
 }
 
-.ap-curve-slider input[type="range"] {
-    flex: 1;
+.ap-curve-slider-label {
+    font-family: Chicago_12;
+    font-size: 14px;
+    color: #000000;
+    width: 70px;
+    flex-shrink: 0;
 }
 
 .ap-curve-value {
+    font-family: Monaco, monospace;
+    font-size: 14px;
     width: 36px;
     text-align: right;
-    color: var(--ap-text-secondary);
+    color: #000000;
+    flex-shrink: 0;
+}
+
+/* System 7 range sliders — SVG border-image technique (matches system.css buttons) */
+.ap-curve-slider input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    flex: 1;
+    min-width: 80px;
+    height: 24px;
+    background: transparent;
+    border: none !important;
+    border-image: none !important;
+    padding: 0;
+    margin: 0;
+    cursor: pointer;
+}
+
+.ap-curve-slider input[type="range"]::-webkit-slider-runnable-track {
+    height: 20px;
+    border-style: solid;
+    border-width: 4px;
+    border-image: url("vendor/system.css/icon/slider-track.svg") 4 stretch;
+    /* Dithered checkerboard fill — same technique as system.css scrollbar tracks */
+    background: linear-gradient(45deg, #000000 25%, transparent 25%, transparent 75%, #000000 75%, #000000), linear-gradient(45deg, #000000 25%, transparent 25%, transparent 75%, #000000 75%, #000000);
+    background-color: #ffffff;
+    background-size: 4px 4px;
+    background-position: 0 0, 2px 2px;
+}
+
+.ap-curve-slider input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px;
+    height: 30px;
+    border: none;
+    background: url("vendor/system.css/icon/slider-thumb.svg") no-repeat center;
+    background-size: 18px 30px;
+    margin-top: -9px;
+    cursor: pointer;
+}
+
+.ap-curve-slider input[type="range"]:active::-webkit-slider-thumb {
+    background-image: url("vendor/system.css/icon/slider-thumb-active.svg");
+}
+
+.ap-curve-slider input[type="range"]::-moz-range-track {
+    height: 20px;
+    border-style: solid;
+    border-width: 4px;
+    border-image: url("vendor/system.css/icon/slider-track.svg") 4 stretch;
+    background: linear-gradient(45deg, #000000 25%, transparent 25%, transparent 75%, #000000 75%, #000000), linear-gradient(45deg, #000000 25%, transparent 25%, transparent 75%, #000000 75%, #000000);
+    background-color: #ffffff;
+    background-size: 4px 4px;
+    background-position: 0 0, 2px 2px;
+}
+
+.ap-curve-slider input[type="range"]::-moz-range-thumb {
+    width: 18px;
+    height: 30px;
+    border: none;
+    border-radius: 0;
+    background: url("vendor/system.css/icon/slider-thumb.svg") no-repeat center;
+    background-size: 18px 30px;
+    cursor: pointer;
+}
+
+.ap-curve-slider input[type="range"]:active::-moz-range-thumb {
+    background-image: url("vendor/system.css/icon/slider-thumb-active.svg");
 }
 
 /* Pots Tab */
@@ -2097,6 +2245,17 @@ html, body {
     border-bottom: 1.5px solid #000000;
 }
 
+/* Log view selector dropdown */
+.ap-log-view-select {
+    font-family: Chicago_12;
+    font-size: 14px;
+    padding: 2px 4px;
+    background: #ffffff;
+    color: #000000;
+    border: 1.5px solid #000000;
+    cursor: pointer;
+}
+
 .ap-log-count {
     font-size: 14px;
     color: var(--ap-text-muted);
@@ -2104,7 +2263,7 @@ html, body {
 
 .ap-log-scroll {
     flex: 1;
-    overflow-y: auto;
+    overflow: scroll;
     background: var(--ap-bg-primary);
     padding: var(--ap-spacing-xs);
 }
@@ -2165,7 +2324,7 @@ html, body {
     font-family: Monaco, monospace;
     font-size: 16px;
     line-height: 1.4;
-    overflow-y: auto;
+    overflow: scroll;
     white-space: pre-wrap;
     word-break: break-word;
 }
