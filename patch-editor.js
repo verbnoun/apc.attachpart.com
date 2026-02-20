@@ -1266,7 +1266,7 @@ function NodeWorkspace({
         if (!el) return;
         el.addEventListener('wheel', handleWheel, { passive: false });
         return () => el.removeEventListener('wheel', handleWheel);
-    }, [handleWheel]);
+    }, [handleWheel, !!currentPatch]);
 
     // Background drag-to-pan
     const handlePanStart = (e) => {
@@ -1477,6 +1477,7 @@ function NodeWorkspace({
         <div
             className={`ap-node-workspace ${wiringFrom ? 'wiring' : ''} ${isDragOver ? 'drag-over' : ''} ${isPanning ? 'panning' : ''}`}
             ref={workspaceRef}
+            style={{ backgroundPosition: `${panOffset.x}px ${panOffset.y}px` }}
             onMouseDown={handlePanStart}
             onMouseMove={handleWorkspaceMouseMove}
             onClick={handleWorkspaceClick}
