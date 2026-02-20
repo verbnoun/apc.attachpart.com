@@ -1157,6 +1157,18 @@ html, body {
     outline-offset: -4px;
 }
 
+.ap-node-workspace.panning {
+    cursor: grabbing;
+}
+
+.ap-pan-container {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+}
+
 .ap-workspace-empty {
     display: flex;
     align-items: center;
@@ -1169,9 +1181,8 @@ html, body {
     position: absolute;
     top: 0;
     left: 0;
-    width: 100%;
-    height: 100%;
     pointer-events: none;
+    overflow: visible;
 }
 
 /* Allow clicking on mod wires for selection */

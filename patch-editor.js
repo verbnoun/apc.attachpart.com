@@ -1110,6 +1110,13 @@ function NodeWorkspace({
     const [hoverTarget, setHoverTarget] = useState(null); // { module, param }
     const [isDragOver, setIsDragOver] = useState(false);
 
+    // Pan state
+    const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
+    const [isPanning, setIsPanning] = useState(false);
+    const panStartRef = useRef({ x: 0, y: 0 });
+    const panStartOffsetRef = useRef({ x: 0, y: 0 });
+    const panContainerRef = useRef(null);
+
     // Port position registry - tracks actual DOM positions of all ports
     // Use ref to collect positions without triggering re-renders
     const portPositionsRef = useRef({});
@@ -1124,8 +1131,8 @@ function NodeWorkspace({
 
         // Store in ref (no re-render)
         const newPos = {
-            x: globalPos.x - wsRect.left,
-            y: globalPos.y - wsRect.top
+            x: globalPos.x - wsRect.left - panOffset.x,
+            y: globalPos.y - wsRect.top - panOffset.y
         };
 
         // Only update if position actually changed
@@ -1143,7 +1150,7 @@ function NodeWorkspace({
         positionUpdateTimeoutRef.current = setTimeout(() => {
             setPortPositions({ ...portPositionsRef.current });
         }, 10);
-    }, []);
+    }, [panOffset]);
 
     // Cleanup timeout on unmount
     useEffect(() => {
@@ -1223,8 +1230,8 @@ function NodeWorkspace({
         if (!draggingNode || !workspaceRef.current) return;
 
         const rect = workspaceRef.current.getBoundingClientRect();
-        const newX = e.clientX - rect.left - dragOffset.x;
-        const newY = e.clientY - rect.top - dragOffset.y;
+        const newX = e.clientX - rect.left - dragOffset.x - panOffset.x;
+        const newY = e.clientY - rect.top - dragOffset.y - panOffset.y;
 
         onNodePositionChange(draggingNode, { x: Math.max(0, newX), y: Math.max(0, newY) });
     };
@@ -1243,6 +1250,58 @@ function NodeWorkspace({
             };
         }
     }, [draggingNode, dragOffset]);
+
+    // Wheel handler — 2-finger scroll pans workspace
+    const handleWheel = useCallback((e) => {
+        e.preventDefault();
+        setPanOffset(prev => ({
+            x: prev.x - e.deltaX,
+            y: prev.y - e.deltaY
+        }));
+    }, []);
+
+    // Attach wheel with passive:false (React onWheel is passive by default)
+    useEffect(() => {
+        const el = workspaceRef.current;
+        if (!el) return;
+        el.addEventListener('wheel', handleWheel, { passive: false });
+        return () => el.removeEventListener('wheel', handleWheel);
+    }, [handleWheel]);
+
+    // Background drag-to-pan
+    const handlePanStart = (e) => {
+        if (e.button !== 0) return;
+        // Only pan when clicking empty workspace or the pan container
+        if (e.target !== workspaceRef.current && e.target !== panContainerRef.current) return;
+        setIsPanning(true);
+        panStartRef.current = { x: e.clientX, y: e.clientY };
+        panStartOffsetRef.current = { ...panOffset };
+    };
+
+    const handlePanMove = useCallback((e) => {
+        if (!isPanning) return;
+        const dx = e.clientX - panStartRef.current.x;
+        const dy = e.clientY - panStartRef.current.y;
+        setPanOffset({
+            x: panStartOffsetRef.current.x + dx,
+            y: panStartOffsetRef.current.y + dy
+        });
+    }, [isPanning]);
+
+    const handlePanEnd = useCallback(() => {
+        setIsPanning(false);
+    }, []);
+
+    useEffect(() => {
+        if (isPanning) {
+            document.addEventListener('mousemove', handlePanMove);
+            document.addEventListener('mouseup', handlePanEnd);
+            return () => {
+                document.removeEventListener('mousemove', handlePanMove);
+                document.removeEventListener('mouseup', handlePanEnd);
+            };
+        }
+    }, [isPanning, handlePanMove, handlePanEnd]);
 
     // Build audio wires with proper parallel routing
     // OSCs -> Filter (parallel), Filter -> Amp, Amp -> Effects (chain)
@@ -1288,7 +1347,7 @@ function NodeWorkspace({
     const handleWorkspaceMouseMove = (e) => {
         if (wiringFrom && workspaceRef.current) {
             const rect = workspaceRef.current.getBoundingClientRect();
-            onWiringMouseMove({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+            onWiringMouseMove({ x: e.clientX - rect.left - panOffset.x, y: e.clientY - rect.top - panOffset.y });
         }
     };
 
@@ -1318,8 +1377,8 @@ function NodeWorkspace({
         if (!rect) return;
 
         const dropPosition = {
-            x: e.clientX - rect.left - 50,  // Center the node
-            y: e.clientY - rect.top - 15
+            x: e.clientX - rect.left - 50 - panOffset.x,  // Center the node
+            y: e.clientY - rect.top - 15 - panOffset.y
         };
 
         log('Module Dropped', { moduleId, position: dropPosition });
@@ -1345,8 +1404,8 @@ function NodeWorkspace({
 
     // Handle workspace click to clear selection or cancel pending module
     const handleWorkspaceClick = (e) => {
-        // Only handle clicks directly on the workspace, not on nodes
-        if (e.target !== workspaceRef.current) return;
+        // Only handle clicks directly on the workspace or pan container, not on nodes
+        if (e.target !== workspaceRef.current && e.target !== panContainerRef.current) return;
 
         // If we have a pending module, just clear it (no API call needed)
         if (pendingModule) {
@@ -1416,16 +1475,22 @@ function NodeWorkspace({
 
     return (
         <div
-            className={`ap-node-workspace ${wiringFrom ? 'wiring' : ''} ${isDragOver ? 'drag-over' : ''}`}
+            className={`ap-node-workspace ${wiringFrom ? 'wiring' : ''} ${isDragOver ? 'drag-over' : ''} ${isPanning ? 'panning' : ''}`}
             ref={workspaceRef}
+            onMouseDown={handlePanStart}
             onMouseMove={handleWorkspaceMouseMove}
             onClick={handleWorkspaceClick}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
         >
+            <div
+                className="ap-pan-container"
+                ref={panContainerRef}
+                style={{ transform: `translate(${panOffset.x}px, ${panOffset.y}px)` }}
+            >
             {/* SVG layer for wires */}
-            <svg className="ap-wires-layer">
+            <svg className="ap-wires-layer" width="10000" height="10000">
                 {/* Audio wires */}
                 {audioWires.map((wire, i) => (
                     <Wire
@@ -1586,6 +1651,7 @@ function NodeWorkspace({
                     />
                 );
             })()}
+            </div>
         </div>
     );
 }
