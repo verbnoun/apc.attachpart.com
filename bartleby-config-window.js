@@ -28,7 +28,7 @@ function ConfigSectionWindow({ config, onConfigChange, midiState, section }) {
                     <CurvesTab config={config} onConfigChange={onConfigChange} midiState={midiState} />
                 )}
                 {section === 'dials' && (
-                    <PotsTab config={config} onConfigChange={onConfigChange} />
+                    <DialsPanel config={config} onConfigChange={onConfigChange} />
                 )}
                 {section === 'pedal' && (
                     <PedalTab config={config} onConfigChange={onConfigChange} />
@@ -270,91 +270,91 @@ function CurveEditor({ label, curve, onChange, midiState }) {
 }
 
 //======================================================================
-// POTS TAB
+// DIALS PANEL — Hardware layout representation
 //======================================================================
 
-function PotsTab({ config, onConfigChange }) {
+// Display-to-pot mapping matching firmware (pot_registry.cpp DISPLAY_POT_MAP)
+// Each display has 4 pots in corner positions: [TL, TR, BL, BR]
+const DISPLAY_POT_MAP = [
+    { display: 1, pots: [15, 14, 0, 1] },
+    { display: 2, pots: [13, 12, 2, 3] },
+    { display: 3, pots: [11, 10, 4, 5] },
+    { display: 4, pots: [9, 8, 6, 7] }
+];
+
+function DialsPanel({ config, onConfigChange }) {
     const pots = config.pots || [];
 
-    const handlePotChange = (index, field, value) => {
-        const newPots = [...pots];
-        newPots[index] = { ...newPots[index], [field]: value };
-        onConfigChange({ pots: newPots });
-    };
-
     return (
-        <div className="ap-pots-tab">
-            <div className="ap-pots-grid">
+        <div className="ap-dials-panel">
+            <OledPanel type="status" />
+            {DISPLAY_POT_MAP.map(group => (
+                <PotGroup key={group.display} group={group} pots={pots} />
+            ))}
+        </div>
+    );
+}
+
+function OledPanel({ type, pots }) {
+    if (type === 'status') {
+        return (
+            <div className="ap-oled-panel ap-oled-status">
+                <span className="ap-oled-title">BARTLEBY</span>
+                <span className="ap-oled-line">OCT: 0</span>
+                <span className="ap-oled-line">SUSTAIN: OFF</span>
+            </div>
+        );
+    }
+
+    // Control OLED — 4 corners showing pot labels + bar placeholders
+    // pots = [{ label, cc, active, potId }, ...] in TL, TR, BL, BR order
+    return (
+        <div className="ap-oled-panel ap-oled-control">
+            <div className="ap-oled-grid">
                 {pots.map((pot, i) => (
-                    <PotCard
-                        key={i}
-                        index={i}
-                        pot={pot}
-                        onChange={(field, value) => handlePotChange(i, field, value)}
-                    />
+                    <div key={i} className={`ap-oled-corner ${!pot.active ? 'inactive' : ''}`}>
+                        <span className="ap-oled-label">{pot.label || `CC ${pot.cc}`}</span>
+                        <div className="ap-oled-bar">
+                            <div className="ap-oled-bar-fill" />
+                        </div>
+                    </div>
                 ))}
             </div>
         </div>
     );
 }
 
-function PotCard({ index, pot, onChange }) {
-    const isActive = pot.active;
-
-    // Local editing state — commit on blur/enter (not every keystroke)
-    const [editLabel, setEditLabel] = useState(pot.label || '');
-    const [editCC, setEditCC] = useState(pot.cc);
-
-    // Sync local state when device config changes (re-read from device)
-    useEffect(() => { setEditLabel(pot.label || ''); }, [pot.label]);
-    useEffect(() => { setEditCC(pot.cc); }, [pot.cc]);
-
-    const commitLabel = () => {
-        if (editLabel !== (pot.label || '')) {
-            onChange('label', editLabel);
-        }
-    };
-
-    const commitCC = () => {
-        const val = parseInt(editCC) || 0;
-        if (val !== pot.cc) {
-            onChange('cc', val);
-        }
-    };
+function PotGroup({ group, pots }) {
+    const groupPots = group.pots.map(id => ({
+        ...pots[id],
+        potId: id
+    }));
 
     return (
-        <div className={`ap-pot-card ${!isActive ? 'inactive' : ''}`}>
-            <div className="ap-pot-header">
-                <span className="ap-pot-index">#{index}</span>
-                <input
-                    type="checkbox"
-                    checked={isActive}
-                    onChange={(e) => onChange('active', e.target.checked)}
-                />
-            </div>
-            <input
-                type="text"
-                className="ap-input ap-pot-label"
-                value={editLabel}
-                maxLength={11}
-                placeholder="Label"
-                onChange={(e) => setEditLabel(e.target.value)}
-                onBlur={commitLabel}
-                onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
-            />
-            <div className="ap-pot-cc">
-                <span>CC:</span>
-                <input
-                    type="number"
-                    className="ap-input ap-pot-cc-input"
-                    min="0"
-                    max="127"
-                    value={editCC}
-                    onChange={(e) => setEditCC(e.target.value)}
-                    onBlur={commitCC}
-                    onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
-                />
-            </div>
+        <div className="ap-pot-group">
+            <OledPanel type="control" pots={groupPots} />
+            <PotCluster pots={groupPots} />
+        </div>
+    );
+}
+
+function PotCluster({ pots }) {
+    // pots in TL, TR, BL, BR order — maps to 2x2 grid naturally
+    return (
+        <div className="ap-pot-cluster">
+            {pots.map(pot => (
+                <PotKnob key={pot.potId} pot={pot} />
+            ))}
+        </div>
+    );
+}
+
+function PotKnob({ pot }) {
+    const label = pot.label || `CC ${pot.cc}`;
+    return (
+        <div className={`ap-pot-knob ${!pot.active ? 'inactive' : ''}`}>
+            <div className="ap-pot-knob-circle" />
+            <span className="ap-pot-knob-label">{label}</span>
         </div>
     );
 }

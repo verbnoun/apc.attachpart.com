@@ -54,6 +54,9 @@ function App() {
 
     // Logs
     const [logs, setLogs] = useState([]);
+    const [logActiveView, setLogActiveView] = useState('log');
+    const logCountRef = useRef(null);
+    const logClearRef = useRef(null);
 
     const addLog = useCallback((message, type = 'info') => {
         const timestamp = new Date().toLocaleTimeString();
@@ -112,6 +115,11 @@ function App() {
         midiStateRef.current = midiState;
         registry.onMidiThrough((data) => midiState.handleMidiThrough(data));
         registry.onAllMidiInput((portName, data) => midiState.handleAllMidiInput(portName, data));
+
+        // Value feedback observer — synth parameter values passing through relay
+        registry.onValueFeedback((feedback) => {
+            midiState.handleValueFeedback(feedback);
+        });
 
         registry.onDeviceConnected((portName) => {
             addLog(`Device connected: ${portName}`, 'success');
@@ -831,16 +839,31 @@ function App() {
         }
     }, [devices, configByDevice]);
 
-    // Re-render Log window when logs or topology change
+    // Re-render Log window when logs, topology, or view changes
     useEffect(() => {
         const container = windowContainersRef.current['log-window'];
         if (container && WindowManager.exists('log-window')) {
             ReactDOM.render(
-                <LogWindow logs={logs} onClear={() => setLogs([])} topology={topology} />,
+                <LogWindow logs={logs} topology={topology} activeView={logActiveView} />,
                 container
             );
+            // Auto-scroll content area
+            const contentArea = WindowManager.getContentArea('log-window');
+            if (contentArea && logActiveView === 'log') {
+                requestAnimationFrame(() => {
+                    contentArea.scrollTop = contentArea.scrollHeight;
+                });
+            }
+            // Update count (hide in topology view)
+            if (logCountRef.current) {
+                logCountRef.current.textContent = logActiveView === 'log'
+                    ? `${logs.length} entries` : '';
+            }
+            if (logClearRef.current) {
+                logClearRef.current.style.display = logActiveView === 'log' ? '' : 'none';
+            }
         }
-    }, [logs, topology]);
+    }, [logs, topology, logActiveView]);
 
     // Re-render Expression Pad when devices change
     useEffect(() => {
@@ -882,10 +905,10 @@ function App() {
 
     // Per-section window size constraints
     const CONFIG_SECTION_SIZES = {
-        curves:  { width: 500, height: 620, maxHeight: 700, resizeDir: 'vertical' },
-        dials:   { width: 500, height: 620, maxHeight: 700, resizeDir: 'vertical' },
-        pedal:   { width: 360, height: 250, resizable: false },
-        screen:  { width: 360, height: 250, resizable: false }
+        curves:  { width: 500, height: 620, maxHeight: 700, vScroll: true },
+        dials:   { width: 940, height: 200, hScroll: true },
+        pedal:   { width: 360, height: 250 },
+        screen:  { width: 360, height: 250 }
     };
 
     const openConfigWindow = async (portName, section) => {
@@ -915,7 +938,7 @@ function App() {
 
         const sizes = CONFIG_SECTION_SIZES[section];
         const container = document.createElement('div');
-        container.style.height = '100%';
+        if (!sizes.vScroll) container.style.height = '100%';
         windowContainersRef.current[windowId] = container;
 
         const saved = WorkspacePersistence.getWindowState(windowId);
@@ -930,8 +953,9 @@ function App() {
             content: container,
             theme: 'controller',
             maxHeight: sizes.maxHeight,
-            resizeDir: sizes.resizeDir,
-            resizable: sizes.resizable,
+            hScroll: sizes.hScroll || false,
+            vScroll: sizes.vScroll || false,
+            padding: false,
             infoBar: {
                 left: '',
                 right: 'Saved'
@@ -1000,6 +1024,7 @@ function App() {
             height: saved?.height ?? (hasPatch ? 800 : 450),
             content: container,
             theme: 'synth',
+            padding: false,
             onClose: () => {
                 delete windowContainersRef.current[windowId];
             }
@@ -1059,7 +1084,6 @@ function App() {
             height: saved?.height ?? 420,
             content: container,
             theme: 'tool',
-            resizable: false,
             onClose: () => {
                 delete windowContainersRef.current['expression-pad'];
             }
@@ -1092,6 +1116,34 @@ function App() {
 
         const saved = WorkspacePersistence.getWindowState('log-window');
 
+        // Info bar left: view selector dropdown
+        const viewSelect = document.createElement('select');
+        viewSelect.className = 'ap-infobar-select';
+        const optLog = document.createElement('option');
+        optLog.value = 'log'; optLog.textContent = 'Log';
+        const optTopo = document.createElement('option');
+        optTopo.value = 'topo'; optTopo.textContent = 'Topology';
+        viewSelect.appendChild(optLog);
+        viewSelect.appendChild(optTopo);
+        viewSelect.value = logActiveView;
+        viewSelect.addEventListener('change', () => setLogActiveView(viewSelect.value));
+
+        // Info bar right: count + clear button
+        const rightContainer = document.createElement('span');
+        rightContainer.className = 'ap-infobar-actions';
+        const countSpan = document.createElement('span');
+        countSpan.className = 'ap-infobar-count';
+        countSpan.textContent = `${logs.length} entries`;
+        const clearBtn = document.createElement('button');
+        clearBtn.className = 'ap-infobar-btn';
+        clearBtn.textContent = 'Clear';
+        clearBtn.addEventListener('click', () => setLogs([]));
+        rightContainer.appendChild(countSpan);
+        rightContainer.appendChild(clearBtn);
+
+        logCountRef.current = countSpan;
+        logClearRef.current = clearBtn;
+
         WindowManager.create({
             id: 'log-window',
             title: 'Console Log',
@@ -1101,16 +1153,20 @@ function App() {
             height: saved?.height ?? 350,
             content: container,
             theme: 'tool',
-            resizeDir: 'vertical',
+            vScroll: true,
+            padding: false,
+            infoBar: { left: viewSelect, right: rightContainer },
             onClose: () => {
                 delete windowContainersRef.current['log-window'];
+                logCountRef.current = null;
+                logClearRef.current = null;
             }
         });
 
         WorkspacePersistence.setWasOpen('log-window', true);
 
         ReactDOM.render(
-            <LogWindow logs={logs} onClear={() => setLogs([])} topology={topology} />,
+            <LogWindow logs={logs} topology={topology} activeView={logActiveView} />,
             container
         );
     };
@@ -1136,7 +1192,6 @@ function App() {
             height: saved?.height ?? 350,
             content: container,
             theme: 'tool',
-            resizable: false,
             onClose: () => {
                 delete windowContainersRef.current['sync-window'];
             }
@@ -1176,7 +1231,6 @@ function App() {
             height: saved?.height ?? 280,
             content: container,
             theme: 'tool',
-            resizable: false,
             onClose: () => {
                 delete windowContainersRef.current['preferences'];
             }
@@ -1214,7 +1268,6 @@ function App() {
             height: saved?.height ?? (tool === 'firmware' ? 300 : 340),
             content: container,
             theme: 'tool',
-            resizable: false,
             onClose: () => {
                 delete windowContainersRef.current[windowId];
             }
@@ -2060,16 +2113,7 @@ function SyncWindow({ devices, isLinked, onSync, syncLogs }) {
 // LOG WINDOW
 //======================================================================
 
-function LogWindow({ logs, onClear, topology }) {
-    const [activeView, setActiveView] = useState('log');
-    const scrollRef = useRef(null);
-
-    useEffect(() => {
-        if (scrollRef.current && activeView === 'log') {
-            scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-        }
-    }, [logs, activeView]);
-
+function LogWindow({ logs, topology, activeView }) {
     const logText = logs.map(log => {
         const typeTag = log.type === 'info' ? '' : `[${log.type.toUpperCase()}] `;
         return `[${log.timestamp}] ${typeTag}${log.message}`;
@@ -2080,31 +2124,11 @@ function LogWindow({ logs, onClear, topology }) {
         : 'No topology loaded (connect a synth device)';
 
     return (
-        <div className="ap-log-window">
-            <div className="ap-log-toolbar">
-                <select
-                    className="ap-log-view-select"
-                    value={activeView}
-                    onChange={(e) => setActiveView(e.target.value)}
-                >
-                    <option value="log">Log</option>
-                    <option value="topo">Topology</option>
-                </select>
-                {activeView === 'log' && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <span className="ap-log-count">{logs.length} entries</span>
-                        <button className="ap-btn ap-btn-small" onClick={onClear}>
-                            CLEAR
-                        </button>
-                    </div>
-                )}
-            </div>
-            <pre className="ap-log-text" ref={scrollRef}>
-                {activeView === 'log'
-                    ? (logs.length === 0 ? 'No log entries' : logText)
-                    : topoText}
-            </pre>
-        </div>
+        <pre className="ap-log-text">
+            {activeView === 'log'
+                ? (logs.length === 0 ? 'No log entries' : logText)
+                : topoText}
+        </pre>
     );
 }
 

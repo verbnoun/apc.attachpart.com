@@ -29,6 +29,7 @@ class DeviceRegistry {
         this._onDeviceDisconnected = null;
         this._onMidiThrough = null;
         this._onAllMidiInput = null;
+        this._onValueFeedback = null;
 
         // Logging
         this._logFn = null;
@@ -144,6 +145,16 @@ class DeviceRegistry {
      */
     onAllMidiInput(callback) {
         this._onAllMidiInput = callback;
+    }
+
+    /**
+     * Set callback for value feedback (synth → controller display updates)
+     * Fired when 0x7D value/ADSR feedback SysEx passes through the relay.
+     * @param {Function} callback - Called with ({ cc, displayText, adsr? })
+     *   adsr present for envelope params: { env, segment, values: [A,D,S,R] }
+     */
+    onValueFeedback(callback) {
+        this._onValueFeedback = callback;
     }
 
     //==================================================================
@@ -354,6 +365,11 @@ class DeviceRegistry {
                     // Synth → Controller
                     this._log(`RELAY: Synth → Controller (${data.length} bytes)`, 'midi');
                     this.send(this._exchangeControllerPort, data);
+
+                    // Decode value feedback for APC UI
+                    if (this._onValueFeedback) {
+                        this._decodeValueFeedback(data);
+                    }
                 } else if (portName === this._exchangeControllerPort && this._exchangeSynthPort) {
                     // Controller → Synth
                     this._log(`RELAY: Controller → Synth (${data.length} bytes)`, 'midi');
@@ -377,6 +393,50 @@ class DeviceRegistry {
             if (this._midiLoggingEnabled) {
                 this._log(`ROUTE: [${this._formatMidi(data)}]`, 'midi');
             }
+        }
+    }
+
+    //==================================================================
+    // INTERNAL: Value Feedback Decoder
+    //==================================================================
+
+    /**
+     * Decode 0x7D value feedback SysEx and fire callback
+     * Format: F0 7D 00 10 CC text... 00 F7 (value)
+     *         F0 7D 00 11 CC env seg A D S R text... 00 F7 (ADSR)
+     * @private
+     */
+    _decodeValueFeedback(data) {
+        // Minimum: F0 7D 00 10 CC 00 F7 = 7 bytes
+        if (data.length < 7) return;
+        if (data[1] !== 0x7D || data[2] !== 0x00) return;
+
+        const msgType = data[3];
+
+        if (msgType === 0x10) {
+            // Value feedback: [F0][7D][00][10][CC][text...][00][F7]
+            const cc = data[4];
+            // Extract null-terminated text (bytes 5 to second-to-last before F7)
+            const textBytes = data.slice(5, data.length - 1); // strip F7
+            const nullIdx = textBytes.indexOf(0x00);
+            const text = new TextDecoder().decode(textBytes.slice(0, nullIdx >= 0 ? nullIdx : textBytes.length));
+            this._onValueFeedback({ cc, displayText: text });
+
+        } else if (msgType === 0x11) {
+            // ADSR feedback: [F0][7D][00][11][CC][env][seg][A][D][S][R][text...][00][F7]
+            if (data.length < 13) return;
+            const cc = data[4];
+            const env = data[5];   // 0=MOD_ENV, 1=VAMP_ENV
+            const segment = data[6]; // 0=A, 1=D, 2=S, 3=R
+            const adsr = [data[7], data[8], data[9], data[10]]; // 0-127 each
+            const textBytes = data.slice(11, data.length - 1);
+            const nullIdx = textBytes.indexOf(0x00);
+            const text = new TextDecoder().decode(textBytes.slice(0, nullIdx >= 0 ? nullIdx : textBytes.length));
+            this._onValueFeedback({
+                cc,
+                displayText: text,
+                adsr: { env, segment, values: adsr }
+            });
         }
     }
 

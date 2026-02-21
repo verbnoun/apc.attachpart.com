@@ -276,9 +276,7 @@ html, body {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    height: 20px;
-    overflow: hidden;
-    padding: 3px 8px;
+    padding: 4px 8px;
     background: #ffffff;
     border-bottom: 1.5px solid #000000;
     box-shadow: 0 1.5px 0 #ffffff, 0 3px 0 #000000;
@@ -316,6 +314,43 @@ html, body {
     cursor: pointer;
 }
 
+/* Info bar interactive elements */
+.ap-infobar-select {
+    font-family: Chicago_12;
+    font-size: 14px;
+    padding: 1px 4px;
+    background: #ffffff;
+    color: #000000;
+    border: 1px solid #000000;
+    cursor: pointer;
+}
+
+.ap-infobar-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.ap-infobar-count {
+    font-size: 14px;
+    color: #808080;
+}
+
+.ap-infobar-btn {
+    font-family: Chicago_12;
+    font-size: 14px;
+    background: none;
+    border: none;
+    color: #000000;
+    cursor: pointer;
+    padding: 0 4px;
+    text-decoration: underline;
+}
+
+.ap-infobar-btn:hover {
+    color: #555555;
+}
+
 /* Content area */
 .ap-window-content {
     flex: 1;
@@ -324,21 +359,35 @@ html, body {
     background: #ffffff;
 }
 
-/* Resizable windows: always show scrollbar tracks (System 7 behavior) */
-.ap-window-resizable .ap-window-content {
+/* Scroll behavior — set by WindowManager from hScroll/vScroll properties */
+/* Always show tracks (System 7); thumb hidden via JS class when content fits */
+.ap-scroll-v .ap-window-content {
+    overflow-y: scroll;
+    overflow-x: hidden;
+}
+
+.ap-scroll-h .ap-window-content {
+    overflow-x: scroll;
+    overflow-y: hidden;
+}
+
+.ap-scroll-both .ap-window-content {
     overflow: scroll;
 }
 
-/* Full-height app layouts: outer hidden, inner element handles scrolling */
-.ap-window-resizable .ap-window-content:has(.ap-device-app),
-.ap-window-resizable .ap-window-content:has(.ap-log-window),
-.ap-window-resizable .ap-window-content:has(.ap-bartleby-config) {
-    padding: 0;
-    overflow: hidden;
+/* Hide scrollbar thumb when content doesn't overflow */
+.ap-scroll-v:not(.ap-overflows-v) .ap-window-content::-webkit-scrollbar-thumb:vertical,
+.ap-scroll-both:not(.ap-overflows-v) .ap-window-content::-webkit-scrollbar-thumb:vertical {
+    visibility: hidden;
 }
 
-/* Config section windows (both resizable and non-resizable) */
-.ap-window-content:has(.ap-bartleby-config) {
+.ap-scroll-h:not(.ap-overflows-h) .ap-window-content::-webkit-scrollbar-thumb:horizontal,
+.ap-scroll-both:not(.ap-overflows-h) .ap-window-content::-webkit-scrollbar-thumb:horizontal {
+    visibility: hidden;
+}
+
+/* No padding — set by WindowManager from padding property */
+.ap-no-padding .ap-window-content {
     padding: 0;
 }
 
@@ -354,7 +403,9 @@ html, body {
 }
 
 /* Show grow box SVG in the scrollbar corner (where tracks intersect) */
-.ap-window-resizable ::-webkit-scrollbar-corner {
+.ap-scroll-v ::-webkit-scrollbar-corner,
+.ap-scroll-h ::-webkit-scrollbar-corner,
+.ap-scroll-both ::-webkit-scrollbar-corner {
     background: url("vendor/system.css/icon/grow-box.svg") no-repeat center;
     background-size: 22px 22px;
     background-color: #ffffff;
@@ -376,37 +427,21 @@ html, body {
     z-index: 2;
 }
 
-/* Only show grow box on resizable windows */
-.ap-window-resizable .ap-window-resize {
+/* Show grow box when any scroll is enabled */
+.ap-scroll-v .ap-window-resize,
+.ap-scroll-h .ap-window-resize,
+.ap-scroll-both .ap-window-resize {
     display: block;
 }
 
 /* Vertical-only resize: custom B&W up/down cursor */
-.ap-window-resize-v .ap-window-resize {
+.ap-scroll-v .ap-window-resize {
     cursor: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="10" height="16"><polygon points="5,0 1,5 9,5" fill="black"/><polygon points="5,16 1,11 9,11" fill="black"/><rect x="4" y="5" width="2" height="6" fill="black"/></svg>') 5 8, s-resize;
 }
 
-.ap-window-resize-v .ap-window-content {
-    overflow-y: scroll;
-    overflow-x: hidden;
-}
-
-/* Inner scroll containers in vertical-only windows: no horizontal scrollbar */
-.ap-window-resize-v .ap-log-text,
-.ap-window-resize-v .ap-log-scroll,
-.ap-window-resize-v .ap-bartleby-content {
-    overflow-y: scroll;
-    overflow-x: hidden;
-}
-
 /* Horizontal-only resize: custom B&W left/right cursor */
-.ap-window-resize-h .ap-window-resize {
+.ap-scroll-h .ap-window-resize {
     cursor: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="16" height="10"><polygon points="0,5 5,1 5,9" fill="black"/><polygon points="16,5 11,1 11,9" fill="black"/><rect x="5" y="4" width="6" height="2" fill="black"/></svg>') 8 5, e-resize;
-}
-
-.ap-window-resize-h .ap-window-content {
-    overflow-x: scroll;
-    overflow-y: hidden;
 }
 
 /* ============================================================
@@ -957,7 +992,6 @@ html, body {
 
 .ap-bartleby-content {
     flex: 1;
-    overflow: scroll;
 }
 
 .ap-bartleby-loading {
@@ -1100,56 +1134,139 @@ html, body {
     background-image: url("vendor/system.css/icon/slider-thumb-active.svg");
 }
 
-/* Pots Tab */
-.ap-pots-tab {
-    padding: var(--ap-spacing-sm) 0;
+/* Dials Panel — hardware layout */
+.ap-dials-panel {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 6px;
+    height: 100%;
 }
 
-.ap-pots-grid {
+/* OLED Panel — mimics SSD1306 128x64 display */
+.ap-oled-panel {
+    background: #000;
+    border: 2px solid #444;
+    flex-shrink: 0;
+    font-family: monospace;
+    color: #fff;
+    font-size: 9px;
+    line-height: 1.2;
+    image-rendering: pixelated;
+}
+
+.ap-oled-status {
+    width: 80px;
+    height: 80px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 4px;
+    padding: 4px;
+}
+
+.ap-oled-title {
+    font-size: 10px;
+    font-weight: bold;
+    letter-spacing: 1px;
+}
+
+.ap-oled-line {
+    font-size: 8px;
+    color: #ccc;
+}
+
+.ap-oled-control {
+    width: 120px;
+    height: 80px;
+    padding: 2px;
+}
+
+.ap-oled-grid {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: var(--ap-spacing-sm);
-}
-
-.ap-pot-card {
-    background: var(--ap-bg-secondary);
-    border: 2px solid var(--ap-bg-tertiary);
-    padding: var(--ap-spacing-sm);
-    font-size: var(--ap-font-size-xs);
-}
-
-.ap-pot-card.inactive {
-    opacity: 0.5;
-}
-
-.ap-pot-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: var(--ap-spacing-xs);
-}
-
-.ap-pot-index {
-    color: var(--ap-text-muted);
-}
-
-.ap-pot-label {
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
     width: 100%;
-    margin-bottom: var(--ap-spacing-xs);
-    font-size: var(--ap-font-size-xs);
-    padding: var(--ap-spacing-xs);
+    height: 100%;
+    gap: 1px;
 }
 
-.ap-pot-cc {
+.ap-oled-corner {
     display: flex;
-    align-items: center;
-    gap: var(--ap-spacing-xs);
+    flex-direction: column;
+    justify-content: center;
+    padding: 2px 3px;
+    overflow: hidden;
 }
 
-.ap-pot-cc-input {
-    width: 50px;
-    font-size: var(--ap-font-size-xs);
-    padding: var(--ap-spacing-xs);
+.ap-oled-corner.inactive {
+    opacity: 0.3;
+}
+
+.ap-oled-label {
+    font-size: 8px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: clip;
+}
+
+.ap-oled-bar {
+    height: 3px;
+    background: #333;
+    margin-top: 2px;
+}
+
+.ap-oled-bar-fill {
+    height: 100%;
+    width: 0%;
+    background: #fff;
+}
+
+/* Pot Group — OLED + cluster side by side */
+.ap-pot-group {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+/* Pot Cluster — 2x2 grid of knobs */
+.ap-pot-cluster {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+    gap: 4px;
+}
+
+/* Pot Knob — circle placeholder */
+.ap-pot-knob {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+}
+
+.ap-pot-knob.inactive {
+    opacity: 0.35;
+}
+
+.ap-pot-knob-circle {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 2px solid #000;
+    background: #fff;
+}
+
+.ap-pot-knob-label {
+    font-size: 7px;
+    font-family: Chicago_12, monospace;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: clip;
+    max-width: 36px;
 }
 
 /* Pedal Tab */
@@ -2245,36 +2362,6 @@ html, body {
    LOG WINDOW
    ============================================================ */
 
-.ap-log-window {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-}
-
-.ap-log-toolbar {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: var(--ap-spacing-sm);
-    border-bottom: 1.5px solid #000000;
-}
-
-/* Log view selector dropdown */
-.ap-log-view-select {
-    font-family: Chicago_12;
-    font-size: 14px;
-    padding: 2px 4px;
-    background: #ffffff;
-    color: #000000;
-    border: 1.5px solid #000000;
-    cursor: pointer;
-}
-
-.ap-log-count {
-    font-size: 14px;
-    color: var(--ap-text-muted);
-}
-
 .ap-log-scroll {
     flex: 1;
     overflow: scroll;
@@ -2330,7 +2417,6 @@ html, body {
 
 /* Plain text log output */
 .ap-log-text {
-    flex: 1;
     margin: 0;
     padding: var(--ap-spacing-sm);
     background: var(--ap-bg-primary);
@@ -2338,7 +2424,6 @@ html, body {
     font-family: Monaco, monospace;
     font-size: 16px;
     line-height: 1.4;
-    overflow: scroll;
     white-space: pre-wrap;
     word-break: break-word;
 }

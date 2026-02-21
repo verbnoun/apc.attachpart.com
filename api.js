@@ -41,13 +41,8 @@ class UnifiedDeviceAPI {
         // SysEx assembly buffer
         this._sysexBuffer = [];
 
-        // Firmware update state
-        this._firmwareProgressCallback = null;
-        this._firmwareResolve = null;
-        this._firmwareReject = null;
-        this._firmwareReadyResolve = null;
-        this._firmwareReadyReject = null;
-        this._eraseTimeoutHandle = null;
+        // Firmware uploader (created in setRegistry)
+        this._firmwareUploader = null;
 
         // Log callback
         this._logFn = null;
@@ -55,9 +50,6 @@ class UnifiedDeviceAPI {
         // Callbacks
         this._onSaveStatusChanged = null;
         this._onExternalPatchChange = null;
-
-        // Incoming command handler (for controller role)
-        this._onIncomingCommand = null;
     }
 
     //======================================================================
@@ -79,6 +71,13 @@ class UnifiedDeviceAPI {
             (sysexData) => { this._registry.send(this._portName, sysexData); return true; },
             (data, success) => this._handleTransportComplete(data, success),
             () => Date.now(),
+            (msg, type) => this._log(msg, type)
+        );
+
+        // Initialize firmware uploader (uses transport for segment transfer)
+        this._firmwareUploader = new FirmwareUploader(
+            (sysexData) => { this._registry.send(this._portName, sysexData); },
+            this.transport,
             (msg, type) => this._log(msg, type)
         );
 
@@ -179,6 +178,11 @@ class UnifiedDeviceAPI {
             this._timeoutHandle = null;
         }
 
+        if (this._firmwareUploader) {
+            this._firmwareUploader.abort();
+            this._firmwareUploader = null;
+        }
+
         if (this.transport) {
             this.transport.abort();
             this.transport = null;
@@ -205,15 +209,6 @@ class UnifiedDeviceAPI {
 
     onExternalPatchChange(callback) {
         this._onExternalPatchChange = callback;
-    }
-
-    /**
-     * Set handler for incoming commands (controller role)
-     * When a synth sends get-control-surface or set-patch, this callback is invoked.
-     * @param {Function} callback - (cmd, portName) => response object or null
-     */
-    onIncomingCommand(callback) {
-        this._onIncomingCommand = callback;
     }
 
     //======================================================================
@@ -436,45 +431,7 @@ class UnifiedDeviceAPI {
 
     async uploadFirmware(firmwareBin, progressCallback) {
         this._requireCapability(CAPABILITIES.FIRMWARE, 'upload-firmware');
-
-        const SEGMENT_SIZE = 32768;  // 32KB
-        const totalSize = firmwareBin.length;
-        const totalSegments = Math.ceil(totalSize / SEGMENT_SIZE);
-
-        this._log(`Firmware: ${totalSize} bytes, ${totalSegments} segments`);
-        this._firmwareProgressCallback = progressCallback;
-
-        // Step 1: Send command and wait for erase to complete
-        const readyResponse = await this._waitForFirmwareReady(totalSize);
-
-        this._log(`Device ready: segment_size=${readyResponse.segment_size || SEGMENT_SIZE}`);
-
-        if (progressCallback) {
-            progressCallback({ phase: 'transferring', percent: 0 });
-        }
-
-        // Step 2: Send each segment via separate transport transfer
-        for (let i = 0; i < totalSegments; i++) {
-            const offset = i * SEGMENT_SIZE;
-            const segment = firmwareBin.slice(offset, offset + SEGMENT_SIZE);
-
-            this._log(`Sending segment ${i + 1}/${totalSegments} (${segment.length} bytes)`);
-
-            await this._sendFirmwareSegment(segment, i, totalSegments);
-        }
-
-        // Step 3: Wait for firmware-ready (final verification complete)
-        return new Promise((resolve, reject) => {
-            this._firmwareResolve = resolve;
-            this._firmwareReject = reject;
-
-            this._timeoutHandle = setTimeout(() => {
-                this._firmwareProgressCallback = null;
-                this._firmwareResolve = null;
-                this._firmwareReject = null;
-                reject(new Error('Firmware verification timeout'));
-            }, 30000);
-        });
+        return this._firmwareUploader.upload(firmwareBin, progressCallback);
     }
 
     async restartDevice() {
@@ -528,21 +485,6 @@ class UnifiedDeviceAPI {
     sendRaw(data) {
         if (!this._registry) return;
         this._registry.send(this._portName, data);
-    }
-
-    /**
-     * Send a response (for controller role)
-     * Used when APC acts as controller and needs to respond to synth commands.
-     * @param {Object} response - JSON response object
-     */
-    sendResponse(response) {
-        if (!this._registry || !this._portName) {
-            this._log('Cannot send response: not connected', 'error');
-            return;
-        }
-        const sysex = encodeJsonToSysEx(response);
-        this._registry.send(this._portName, sysex);
-        this._log(`Response: ${response.op || response.status || 'unknown'}`, 'tx');
     }
 
     //======================================================================
@@ -637,49 +579,6 @@ class UnifiedDeviceAPI {
     }
 
     //======================================================================
-    // PRIVATE: Firmware upload helpers
-    //======================================================================
-
-    _waitForFirmwareReady(totalSize) {
-        return new Promise((resolve, reject) => {
-            this._firmwareReadyResolve = resolve;
-            this._firmwareReadyReject = reject;
-
-            this._eraseTimeoutHandle = setTimeout(() => {
-                this._firmwareReadyResolve = null;
-                this._firmwareReadyReject = null;
-                reject(new Error('Firmware erase timeout'));
-            }, 120000);
-
-            const cmdObj = { cmd: 'upload-firmware', size: totalSize };
-            const sysex = encodeJsonToSysEx(cmdObj);
-            this._registry.send(this._portName, sysex);
-            this._log(`upload-firmware (size=${totalSize})`, 'tx');
-        });
-    }
-
-    _sendFirmwareSegment(segment, index, totalSegments) {
-        return new Promise((resolve, reject) => {
-            this._segmentResolve = resolve;
-            this._segmentReject = reject;
-            this._currentSegmentIndex = index;
-
-            this._segmentTimeoutHandle = setTimeout(() => {
-                this._segmentResolve = null;
-                this._segmentReject = null;
-                reject(new Error(`Segment ${index} timeout`));
-            }, 60000);
-
-            if (!this.transport.send(segment)) {
-                clearTimeout(this._segmentTimeoutHandle);
-                this._segmentResolve = null;
-                this._segmentReject = null;
-                reject(new Error('Transport busy'));
-            }
-        });
-    }
-
-    //======================================================================
     // PRIVATE: MIDI message handling
     //======================================================================
 
@@ -743,13 +642,7 @@ class UnifiedDeviceAPI {
     _handleTransportComplete(data, success) {
         if (!success) {
             this._log('Transport transfer failed', 'error');
-            if (this._segmentReject) {
-                clearTimeout(this._segmentTimeoutHandle);
-                this._segmentTimeoutHandle = null;
-                const reject = this._segmentReject;
-                this._segmentResolve = null;
-                this._segmentReject = null;
-                reject(new Error('Segment transport failed'));
+            if (this._firmwareUploader?.active && this._firmwareUploader.handleTransportFailure()) {
                 return;
             }
             this._reject(new Error('Transport transfer failed'));
@@ -802,15 +695,10 @@ class UnifiedDeviceAPI {
         if (responseType === 'save-status') return false;
         if (responseType === 'list-patches') return pendingCmd === 'list-patches';
         if (responseType === 'get-patch') return pendingCmd === 'get-patch';
-        if (responseType === 'ready-for-firmware') return pendingCmd === 'upload-firmware';
         if (responseType === 'restarting') return pendingCmd === 'restart-device';
         if (responseType === 'device-info') return pendingCmd === 'get-device-info';
         if (responseType === 'config') return pendingCmd === 'config-get' || pendingCmd === 'config-set';
         if (responseType === 'control-surface') return pendingCmd === 'get-control-surface';
-        if (responseType === 'flashing-progress') return false;
-        if (responseType === 'firmware-ready') return false;
-        if (responseType === 'firmware-validated') return false;
-
         if (responseType === 'mutation-ack') {
             return json.op === pendingCmd;
         }
@@ -819,20 +707,6 @@ class UnifiedDeviceAPI {
     }
 
     _routeResponse(json) {
-        // Check for incoming commands (controller role)
-        // Incoming commands have a 'cmd' field and come from synths
-        if (json.cmd && this._onIncomingCommand) {
-            const cmd = json.cmd;
-            if (cmd === 'get-control-surface' || cmd === 'set-patch') {
-                this._log(`Incoming command: ${cmd}`, 'rx');
-                const response = this._onIncomingCommand(json, this._portName);
-                if (response) {
-                    this.sendResponse(response);
-                }
-                return;
-            }
-        }
-
         const responseType = this._classifyResponse(json);
 
         // Save status updates
@@ -849,122 +723,11 @@ class UnifiedDeviceAPI {
             return;
         }
 
-        // Firmware update responses
-        if (responseType === 'erasing') {
-            this._log(`Erase started: ${json.sectors} sectors`);
-            if (this._firmwareProgressCallback) {
-                this._firmwareProgressCallback({
-                    phase: 'erasing',
-                    percent: 0,
-                    sectors: json.sectors
-                });
+        // Firmware responses — delegate to uploader
+        if (this._firmwareUploader?.active) {
+            if (this._firmwareUploader.handleResponse(responseType, json)) {
+                return;
             }
-            return;
-        }
-
-        if (responseType === 'erase-progress') {
-            this._log(`Erase: ${json.sector}/${json.total} (${json.percent}%)`);
-            if (this._firmwareProgressCallback) {
-                this._firmwareProgressCallback({
-                    phase: 'erasing',
-                    percent: json.percent,
-                    sector: json.sector,
-                    total: json.total
-                });
-            }
-            return;
-        }
-
-        if (responseType === 'ready-for-firmware') {
-            this._log(`Erase complete, device ready`);
-            if (this._firmwareReadyResolve) {
-                clearTimeout(this._eraseTimeoutHandle);
-                this._eraseTimeoutHandle = null;
-                const resolve = this._firmwareReadyResolve;
-                this._firmwareReadyResolve = null;
-                this._firmwareReadyReject = null;
-                resolve(json);
-            }
-            return;
-        }
-
-        if (responseType === 'segment-done') {
-            this._log(`Segment ${json.segment} done, progress: ${json.progress}%`);
-            if (this._segmentResolve) {
-                clearTimeout(this._segmentTimeoutHandle);
-                this._segmentTimeoutHandle = null;
-                const resolve = this._segmentResolve;
-                this._segmentResolve = null;
-                this._segmentReject = null;
-                resolve(json);
-            }
-            if (this._firmwareProgressCallback) {
-                this._firmwareProgressCallback({ phase: 'transferring', percent: json.progress });
-            }
-            return;
-        }
-
-        if (responseType === 'flashing-progress') {
-            this._log(`Flashing: ${json.progress}%`);
-            if (this._firmwareProgressCallback) {
-                this._firmwareProgressCallback({ phase: 'flashing', percent: json.progress });
-            }
-            return;
-        }
-
-        if (responseType === 'firmware-ready') {
-            this._log('Firmware written successfully');
-            if (this._firmwareProgressCallback) {
-                this._firmwareProgressCallback({ phase: 'complete', percent: 100 });
-            }
-            if (this._firmwareResolve) {
-                clearTimeout(this._timeoutHandle);
-                this._timeoutHandle = null;
-                const resolve = this._firmwareResolve;
-                this._firmwareResolve = null;
-                this._firmwareReject = null;
-                this._firmwareProgressCallback = null;
-                resolve(json);
-            }
-            return;
-        }
-
-        if (responseType === 'firmware-validated') {
-            this._log('Firmware validated, awaiting restart');
-            if (this._firmwareProgressCallback) {
-                this._firmwareProgressCallback({ phase: 'validated', percent: 100 });
-            }
-            if (this._firmwareResolve) {
-                clearTimeout(this._timeoutHandle);
-                this._timeoutHandle = null;
-                const resolve = this._firmwareResolve;
-                this._firmwareResolve = null;
-                this._firmwareReject = null;
-                this._firmwareProgressCallback = null;
-                resolve(json);
-            }
-            return;
-        }
-
-        // Firmware error
-        if (responseType === 'error' && (this._firmwareReadyReject || this._firmwareReject)) {
-            this._log(`Firmware error: ${json.error}`, 'error');
-            if (this._eraseTimeoutHandle) {
-                clearTimeout(this._eraseTimeoutHandle);
-                this._eraseTimeoutHandle = null;
-            }
-            if (this._timeoutHandle) {
-                clearTimeout(this._timeoutHandle);
-                this._timeoutHandle = null;
-            }
-            const reject = this._firmwareReadyReject || this._firmwareReject;
-            this._firmwareReadyResolve = null;
-            this._firmwareReadyReject = null;
-            this._firmwareResolve = null;
-            this._firmwareReject = null;
-            this._firmwareProgressCallback = null;
-            reject(new Error(json.error));
-            return;
         }
 
         // External patch change

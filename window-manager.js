@@ -30,6 +30,9 @@ const WindowManager = {
      *   height: number - initial height
      *   content: HTMLElement | string - window content
      *   onClose: () => void - called when window closes
+     *   hScroll: boolean - horizontal scrollbar + horizontal resize (default false)
+     *   vScroll: boolean - vertical scrollbar + vertical resize (default false)
+     *   padding: boolean - content area has 16px padding (default true)
      *   infoBar: { left, center, right } | null - optional info bar below title
      *   onInfoBarClick: (slot) => void - called when info bar slot is clicked
      * @returns {HTMLElement} The window element
@@ -45,8 +48,9 @@ const WindowManager = {
             content = '',
             onClose = null,
             theme = null,
-            resizable = true,
-            resizeDir = 'both',  // 'both', 'vertical', 'horizontal'
+            hScroll = false,
+            vScroll = false,
+            padding = true,
             minWidth = 250,
             minHeight = 150,
             maxWidth = Infinity,
@@ -61,14 +65,16 @@ const WindowManager = {
             return this.windows.get(id).element;
         }
 
+        // Derive resize behavior from scroll properties
+        const resizable = hScroll || vScroll;
+
         // Create window structure
         const win = document.createElement('div');
         let cls = 'ap-window';
-        if (resizable) {
-            cls += ' ap-window-resizable';
-            if (resizeDir === 'vertical') cls += ' ap-window-resize-v';
-            else if (resizeDir === 'horizontal') cls += ' ap-window-resize-h';
-        }
+        if (hScroll && vScroll) cls += ' ap-scroll-both';
+        else if (hScroll) cls += ' ap-scroll-h';
+        else if (vScroll) cls += ' ap-scroll-v';
+        if (!padding) cls += ' ap-no-padding';
         win.className = cls;
         win.id = `window-${id}`;
         win.style.left = `${x}px`;
@@ -111,13 +117,13 @@ const WindowManager = {
             infoBarEl.className = 'ap-window-infobar';
             const leftSlot = document.createElement('span');
             leftSlot.className = 'ap-infobar-left';
-            leftSlot.textContent = infoBar.left || '';
+            this._setSlotContent(leftSlot, infoBar.left);
             const centerSlot = document.createElement('span');
             centerSlot.className = 'ap-infobar-center';
-            centerSlot.textContent = infoBar.center || '';
+            this._setSlotContent(centerSlot, infoBar.center);
             const rightSlot = document.createElement('span');
             rightSlot.className = 'ap-infobar-right';
-            rightSlot.textContent = infoBar.right || '';
+            this._setSlotContent(rightSlot, infoBar.right);
             infoBarEl.appendChild(leftSlot);
             infoBarEl.appendChild(centerSlot);
             infoBarEl.appendChild(rightSlot);
@@ -156,7 +162,15 @@ const WindowManager = {
             document.body.appendChild(win);
         }
 
+        // Lock info bar height after initial layout so dynamic content changes don't cause jumps
+        if (infoBarEl) {
+            requestAnimationFrame(() => {
+                infoBarEl.style.height = `${infoBarEl.offsetHeight}px`;
+            });
+        }
+
         // Store window info
+        const observers = [];
         this.windows.set(id, {
             element: win,
             titleBar,
@@ -164,13 +178,48 @@ const WindowManager = {
             infoBarEl,
             onInfoBarClick,
             onClose,
-            constraints: { minWidth, minHeight, maxWidth, maxHeight }
+            constraints: { minWidth, minHeight, maxWidth, maxHeight },
+            observers
         });
 
         // Setup interactions
         this._setupDrag(id, win, titleBar);
-        this._setupResize(id, win, resizeHandle, resizeDir);
+        if (resizable) {
+            const resizeDir = (hScroll && vScroll) ? 'both' : hScroll ? 'horizontal' : 'vertical';
+            this._setupResize(id, win, resizeHandle, resizeDir);
+        }
         this._setupFocus(id, win);
+
+        // Overflow detection: toggle ap-overflows-v / ap-overflows-h classes
+        // so CSS can hide scrollbar thumbs when content fits
+        if (hScroll || vScroll) {
+            let pending = false;
+            const checkOverflow = () => {
+                if (pending) return;
+                pending = true;
+                requestAnimationFrame(() => {
+                    pending = false;
+                    // Tolerance for subpixel rounding (getBoundingClientRect
+                    // returns fractional values but scrollHeight/clientHeight are integers)
+                    const TOLERANCE = 2;
+                    if (vScroll) {
+                        win.classList.toggle('ap-overflows-v',
+                            contentArea.scrollHeight - contentArea.clientHeight > TOLERANCE);
+                    }
+                    if (hScroll) {
+                        win.classList.toggle('ap-overflows-h',
+                            contentArea.scrollWidth - contentArea.clientWidth > TOLERANCE);
+                    }
+                });
+            };
+            const resizeObs = new ResizeObserver(checkOverflow);
+            resizeObs.observe(contentArea);
+            observers.push(resizeObs);
+            const mutationObs = new MutationObserver(checkOverflow);
+            mutationObs.observe(contentArea, { childList: true, subtree: true, characterData: true });
+            observers.push(mutationObs);
+            checkOverflow();
+        }
 
         this.focus(id);
         return win;
@@ -194,6 +243,9 @@ const WindowManager = {
             windowInfo.onClose();
         }
 
+        if (windowInfo.observers) {
+            windowInfo.observers.forEach(obs => obs.disconnect());
+        }
         windowInfo.element.remove();
         this.windows.delete(id);
 
@@ -277,20 +329,33 @@ const WindowManager = {
     /**
      * Update info bar content
      * @param {string} id - Window ID
-     * @param {Object} content - { left, center, right } text values
+     * @param {Object} content - { left, center, right } — string or HTMLElement values
      */
     setInfoBar(id, content) {
         const windowInfo = this.windows.get(id);
         if (!windowInfo || !windowInfo.infoBarEl) return;
         const bar = windowInfo.infoBarEl;
         if (content.left !== undefined) {
-            bar.querySelector('.ap-infobar-left').textContent = content.left;
+            this._setSlotContent(bar.querySelector('.ap-infobar-left'), content.left);
         }
         if (content.center !== undefined) {
-            bar.querySelector('.ap-infobar-center').textContent = content.center;
+            this._setSlotContent(bar.querySelector('.ap-infobar-center'), content.center);
         }
         if (content.right !== undefined) {
-            bar.querySelector('.ap-infobar-right').textContent = content.right;
+            this._setSlotContent(bar.querySelector('.ap-infobar-right'), content.right);
+        }
+    },
+
+    // Private: set slot content (string or HTMLElement)
+    _setSlotContent(slot, value) {
+        if (!slot) return;
+        if (value instanceof HTMLElement) {
+            slot.textContent = '';
+            slot.appendChild(value);
+        } else {
+            // Remove any child elements, set text
+            while (slot.firstChild) slot.removeChild(slot.firstChild);
+            slot.textContent = value || '';
         }
     },
 

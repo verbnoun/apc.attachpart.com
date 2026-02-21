@@ -98,6 +98,36 @@ class MidiState {
     }
 
     /**
+     * Handle decoded value feedback from synth → controller relay
+     * Stores latest values per CC and notifies subscribers.
+     * @param {Object} feedback - { cc, displayText, adsr? }
+     */
+    handleValueFeedback(feedback) {
+        if (!this._valueFeedback) {
+            this._valueFeedback = new Map(); // cc → { displayText, adsr? }
+        }
+        this._valueFeedback.set(feedback.cc, feedback);
+        this._notify('valueFeedback', feedback);
+    }
+
+    /**
+     * Get latest value feedback for a CC number
+     * @param {number} cc - MIDI CC number
+     * @returns {Object|null} - { cc, displayText, adsr? } or null
+     */
+    getValueFeedback(cc) {
+        return this._valueFeedback?.get(cc) || null;
+    }
+
+    /**
+     * Get all value feedback entries
+     * @returns {Map} cc → { cc, displayText, adsr? }
+     */
+    getAllValueFeedback() {
+        return this._valueFeedback || new Map();
+    }
+
+    /**
      * Get the most recent velocity value (0.0-1.0)
      * @returns {number|null}
      */
