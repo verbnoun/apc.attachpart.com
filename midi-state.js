@@ -13,6 +13,9 @@ class MidiState {
         this._subscribers = new Set();
         this._activeNotes = new Map(); // channel → { note, velocity, bend, pressure }
         this._latestVelocity = null;   // Last seen velocity (0.0-1.0)
+        this._ccValues = {};           // "portName:cc" → value (0-127)
+        this._controllerStatus = new Map(); // portName → { octave, sustain }
+        this._controlSurface = null;   // potMap[potId] → { label, cc, active } after exchange
     }
 
     /**
@@ -93,7 +96,23 @@ class MidiState {
         } else if (status === 0xD0) {
             this._notify('allPressure', { source: portName, channel, pressure: data[1] / 127 });
         } else if (status === 0xB0) {
-            this._notify('allCC', { source: portName, channel, cc: data[1], value: data[2] });
+            const cc = data[1], value = data[2];
+            this._ccValues[`${portName}:${cc}`] = value;
+
+            // Decode controller status from special CCs
+            if (cc === 102) {  // Octave
+                const octave = Math.round((value / 127) * 4) - 2;
+                const prev = this._controllerStatus.get(portName) || { octave: 0, sustain: false };
+                this._controllerStatus.set(portName, { ...prev, octave });
+                this._notify('controllerStatus', { portName, ...prev, octave });
+            } else if (cc === 64) {  // Sustain
+                const sustain = value >= 64;
+                const prev = this._controllerStatus.get(portName) || { octave: 0, sustain: false };
+                this._controllerStatus.set(portName, { ...prev, sustain });
+                this._notify('controllerStatus', { portName, ...prev, sustain });
+            }
+
+            this._notify('allCC', { source: portName, channel, cc, value });
         }
     }
 
@@ -128,6 +147,55 @@ class MidiState {
     }
 
     /**
+     * Get stored CC value for a port + CC number
+     * @param {string} portName - Device port name
+     * @param {number} cc - MIDI CC number
+     * @returns {number|null} - 0-127 or null if never received
+     */
+    getCCValue(portName, cc) {
+        return this._ccValues[`${portName}:${cc}`] ?? null;
+    }
+
+    /**
+     * Get controller status (octave, sustain) for a port
+     * @param {string} portName - Device port name
+     * @returns {{ octave: number, sustain: boolean }}
+     */
+    getControllerStatus(portName) {
+        return this._controllerStatus.get(portName) || { octave: 0, sustain: false };
+    }
+
+    /**
+     * Handle control surface data from exchange sniffer.
+     * Sorts by priority, maps to pot IDs using PRIORITY_TO_POT.
+     * @param {Array} controls - Raw controls from set-patch JSON
+     */
+    handleControlSurface(controls) {
+        const sorted = [...controls].sort((a, b) => (a.priority || 999) - (b.priority || 999));
+
+        const potMap = new Array(16).fill(null);
+        for (let i = 0; i < sorted.length && i < 16; i++) {
+            const potId = MidiState.PRIORITY_TO_POT[i];
+            potMap[potId] = {
+                label: sorted[i].label,
+                cc: sorted[i].cc,
+                active: true
+            };
+        }
+
+        this._controlSurface = potMap;
+        this._notify('controlSurface', potMap);
+    }
+
+    /**
+     * Get control surface pot mapping (from exchange)
+     * @returns {Array|null} potMap[potId] → { label, cc, active } or null
+     */
+    getControlSurface() {
+        return this._controlSurface;
+    }
+
+    /**
      * Get the most recent velocity value (0.0-1.0)
      * @returns {number|null}
      */
@@ -149,6 +217,9 @@ class MidiState {
     reset() {
         this._activeNotes.clear();
         this._latestVelocity = null;
+        this._ccValues = {};
+        this._controllerStatus.clear();
+        this._controlSurface = null;
         this._notify('reset', {});
     }
 
@@ -163,6 +234,9 @@ class MidiState {
         }
     }
 }
+
+// Same mapping as Bart firmware (pot_registry.cpp PRIORITY_TO_POT)
+MidiState.PRIORITY_TO_POT = [15, 14, 0, 1, 13, 12, 2, 3, 11, 10, 4, 5, 9, 8, 6, 7];
 
 //======================================================================
 // BEZIER EVALUATION UTILITY

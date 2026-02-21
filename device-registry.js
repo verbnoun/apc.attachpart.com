@@ -10,6 +10,96 @@
  * - MIDI through routing
  */
 
+//======================================================================
+// RELAY SNIFFER — passive transport protocol decoder
+//======================================================================
+
+class RelaySniffer {
+    constructor(onJson) {
+        this._onJson = onJson;
+        this._reset();
+    }
+
+    _reset() {
+        this._rxBuffer = null;
+        this._rxReceivedBytes = 0;
+        this._rxExpectedChunk = 0;
+        this._rxTotalChunks = 0;
+        this._active = false;
+    }
+
+    receive(sysexData) {
+        if (!isCandideSysEx(sysexData)) return;
+
+        const payload = sysexData.slice(3, sysexData.length - 1);
+        const decoded = mcoded7Decode(new Uint8Array(payload));
+        if (!decoded || decoded.length === 0) return;
+
+        const type = decoded[0];
+
+        if (type >= 0x08) {
+            try {
+                const str = new TextDecoder().decode(decoded);
+                this._onJson(JSON.parse(str));
+            } catch (e) { /* not JSON */ }
+            return;
+        }
+
+        switch (type) {
+            case 0x01: this._handleStart(decoded); break;
+            case 0x02: this._handleChunk(decoded); break;
+            case 0x05: this._handleEnd(decoded); break;
+        }
+    }
+
+    _handleStart(data) {
+        if (data.length < 7) return;
+        this._rxTotalChunks = (data[1] << 8) | data[2];
+        const totalBytes = (data[3] << 24) | (data[4] << 16) | (data[5] << 8) | data[6];
+        if (totalBytes > 32768) { this._reset(); return; }
+        this._rxBuffer = new Uint8Array(totalBytes);
+        this._rxReceivedBytes = 0;
+        this._rxExpectedChunk = 0;
+        this._active = true;
+    }
+
+    _handleChunk(data) {
+        if (!this._active || data.length < 6) return;
+        const seq = (data[1] << 8) | data[2];
+        const chunkLen = data[3] === 0 ? 256 : data[3];
+        if (data.length < 4 + chunkLen + 2) return;
+
+        const payload = data.slice(4, 4 + chunkLen);
+        const rxCrc = (data[4 + chunkLen] << 8) | data[4 + chunkLen + 1];
+        if (crc16(payload) !== rxCrc) return;
+
+        if (seq !== this._rxExpectedChunk) return;
+
+        this._rxBuffer.set(payload, this._rxReceivedBytes);
+        this._rxReceivedBytes += chunkLen;
+        this._rxExpectedChunk++;
+    }
+
+    _handleEnd(data) {
+        if (!this._active || data.length < 9) return;
+        const expectedBytes = (data[1] << 24) | (data[2] << 16) | (data[3] << 8) | data[4];
+        const expectedCrc = ((data[5] << 24) | (data[6] << 16) | (data[7] << 8) | data[8]) >>> 0;
+
+        if (this._rxReceivedBytes !== expectedBytes) { this._reset(); return; }
+
+        const assembled = this._rxBuffer.slice(0, this._rxReceivedBytes);
+        const computedCrc = crc32(assembled);
+        if (computedCrc !== expectedCrc) { this._reset(); return; }
+
+        try {
+            const str = new TextDecoder().decode(assembled);
+            this._onJson(JSON.parse(str));
+        } catch (e) { /* malformed JSON */ }
+
+        this._reset();
+    }
+}
+
 class DeviceRegistry {
     constructor() {
         this._portManager = null;
@@ -39,6 +129,10 @@ class DeviceRegistry {
         this._exchangeRelayActive = false;
         this._exchangeSynthPort = null;
         this._exchangeControllerPort = null;
+
+        // Relay sniffer — passive transport decoder for exchange traffic
+        this._relaySniffer = new RelaySniffer((json) => this._handleSniffedJson(json));
+        this._onControlSurface = null;
     }
 
     //==================================================================
@@ -157,6 +251,15 @@ class DeviceRegistry {
         this._onValueFeedback = callback;
     }
 
+    /**
+     * Set callback for control surface data (intercepted from exchange)
+     * Fired when sniffer decodes a set-patch message from synth → controller.
+     * @param {Function} callback - Called with (controls[])
+     */
+    onControlSurface(callback) {
+        this._onControlSurface = callback;
+    }
+
     //==================================================================
     // PUBLIC: Device Roles
     //==================================================================
@@ -219,6 +322,7 @@ class DeviceRegistry {
         this._exchangeRelayActive = false;
         this._exchangeSynthPort = null;
         this._exchangeControllerPort = null;
+        this._relaySniffer._reset();
         this._log('Exchange relay disabled');
     }
 
@@ -366,10 +470,11 @@ class DeviceRegistry {
                     this._log(`RELAY: Synth → Controller (${data.length} bytes)`, 'midi');
                     this.send(this._exchangeControllerPort, data);
 
-                    // Decode value feedback for APC UI
+                    // Passive sniffing of exchange traffic
                     if (this._onValueFeedback) {
                         this._decodeValueFeedback(data);
                     }
+                    this._relaySniffer.receive(data);
                 } else if (portName === this._exchangeControllerPort && this._exchangeSynthPort) {
                     // Controller → Synth
                     this._log(`RELAY: Controller → Synth (${data.length} bytes)`, 'midi');
@@ -393,6 +498,17 @@ class DeviceRegistry {
             if (this._midiLoggingEnabled) {
                 this._log(`ROUTE: [${this._formatMidi(data)}]`, 'midi');
             }
+        }
+    }
+
+    //==================================================================
+    // INTERNAL: Relay Sniffer Handler
+    //==================================================================
+
+    _handleSniffedJson(json) {
+        if (json.cmd === 'set-patch' && Array.isArray(json.controls)) {
+            this._log(`Sniffer: intercepted set-patch "${json.name}" (${json.controls.length} controls)`);
+            this._onControlSurface?.(json.controls);
         }
     }
 

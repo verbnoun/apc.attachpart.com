@@ -1138,21 +1138,23 @@ html, body {
 .ap-dials-panel {
     display: flex;
     align-items: flex-start;
-    gap: 8px;
-    padding: 6px;
+    gap: 16px;
+    padding: 10px;
     height: 100%;
 }
 
 /* OLED Panel — mimics SSD1306 128x64 display */
 .ap-oled-panel {
     background: #000;
-    border: 2px solid #444;
+    border: 2px solid #000;
     flex-shrink: 0;
     font-family: monospace;
     color: #fff;
     font-size: 9px;
     line-height: 1.2;
     image-rendering: pixelated;
+    transform: scale(1.15);
+    transform-origin: top left;
 }
 
 .ap-oled-status {
@@ -1174,7 +1176,7 @@ html, body {
 
 .ap-oled-line {
     font-size: 8px;
-    color: #ccc;
+    color: #fff;
 }
 
 .ap-oled-control {
@@ -1213,21 +1215,32 @@ html, body {
 
 .ap-oled-bar {
     height: 3px;
-    background: #333;
+    border: 1px solid #fff;
     margin-top: 2px;
+    box-sizing: content-box;
 }
 
 .ap-oled-bar-fill {
     height: 100%;
-    width: 0%;
     background: #fff;
+    transition: width 50ms ease-out;
+}
+
+.ap-oled-value-text {
+    font-size: 7px;
+    color: #fff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: clip;
+    margin-top: 1px;
+    line-height: 1;
 }
 
 /* Pot Group — OLED + cluster side by side */
 .ap-pot-group {
     display: flex;
     align-items: flex-start;
-    gap: 6px;
+    gap: 20px;
     flex-shrink: 0;
 }
 
@@ -1236,7 +1249,7 @@ html, body {
     display: grid;
     grid-template-columns: 1fr 1fr;
     grid-template-rows: 1fr 1fr;
-    gap: 4px;
+    gap: 8px;
 }
 
 /* Pot Knob — circle placeholder */
@@ -1244,7 +1257,7 @@ html, body {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 2px;
+    gap: 3px;
 }
 
 .ap-pot-knob.inactive {
@@ -1252,21 +1265,34 @@ html, body {
 }
 
 .ap-pot-knob-circle {
-    width: 28px;
-    height: 28px;
+    width: 32px;
+    height: 32px;
     border-radius: 50%;
     border: 2px solid #000;
     background: #fff;
+    position: relative;
+    overflow: hidden;
+}
+
+.ap-pot-knob-tick {
+    position: absolute;
+    bottom: 50%;
+    left: 50%;
+    width: 2px;
+    height: 12px;
+    background: #000;
+    transform-origin: center bottom;
+    margin-left: -1px;
 }
 
 .ap-pot-knob-label {
-    font-size: 7px;
+    font-size: 8px;
     font-family: Chicago_12, monospace;
     text-align: center;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: clip;
-    max-width: 36px;
+    max-width: 42px;
 }
 
 /* Pedal Tab */

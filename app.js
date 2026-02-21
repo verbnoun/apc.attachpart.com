@@ -121,6 +121,11 @@ function App() {
             midiState.handleValueFeedback(feedback);
         });
 
+        // Control surface observer — intercepted set-patch from exchange
+        registry.onControlSurface((controls) => {
+            midiStateRef.current?.handleControlSurface(controls);
+        });
+
         registry.onDeviceConnected((portName) => {
             addLog(`Device connected: ${portName}`, 'success');
             initDevice(portName);
@@ -830,6 +835,7 @@ function App() {
                             config={configByDevice[portName]}
                             onConfigChange={(cfg) => updateConfig(portName, cfg, windowId)}
                             midiState={midiStateRef.current}
+                            portName={portName}
                             section={section}
                         />,
                         container
@@ -906,7 +912,7 @@ function App() {
     // Per-section window size constraints
     const CONFIG_SECTION_SIZES = {
         curves:  { width: 500, height: 620, maxHeight: 700, vScroll: true },
-        dials:   { width: 940, height: 200, hScroll: true },
+        dials:   { width: 1400, height: 220, hScroll: true },
         pedal:   { width: 360, height: 250 },
         screen:  { width: 360, height: 250 }
     };
@@ -982,6 +988,7 @@ function App() {
                 config={configByDevice[portName]}
                 onConfigChange={(cfg) => updateConfig(portName, cfg, windowId)}
                 midiState={midiStateRef.current}
+                portName={portName}
                 section={section}
             />,
             container

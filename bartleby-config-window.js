@@ -12,7 +12,7 @@ const { useState, useEffect, useCallback, useRef } = React;
 // CONFIG SECTION WINDOW (one per section)
 //======================================================================
 
-function ConfigSectionWindow({ config, onConfigChange, midiState, section }) {
+function ConfigSectionWindow({ config, onConfigChange, midiState, portName, section }) {
     if (!config) {
         return (
             <div className="ap-bartleby-loading">
@@ -28,7 +28,7 @@ function ConfigSectionWindow({ config, onConfigChange, midiState, section }) {
                     <CurvesTab config={config} onConfigChange={onConfigChange} midiState={midiState} />
                 )}
                 {section === 'dials' && (
-                    <DialsPanel config={config} onConfigChange={onConfigChange} />
+                    <DialsPanel config={config} onConfigChange={onConfigChange} midiState={midiState} portName={portName} />
                 )}
                 {section === 'pedal' && (
                     <PedalTab config={config} onConfigChange={onConfigChange} />
@@ -282,49 +282,105 @@ const DISPLAY_POT_MAP = [
     { display: 4, pots: [9, 8, 6, 7] }
 ];
 
-function DialsPanel({ config, onConfigChange }) {
+function DialsPanel({ config, onConfigChange, midiState, portName }) {
     const pots = config.pots || [];
+    const [ccValues, setCcValues] = useState({});
+    const [controllerStatus, setControllerStatus] = useState({ octave: 0, sustain: false });
+    const [valueFeedbackTrigger, setValueFeedbackTrigger] = useState(0);
+    const [potMap, setPotMap] = useState(null);  // from exchange, overrides config.pots
+
+    useEffect(() => {
+        if (!midiState || !portName) return;
+
+        // Initialize from current state
+        const status = midiState.getControllerStatus(portName);
+        setControllerStatus(status);
+
+        const surface = midiState.getControlSurface();
+        if (surface) setPotMap(surface);
+
+        const initialCc = {};
+        for (const pot of pots) {
+            if (pot && pot.active && pot.cc !== undefined) {
+                const val = midiState.getCCValue(portName, pot.cc);
+                if (val !== null) initialCc[pot.cc] = val;
+            }
+        }
+        setCcValues(initialCc);
+
+        const unsubscribe = midiState.subscribe((eventType, data) => {
+            if (eventType === 'allCC' && data.source === portName) {
+                setCcValues(prev => ({ ...prev, [data.cc]: data.value }));
+            } else if (eventType === 'controllerStatus' && data.portName === portName) {
+                setControllerStatus({ octave: data.octave, sustain: data.sustain });
+            } else if (eventType === 'valueFeedback') {
+                setValueFeedbackTrigger(prev => prev + 1);
+            } else if (eventType === 'controlSurface') {
+                setPotMap(data);
+            }
+        });
+
+        return unsubscribe;
+    }, [midiState, portName]);
+
+    // Merge: exchange data overrides config pots
+    const effectivePots = pots.map((configPot, id) => {
+        const surfacePot = potMap?.[id];
+        return surfacePot || configPot;
+    });
 
     return (
         <div className="ap-dials-panel">
-            <OledPanel type="status" />
+            <OledStatus status={controllerStatus} />
             {DISPLAY_POT_MAP.map(group => (
-                <PotGroup key={group.display} group={group} pots={pots} />
+                <PotGroup key={group.display} group={group} pots={effectivePots}
+                    ccValues={ccValues} midiState={midiState} />
             ))}
         </div>
     );
 }
 
-function OledPanel({ type, pots }) {
-    if (type === 'status') {
-        return (
-            <div className="ap-oled-panel ap-oled-status">
-                <span className="ap-oled-title">BARTLEBY</span>
-                <span className="ap-oled-line">OCT: 0</span>
-                <span className="ap-oled-line">SUSTAIN: OFF</span>
-            </div>
-        );
-    }
+function OledStatus({ status }) {
+    const octave = status.octave;
+    const octaveStr = octave > 0 ? `+${octave}` : `${octave}`;
+    return (
+        <div className="ap-oled-panel ap-oled-status">
+            <span className="ap-oled-title">BARTLEBY</span>
+            <span className="ap-oled-line">{`OCT: ${octaveStr}`}</span>
+            <span className="ap-oled-line">{`SUSTAIN: ${status.sustain ? 'ON' : 'OFF'}`}</span>
+        </div>
+    );
+}
 
-    // Control OLED — 4 corners showing pot labels + bar placeholders
-    // pots = [{ label, cc, active, potId }, ...] in TL, TR, BL, BR order
+function OledControl({ pots, ccValues, midiState }) {
     return (
         <div className="ap-oled-panel ap-oled-control">
             <div className="ap-oled-grid">
-                {pots.map((pot, i) => (
-                    <div key={i} className={`ap-oled-corner ${!pot.active ? 'inactive' : ''}`}>
-                        <span className="ap-oled-label">{pot.label || `CC ${pot.cc}`}</span>
-                        <div className="ap-oled-bar">
-                            <div className="ap-oled-bar-fill" />
+                {pots.map((pot, i) => {
+                    const fillPct = pot.active && ccValues[pot.cc] !== undefined
+                        ? (ccValues[pot.cc] / 127) * 100
+                        : 0;
+                    const feedback = pot.active && midiState
+                        ? midiState.getValueFeedback(pot.cc)
+                        : null;
+                    return (
+                        <div key={i} className={`ap-oled-corner ${!pot.active ? 'inactive' : ''}`}>
+                            <span className="ap-oled-label">{pot.label || `CC ${pot.cc}`}</span>
+                            <div className="ap-oled-bar">
+                                <div className="ap-oled-bar-fill" style={{ width: `${fillPct}%` }} />
+                            </div>
+                            {feedback && (
+                                <span className="ap-oled-value-text">{feedback.displayText}</span>
+                            )}
                         </div>
-                    </div>
-                ))}
+                    );
+                })}
             </div>
         </div>
     );
 }
 
-function PotGroup({ group, pots }) {
+function PotGroup({ group, pots, ccValues, midiState }) {
     const groupPots = group.pots.map(id => ({
         ...pots[id],
         potId: id
@@ -332,28 +388,32 @@ function PotGroup({ group, pots }) {
 
     return (
         <div className="ap-pot-group">
-            <OledPanel type="control" pots={groupPots} />
-            <PotCluster pots={groupPots} />
+            <OledControl pots={groupPots} ccValues={ccValues} midiState={midiState} />
+            <PotCluster pots={groupPots} ccValues={ccValues} />
         </div>
     );
 }
 
-function PotCluster({ pots }) {
+function PotCluster({ pots, ccValues }) {
     // pots in TL, TR, BL, BR order — maps to 2x2 grid naturally
     return (
         <div className="ap-pot-cluster">
             {pots.map(pot => (
-                <PotKnob key={pot.potId} pot={pot} />
+                <PotKnob key={pot.potId} pot={pot} ccValue={ccValues[pot.cc]} />
             ))}
         </div>
     );
 }
 
-function PotKnob({ pot }) {
+function PotKnob({ pot, ccValue }) {
     const label = pot.label || `CC ${pot.cc}`;
+    // 6 o'clock (180°) at 0, 4 o'clock (480°/120°) at 127 — 300° sweep
+    const angle = ccValue !== undefined ? 180 + (ccValue / 127) * 300 : 180;
     return (
         <div className={`ap-pot-knob ${!pot.active ? 'inactive' : ''}`}>
-            <div className="ap-pot-knob-circle" />
+            <div className="ap-pot-knob-circle">
+                <div className="ap-pot-knob-tick" style={{ transform: `rotate(${angle}deg)` }} />
+            </div>
             <span className="ap-pot-knob-label">{label}</span>
         </div>
     );
