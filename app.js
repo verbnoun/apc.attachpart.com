@@ -52,15 +52,44 @@ function App() {
     // { id, type: 'apconsole'|'bartleby'|'candide', portName, title }
     const [focusedWindow, setFocusedWindow] = useState({ id: null, type: 'apconsole', portName: null, title: null });
 
-    // Active config section for Bartleby (driven by menu bar Config dropdown)
-    const [configSection, setConfigSection] = useState('curves');
-
     // Logs
     const [logs, setLogs] = useState([]);
 
     const addLog = useCallback((message, type = 'info') => {
         const timestamp = new Date().toLocaleTimeString();
         setLogs(prev => [...prev.slice(-99), { message, type, timestamp }]);
+    }, []);
+
+    // Per-window info bar helpers
+    const infoBarTimersRef = useRef({});
+
+    const clearInfoBar = useCallback((windowId) => {
+        if (infoBarTimersRef.current[windowId]) {
+            clearTimeout(infoBarTimersRef.current[windowId]);
+            delete infoBarTimersRef.current[windowId];
+        }
+        WindowManager.setInfoBar(windowId, { left: '' });
+    }, []);
+
+    const clearInfoBarDelayed = useCallback((windowId, delay = 2000) => {
+        if (infoBarTimersRef.current[windowId]) {
+            clearTimeout(infoBarTimersRef.current[windowId]);
+        }
+        infoBarTimersRef.current[windowId] = setTimeout(() => {
+            delete infoBarTimersRef.current[windowId];
+            WindowManager.setInfoBar(windowId, { left: '' });
+        }, delay);
+    }, []);
+
+    const clearInfoBarFull = useCallback((windowId, delay = 2000) => {
+        if (infoBarTimersRef.current[windowId]) {
+            clearTimeout(infoBarTimersRef.current[windowId]);
+        }
+        infoBarTimersRef.current[windowId] = setTimeout(() => {
+            delete infoBarTimersRef.current[windowId];
+            WindowManager.setInfoBar(windowId, { left: '', right: '' });
+            WindowManager.setInfoBarClickable(windowId, false);
+        }, delay);
     }, []);
 
     // Sync logs (separate from main log)
@@ -114,13 +143,19 @@ function App() {
             const toolWindows = ['log-window', 'expression-pad', 'sync-window', 'preferences'];
             if (!windowId || toolWindows.includes(windowId)) {
                 setFocusedWindow({ id: windowId, type: 'apconsole', portName: null, title: null });
+            } else if (windowId.startsWith('config-')) {
+                // config-{section}-{portName}
+                const rest = windowId.replace('config-', '');
+                const dashIdx = rest.indexOf('-');
+                const portName = rest.substring(dashIdx + 1);
+                const device = devicesRef.current[portName];
+                const deviceName = device?.deviceInfo?.name || portName;
+                setFocusedWindow({ id: windowId, type: 'bartleby', portName, title: deviceName });
             } else if (windowId.startsWith('device-')) {
                 const portName = windowId.replace('device-', '');
-                // Determine device type from capabilities
                 const device = devicesRef.current[portName];
                 const caps = device?.capabilities || [];
                 const type = caps.includes(CAPABILITIES.CONTROLLER) ? 'bartleby' : 'candide';
-                // Use base device name for menu bar (not the "Name / Section" title bar text)
                 const deviceName = device?.deviceInfo?.name || portName;
                 setFocusedWindow({ id: windowId, type, portName, title: deviceName });
             } else {
@@ -249,8 +284,21 @@ function App() {
 
             addLog(`${deviceInfo.name || portName} initialized`, 'success');
 
-            // Auto-reopen device window if it was previously open
-            if (WorkspacePersistence.wasDeviceWindowOpen(portName)) {
+            // Auto-reopen windows if they were previously open
+            if (capabilities.includes(CAPABILITIES.CONTROLLER)) {
+                // Reopen any config section windows that were open
+                setTimeout(() => {
+                    const sections = WorkspacePersistence.getOpenConfigWindows(portName);
+                    if (sections.length > 0) {
+                        for (const section of sections) {
+                            openConfigWindow(portName, section);
+                        }
+                    } else if (WorkspacePersistence.wasDeviceWindowOpen(portName)) {
+                        // Migration: old device window was open, open curves as default
+                        openConfigWindow(portName, 'curves');
+                    }
+                }, 0);
+            } else if (WorkspacePersistence.wasDeviceWindowOpen(portName)) {
                 setTimeout(() => openDeviceApp(portName), 0);
             }
         } catch (err) {
@@ -275,6 +323,15 @@ function App() {
         if (WindowManager.exists(windowId)) {
             WindowManager.close(windowId);
             delete windowContainersRef.current[windowId];
+        }
+
+        // Close all config section windows for this device
+        for (const section of ['curves', 'dials', 'pedal', 'screen']) {
+            const configWid = `config-${section}-${portName}`;
+            if (WindowManager.exists(configWid)) {
+                WindowManager.close(configWid);
+                delete windowContainersRef.current[configWid];
+            }
         }
 
         // Clear role if this device had one
@@ -465,31 +522,159 @@ function App() {
     // CONFIG OPERATIONS
     //------------------------------------------------------------------
 
-    const updateConfig = async (portName, partialConfig) => {
+    const updateConfig = async (portName, partialConfig, windowId) => {
         const api = deviceApisRef.current[portName];
         if (!api) return;
 
+        // Cancel any pending info bar clear timer
+        if (windowId && infoBarTimersRef.current[windowId]) {
+            clearTimeout(infoBarTimersRef.current[windowId]);
+            delete infoBarTimersRef.current[windowId];
+        }
+
+        // Queue-based log display: each line shown for at least 250ms
+        const logQueue = [];
+        let logTimer = null;
+        let onQueueDrain = null;
+
+        const showNextLog = () => {
+            if (logQueue.length === 0) {
+                logTimer = null;
+                if (onQueueDrain) onQueueDrain();
+                return;
+            }
+            const msg = logQueue.shift();
+            WindowManager.setInfoBar(windowId, { left: msg });
+            logTimer = setTimeout(showNextLog, 80);
+        };
+
+        const origLog = api._logFn;
+        if (windowId) {
+            WindowManager.setInfoBar(windowId, { left: '', right: 'Sending\u2026' });
+            WindowManager.setInfoBarClickable(windowId, false);
+            api._logFn = (msg, type) => {
+                origLog(msg, type);
+                logQueue.push(msg);
+                if (!logTimer) showNextLog();
+            };
+        }
+
+        let configSent = false;
+        let clearAfterDrain = false;
         try {
+            // Step 1: config-set (writes to RAM, returns full config)
             const result = await api.setConfig(partialConfig);
+            configSent = true;
             if (result.config) {
                 setConfigByDevice(prev => ({
                     ...prev,
                     [portName]: result.config
                 }));
             }
+
+            // Step 2: save (writes RAM to flash)
+            if (windowId) {
+                WindowManager.setInfoBar(windowId, { right: 'Saving\u2026' });
+            }
+            await api.save();
+
+            // Full success — "Saved" persists, clear left after queue drains
+            setDevices(prev => ({
+                ...prev,
+                [portName]: { ...prev[portName], saveStatus: 'saved' }
+            }));
+            if (windowId) {
+                WindowManager.setInfoBar(windowId, { right: 'Saved' });
+                clearAfterDrain = true;
+            }
         } catch (err) {
-            addLog(`Failed to update config: ${err.message}`, 'error');
+            addLog(`Config update failed: ${err.message}`, 'error');
+            if (windowId) {
+                if (configSent) {
+                    // Config in RAM, save failed — offer retry
+                    setDevices(prev => ({
+                        ...prev,
+                        [portName]: { ...prev[portName], saveStatus: 'unsaved' }
+                    }));
+                    WindowManager.setInfoBar(windowId, { right: 'Click To Save' });
+                    WindowManager.setInfoBarClickable(windowId, true);
+                } else {
+                    // Config-set failed — device unchanged, revert to Saved
+                    WindowManager.setInfoBar(windowId, { right: 'Saved' });
+                    clearAfterDrain = true;
+                }
+            }
+        } finally {
+            api._logFn = origLog;
+            // Start clear timer after queue drains (so last line gets full screen time)
+            if (windowId && clearAfterDrain) {
+                onQueueDrain = () => clearInfoBarDelayed(windowId, 250);
+                if (!logTimer) clearInfoBarDelayed(windowId, 250);
+            }
         }
     };
 
-    const saveDevice = async (portName) => {
+    // Retry-only save (called from info bar click when save previously failed)
+    const saveDevice = async (portName, windowId) => {
         const api = deviceApisRef.current[portName];
         if (!api) return;
 
+        // Cancel any pending info bar timer
+        if (windowId && infoBarTimersRef.current[windowId]) {
+            clearTimeout(infoBarTimersRef.current[windowId]);
+            delete infoBarTimersRef.current[windowId];
+        }
+
+        // Queue-based log display: each line shown for at least 250ms
+        const logQueue = [];
+        let logTimer = null;
+        let onQueueDrain = null;
+
+        const showNextLog = () => {
+            if (logQueue.length === 0) {
+                logTimer = null;
+                if (onQueueDrain) onQueueDrain();
+                return;
+            }
+            const msg = logQueue.shift();
+            WindowManager.setInfoBar(windowId, { left: msg });
+            logTimer = setTimeout(showNextLog, 80);
+        };
+
+        const origLog = api._logFn;
+        if (windowId) {
+            WindowManager.setInfoBar(windowId, { left: '', right: 'Saving\u2026' });
+            WindowManager.setInfoBarClickable(windowId, false);
+            api._logFn = (msg, type) => {
+                origLog(msg, type);
+                logQueue.push(msg);
+                if (!logTimer) showNextLog();
+            };
+        }
+
+        let clearAfterDrain = false;
         try {
             await api.save();
+            setDevices(prev => ({
+                ...prev,
+                [portName]: { ...prev[portName], saveStatus: 'saved' }
+            }));
+            if (windowId) {
+                WindowManager.setInfoBar(windowId, { right: 'Saved' });
+                clearAfterDrain = true;
+            }
         } catch (err) {
-            addLog(`Failed to save: ${err.message}`, 'error');
+            addLog(`Save failed: ${err.message}`, 'error');
+            if (windowId) {
+                WindowManager.setInfoBar(windowId, { right: 'Click To Save' });
+                WindowManager.setInfoBarClickable(windowId, true);
+            }
+        } finally {
+            api._logFn = origLog;
+            if (windowId && clearAfterDrain) {
+                onQueueDrain = () => clearInfoBarDelayed(windowId, 250);
+                if (!logTimer) clearInfoBarDelayed(windowId, 250);
+            }
         }
     };
 
@@ -584,23 +769,13 @@ function App() {
 
     const windowContainersRef = useRef({});
 
-    // Re-render device app windows when any relevant state changes
+    // Re-render device app windows (synth/Candide) when relevant state changes
     useEffect(() => {
         for (const [portName, device] of Object.entries(devices)) {
             const windowId = `device-${portName}`;
             const container = windowContainersRef.current[windowId];
             if (container && WindowManager.exists(windowId)) {
-                const capabilities = device.capabilities || [];
-                const hasPatch = capabilities.includes(CAPABILITIES.PATCHES);
-                const isController = capabilities.includes(CAPABILITIES.CONTROLLER);
                 const cConfig = controllerPortName ? configByDevice[controllerPortName] : null;
-
-                // Update title bar for controller devices: "Bartleby : Curves"
-                if (isController && configSection) {
-                    const deviceName = device.deviceInfo?.name || portName;
-                    const sectionName = configSection.charAt(0).toUpperCase() + configSection.slice(1);
-                    WindowManager.setTitle(windowId, `${deviceName} / ${sectionName}`);
-                }
 
                 ReactDOM.render(
                     <DeviceAppWindow
@@ -622,19 +797,39 @@ function App() {
                         addLog={addLog}
                         midiState={midiStateRef.current}
                         controllerConfig={cConfig}
-                        config={configByDevice[portName]}
-                        onConfigChange={(cfg) => updateConfig(portName, cfg)}
-                        onSave={() => saveDevice(portName)}
-                        api={deviceApisRef.current[portName]}
-                        defaultTab={hasPatch ? 'patches' : 'config'}
-                        configSection={configSection}
                     />,
                     container
                 );
             }
         }
-    }, [devices, configByDevice, topology, patchList, currentPatchIndex, currentPatch,
-        synthPortName, controllerPortName, addLog, configSection]);
+    }, [devices, topology, patchList, currentPatchIndex, currentPatch,
+        synthPortName, controllerPortName, addLog]);
+
+    // Re-render config section windows when config state changes
+    useEffect(() => {
+        for (const [portName, device] of Object.entries(devices)) {
+            const capabilities = device.capabilities || [];
+            if (!capabilities.includes(CAPABILITIES.CONTROLLER)) continue;
+
+            for (const section of ['curves', 'dials', 'pedal', 'screen']) {
+                const windowId = `config-${section}-${portName}`;
+                const container = windowContainersRef.current[windowId];
+                if (container && WindowManager.exists(windowId)) {
+                    // Info bar right slot managed by operations only — not re-render
+
+                    ReactDOM.render(
+                        <ConfigSectionWindow
+                            config={configByDevice[portName]}
+                            onConfigChange={(cfg) => updateConfig(portName, cfg, windowId)}
+                            midiState={midiStateRef.current}
+                            section={section}
+                        />,
+                        container
+                    );
+                }
+            }
+        }
+    }, [devices, configByDevice]);
 
     // Re-render Log window when logs or topology change
     useEffect(() => {
@@ -685,8 +880,16 @@ function App() {
     // WINDOW OPENERS
     //------------------------------------------------------------------
 
-    const openDeviceApp = async (portName) => {
-        const windowId = `device-${portName}`;
+    // Per-section window size constraints
+    const CONFIG_SECTION_SIZES = {
+        curves:  { width: 500, height: 620, maxHeight: 700, resizeDir: 'vertical' },
+        dials:   { width: 500, height: 620, maxHeight: 700, resizeDir: 'vertical' },
+        pedal:   { width: 360, height: 250, resizable: false },
+        screen:  { width: 360, height: 250, resizable: false }
+    };
+
+    const openConfigWindow = async (portName, section) => {
+        const windowId = `config-${section}-${portName}`;
         if (WindowManager.exists(windowId)) {
             WindowManager.focus(windowId);
             return;
@@ -694,15 +897,12 @@ function App() {
 
         const device = devices[portName];
         if (!device) return;
-        const capabilities = device.capabilities || [];
         const deviceName = device.deviceInfo?.name || portName;
-        const hasPatch = capabilities.includes(CAPABILITIES.PATCHES);
-        const isController = capabilities.includes(CAPABILITIES.CONTROLLER);
-        const theme = isController ? 'controller' : 'synth';
+        const sectionName = section.charAt(0).toUpperCase() + section.slice(1);
 
         // Ensure config is loaded
         const api = deviceApisRef.current[portName];
-        if (capabilities.includes(CAPABILITIES.CONFIG) && !configByDevice[portName] && api) {
+        if (!configByDevice[portName] && api) {
             try {
                 const result = await api.getConfig();
                 if (result.config) {
@@ -713,6 +913,7 @@ function App() {
             }
         }
 
+        const sizes = CONFIG_SECTION_SIZES[section];
         const container = document.createElement('div');
         container.style.height = '100%';
         windowContainersRef.current[windowId] = container;
@@ -721,15 +922,84 @@ function App() {
 
         WindowManager.create({
             id: windowId,
-            title: isController ? `${deviceName} / ${configSection.charAt(0).toUpperCase() + configSection.slice(1)}` : deviceName,
+            title: `${deviceName} / ${sectionName}`,
+            x: saved?.x ?? (100 + ['curves', 'dials', 'pedal', 'screen'].indexOf(section) * 30),
+            y: saved?.y ?? (30 + ['curves', 'dials', 'pedal', 'screen'].indexOf(section) * 30),
+            width: saved?.width ?? sizes.width,
+            height: saved?.height ?? sizes.height,
+            content: container,
+            theme: 'controller',
+            maxHeight: sizes.maxHeight,
+            resizeDir: sizes.resizeDir,
+            resizable: sizes.resizable,
+            infoBar: {
+                left: '',
+                right: 'Saved'
+            },
+            onInfoBarClick: (slot) => {
+                if (slot === 'right' && devicesRef.current[portName]?.saveStatus === 'unsaved') {
+                    saveDevice(portName, windowId);
+                }
+            },
+            onClose: () => {
+                // Clear any pending info bar timers
+                if (infoBarTimersRef.current[windowId]) {
+                    clearTimeout(infoBarTimersRef.current[windowId]);
+                    delete infoBarTimersRef.current[windowId];
+                }
+                delete windowContainersRef.current[windowId];
+            }
+        });
+
+        WorkspacePersistence.setWasOpen(windowId, true);
+
+        ReactDOM.render(
+            <ConfigSectionWindow
+                config={configByDevice[portName]}
+                onConfigChange={(cfg) => updateConfig(portName, cfg, windowId)}
+                midiState={midiStateRef.current}
+                section={section}
+            />,
+            container
+        );
+    };
+
+    const openDeviceApp = async (portName) => {
+        const device = devices[portName];
+        if (!device) return;
+        const capabilities = device.capabilities || [];
+
+        // Controllers open config section windows instead of a device window
+        if (capabilities.includes(CAPABILITIES.CONTROLLER)) {
+            openConfigWindow(portName, 'curves');
+            return;
+        }
+
+        const windowId = `device-${portName}`;
+        if (WindowManager.exists(windowId)) {
+            WindowManager.focus(windowId);
+            return;
+        }
+
+        const deviceName = device.deviceInfo?.name || portName;
+        const hasPatch = capabilities.includes(CAPABILITIES.PATCHES);
+
+        const container = document.createElement('div');
+        container.style.height = '100%';
+        windowContainersRef.current[windowId] = container;
+
+        const saved = WorkspacePersistence.getWindowState(windowId);
+        const cConfig = controllerPortName ? configByDevice[controllerPortName] : null;
+
+        WindowManager.create({
+            id: windowId,
+            title: deviceName,
             x: saved?.x ?? 100,
             y: saved?.y ?? 30,
             width: saved?.width ?? (hasPatch ? 1280 : 500),
             height: saved?.height ?? (hasPatch ? 800 : 450),
             content: container,
-            theme,
-            maxHeight: isController ? 700 : Infinity,
-            resizeDir: isController ? 'vertical' : 'both',
+            theme: 'synth',
             onClose: () => {
                 delete windowContainersRef.current[windowId];
             }
@@ -737,7 +1007,6 @@ function App() {
 
         WorkspacePersistence.setWasOpen(windowId, true);
 
-        const cConfig = controllerPortName ? configByDevice[controllerPortName] : null;
         ReactDOM.render(
             <DeviceAppWindow
                 portName={portName}
@@ -758,11 +1027,6 @@ function App() {
                 addLog={addLog}
                 midiState={midiStateRef.current}
                 controllerConfig={cConfig}
-                config={configByDevice[portName]}
-                onConfigChange={(cfg) => updateConfig(portName, cfg)}
-                onSave={() => saveDevice(portName)}
-                api={deviceApisRef.current[portName]}
-                defaultTab={hasPatch ? 'patches' : 'config'}
             />,
             container
         );
@@ -977,8 +1241,10 @@ function App() {
         <div className="ap-container">
             <MenuBar
                 focusedWindow={focusedWindow}
-                configSection={configSection}
-                onConfigSection={setConfigSection}
+                onOpenConfigWindow={(section) => {
+                    const portName = focusedWindow.portName;
+                    if (portName) openConfigWindow(portName, section);
+                }}
                 onLogClick={() => openLogWindow()}
                 onSyncClick={() => openSyncWindow()}
                 onExpressionPadClick={() => openExpressionPad()}

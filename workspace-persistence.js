@@ -69,6 +69,23 @@ const WorkspacePersistence = {
     },
 
     /**
+     * Get config section windows that were open for a device
+     * @param {string} portName
+     * @returns {string[]} section names (e.g. ['curves', 'dials'])
+     */
+    getOpenConfigWindows(portName) {
+        const state = this._load();
+        const sections = [];
+        for (const section of ['curves', 'dials', 'pedal', 'screen']) {
+            const windowId = `config-${section}-${portName}`;
+            if (state.windows[windowId]?.wasOpen === true) {
+                sections.push(section);
+            }
+        }
+        return sections;
+    },
+
+    /**
      * Get all tool windows that were open
      * @returns {string[]}
      */

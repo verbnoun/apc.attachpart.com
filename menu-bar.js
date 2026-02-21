@@ -3,14 +3,14 @@
  *
  * Left: App name (bold), context-sensitive dropdown menus
  *   - APConsole (no device focused): Tools
- *   - Bartleby focused: Config, Tools (includes Firmware/Language)
+ *   - Bartleby focused: Config (opens section windows), Tools (includes Firmware/Language)
  *   - Candide focused: Tools (includes Firmware/Language)
  *
  * Dropdown behavior: click to open, click item to act, click elsewhere to dismiss.
  * Hover switches between open menus (Mac behavior).
  */
 
-function MenuBar({ focusedWindow, configSection, onConfigSection, onLogClick, onSyncClick, onExpressionPadClick, onPreferencesClick, onOpenDeviceTool }) {
+function MenuBar({ focusedWindow, onOpenConfigWindow, onLogClick, onSyncClick, onExpressionPadClick, onPreferencesClick, onOpenDeviceTool }) {
     const [openMenu, setOpenMenu] = React.useState(null);
 
     const appType = focusedWindow?.type || 'apconsole';
@@ -64,22 +64,22 @@ function MenuBar({ focusedWindow, configSection, onConfigSection, onLogClick, on
     const menus = [];
 
     if (appType === 'bartleby') {
-        // Bartleby: Config menu (section switcher) + Tools (with Firmware/Language)
+        // Bartleby: Config menu (opens section windows) + Tools (with Firmware/Language)
         menus.push({
             id: 'config',
             label: 'Config',
             items: (
                 <>
-                    <button className={`ap-menubar-dropdown-item${configSection === 'curves' ? ' checked' : ''}`} onMouseDown={(e) => handleItemClick(() => switchConfigSection('curves'), e)}>
+                    <button className="ap-menubar-dropdown-item" onMouseDown={(e) => handleItemClick(() => openConfigWindow('curves'), e)}>
                         Curves
                     </button>
-                    <button className={`ap-menubar-dropdown-item${configSection === 'dials' ? ' checked' : ''}`} onMouseDown={(e) => handleItemClick(() => switchConfigSection('dials'), e)}>
+                    <button className="ap-menubar-dropdown-item" onMouseDown={(e) => handleItemClick(() => openConfigWindow('dials'), e)}>
                         Dials
                     </button>
-                    <button className={`ap-menubar-dropdown-item${configSection === 'pedal' ? ' checked' : ''}`} onMouseDown={(e) => handleItemClick(() => switchConfigSection('pedal'), e)}>
+                    <button className="ap-menubar-dropdown-item" onMouseDown={(e) => handleItemClick(() => openConfigWindow('pedal'), e)}>
                         Pedal
                     </button>
-                    <button className={`ap-menubar-dropdown-item${configSection === 'screen' ? ' checked' : ''}`} onMouseDown={(e) => handleItemClick(() => switchConfigSection('screen'), e)}>
+                    <button className="ap-menubar-dropdown-item" onMouseDown={(e) => handleItemClick(() => openConfigWindow('screen'), e)}>
                         Screen
                     </button>
                 </>
@@ -128,8 +128,8 @@ function MenuBar({ focusedWindow, configSection, onConfigSection, onLogClick, on
         });
     }
 
-    function switchConfigSection(section) {
-        if (onConfigSection) onConfigSection(section);
+    function openConfigWindow(section) {
+        if (onOpenConfigWindow) onOpenConfigWindow(section);
     }
 
     function openDeviceTool(tool) {

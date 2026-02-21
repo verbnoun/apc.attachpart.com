@@ -270,6 +270,52 @@ html, body {
     background: #e8d5c0;
 }
 
+/* Info bar — System 7 info pane between title bar and content */
+.ap-window-infobar {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 20px;
+    overflow: hidden;
+    padding: 3px 8px;
+    background: #ffffff;
+    border-bottom: 1.5px solid #000000;
+    box-shadow: 0 1.5px 0 #ffffff, 0 3px 0 #000000;
+    margin-bottom: 3px;
+    font-family: Chicago_12;
+    font-size: 12px;
+    color: #000000;
+    user-select: none;
+}
+
+.ap-infobar-left,
+.ap-infobar-center,
+.ap-infobar-right {
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ap-infobar-left {
+    text-align: left;
+}
+
+.ap-infobar-center {
+    text-align: center;
+}
+
+.ap-infobar-right {
+    text-align: right;
+}
+
+/* Clickable info bar slot (save status on right) */
+.ap-window-infobar.clickable .ap-infobar-right:hover {
+    text-decoration: underline;
+    cursor: pointer;
+}
+
 /* Content area */
 .ap-window-content {
     flex: 1;
@@ -285,9 +331,15 @@ html, body {
 
 /* Full-height app layouts: outer hidden, inner element handles scrolling */
 .ap-window-resizable .ap-window-content:has(.ap-device-app),
-.ap-window-resizable .ap-window-content:has(.ap-log-window) {
+.ap-window-resizable .ap-window-content:has(.ap-log-window),
+.ap-window-resizable .ap-window-content:has(.ap-bartleby-config) {
     padding: 0;
     overflow: hidden;
+}
+
+/* Config section windows (both resizable and non-resizable) */
+.ap-window-content:has(.ap-bartleby-config) {
+    padding: 0;
 }
 
 /* Horizontal scrollbar: match arrow SVG dimensions (24x23px) */
@@ -776,16 +828,6 @@ html, body {
     margin: 0;
 }
 
-/* Override bartleby config header margin when embedded as tab */
-.ap-device-app-content .ap-bartleby-header {
-    margin: 0;
-}
-
-/* Override window content padding for device app — no padding on scroll container */
-.ap-device-app-content .ap-bartleby-config {
-    padding: 0;
-}
-
 .ap-device-app-content .ap-firmware-window {
     padding: var(--ap-spacing-md);
 }
@@ -911,34 +953,6 @@ html, body {
     display: flex;
     flex-direction: column;
     height: 100%;
-}
-
-.ap-bartleby-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 4px 8px;
-    background: #ffffff;
-    border-bottom: 1.5px solid #000000;
-    flex-shrink: 0;
-}
-
-.ap-bartleby-version {
-    font-family: Monaco, monospace;
-    font-size: 12px;
-    color: #808080;
-}
-
-.ap-save-status {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-family: Chicago_12;
-    font-size: 12px;
-}
-
-.ap-save-status-text {
-    color: #000000;
 }
 
 .ap-bartleby-content {

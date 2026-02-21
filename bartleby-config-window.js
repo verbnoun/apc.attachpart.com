@@ -1,20 +1,18 @@
 /**
- * Bartleby Config Window
+ * Bartleby Config Windows
  *
- * Sections: Curves, Dials, Pedal, Screen
- * Active section driven by menu bar Config dropdown (activeSection prop).
+ * Each config section (Curves, Dials, Pedal, Screen) opens as a separate window.
+ * ConfigSectionWindow renders a single section. Save status shown in window info bar.
  * Changes auto-save to device via existing debounce behavior.
  */
 
 const { useState, useEffect, useCallback, useRef } = React;
 
 //======================================================================
-// BARTLEBY CONFIG WINDOW
+// CONFIG SECTION WINDOW (one per section)
 //======================================================================
 
-function BartlebyConfigWindow({ config, saveStatus, deviceInfo, onConfigChange, onSave, midiState, activeSection }) {
-    const section = activeSection || 'curves';
-
+function ConfigSectionWindow({ config, onConfigChange, midiState, section }) {
     if (!config) {
         return (
             <div className="ap-bartleby-loading">
@@ -25,15 +23,6 @@ function BartlebyConfigWindow({ config, saveStatus, deviceInfo, onConfigChange, 
 
     return (
         <div className="ap-bartleby-config">
-            {/* Header with save status */}
-            <div className="ap-bartleby-header">
-                <SaveStatusIndicator status={saveStatus} onSave={onSave} />
-                {deviceInfo && (
-                    <span className="ap-bartleby-version">v{deviceInfo.version}</span>
-                )}
-            </div>
-
-            {/* Section content — driven by menu bar Config dropdown */}
             <div className="ap-bartleby-content">
                 {section === 'curves' && (
                     <CurvesTab config={config} onConfigChange={onConfigChange} midiState={midiState} />
@@ -48,40 +37,6 @@ function BartlebyConfigWindow({ config, saveStatus, deviceInfo, onConfigChange, 
                     <ScreenTab config={config} onConfigChange={onConfigChange} />
                 )}
             </div>
-        </div>
-    );
-}
-
-//======================================================================
-// TAB COMPONENTS
-//======================================================================
-
-function TabButton({ id, label, activeTab, onClick }) {
-    return (
-        <button
-            className={`ap-tab ${activeTab === id ? 'active' : ''}`}
-            onClick={() => onClick(id)}
-        >
-            {label}
-        </button>
-    );
-}
-
-function SaveStatusIndicator({ status, onSave }) {
-    const statusClass = 'ap-save-status-text';
-
-    const statusText = {
-        'saved': 'SAVED',
-        'saving': 'SAVING...',
-        'unsaved': 'UNSAVED'
-    }[status] || 'SAVED';
-
-    return (
-        <div className="ap-save-status">
-            <span className={statusClass}>{statusText}</span>
-            {status === 'unsaved' && (
-                <button className="ap-btn ap-btn-small" onClick={onSave}>Save Now</button>
-            )}
         </div>
     );
 }
@@ -346,6 +301,27 @@ function PotsTab({ config, onConfigChange }) {
 function PotCard({ index, pot, onChange }) {
     const isActive = pot.active;
 
+    // Local editing state — commit on blur/enter (not every keystroke)
+    const [editLabel, setEditLabel] = useState(pot.label || '');
+    const [editCC, setEditCC] = useState(pot.cc);
+
+    // Sync local state when device config changes (re-read from device)
+    useEffect(() => { setEditLabel(pot.label || ''); }, [pot.label]);
+    useEffect(() => { setEditCC(pot.cc); }, [pot.cc]);
+
+    const commitLabel = () => {
+        if (editLabel !== (pot.label || '')) {
+            onChange('label', editLabel);
+        }
+    };
+
+    const commitCC = () => {
+        const val = parseInt(editCC) || 0;
+        if (val !== pot.cc) {
+            onChange('cc', val);
+        }
+    };
+
     return (
         <div className={`ap-pot-card ${!isActive ? 'inactive' : ''}`}>
             <div className="ap-pot-header">
@@ -359,10 +335,12 @@ function PotCard({ index, pot, onChange }) {
             <input
                 type="text"
                 className="ap-input ap-pot-label"
-                value={pot.label || ''}
+                value={editLabel}
                 maxLength={11}
                 placeholder="Label"
-                onChange={(e) => onChange('label', e.target.value)}
+                onChange={(e) => setEditLabel(e.target.value)}
+                onBlur={commitLabel}
+                onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
             />
             <div className="ap-pot-cc">
                 <span>CC:</span>
@@ -371,8 +349,10 @@ function PotCard({ index, pot, onChange }) {
                     className="ap-input ap-pot-cc-input"
                     min="0"
                     max="127"
-                    value={pot.cc}
-                    onChange={(e) => onChange('cc', parseInt(e.target.value) || 0)}
+                    value={editCC}
+                    onChange={(e) => setEditCC(e.target.value)}
+                    onBlur={commitCC}
+                    onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
                 />
             </div>
         </div>

@@ -1,11 +1,8 @@
 /**
  * Device App Window - Direct content view for a single device
  *
- * No tabs — Firmware/Language moved to Tools menu,
- * config sections driven by menu bar Config dropdown.
- *
- * Bartleby (CONFIG): shows BartlebyConfigWindow directly
  * Candide (PATCHES): shows PatchEditorWindow directly
+ * Bartleby (CONFIG): handled by separate ConfigSectionWindow instances
  */
 
 function DeviceAppWindow({
@@ -27,20 +24,10 @@ function DeviceAppWindow({
     onUpdateModAmount,
     addLog,
     midiState,
-    controllerConfig,
-    // Config props
-    config,
-    onConfigChange,
-    onSave,
-    // Firmware props
-    api,
-    // View control
-    defaultTab,
-    configSection
+    controllerConfig
 }) {
     const capabilities = device?.capabilities || [];
     const hasPatch = capabilities.includes(CAPABILITIES.PATCHES);
-    const hasConfig = capabilities.includes(CAPABILITIES.CONFIG);
 
     return (
         <div className="ap-device-app">
@@ -64,17 +51,6 @@ function DeviceAppWindow({
                         addLog={addLog}
                         midiState={midiState}
                         controllerConfig={controllerConfig}
-                    />
-                )}
-                {hasConfig && (
-                    <BartlebyConfigWindow
-                        config={config}
-                        saveStatus={device?.saveStatus || 'saved'}
-                        deviceInfo={device?.deviceInfo}
-                        onConfigChange={onConfigChange}
-                        onSave={onSave}
-                        midiState={midiState}
-                        activeSection={configSection}
                     />
                 )}
             </div>

@@ -30,6 +30,8 @@ const WindowManager = {
      *   height: number - initial height
      *   content: HTMLElement | string - window content
      *   onClose: () => void - called when window closes
+     *   infoBar: { left, center, right } | null - optional info bar below title
+     *   onInfoBarClick: (slot) => void - called when info bar slot is clicked
      * @returns {HTMLElement} The window element
      */
     create(options) {
@@ -48,7 +50,9 @@ const WindowManager = {
             minWidth = 250,
             minHeight = 150,
             maxWidth = Infinity,
-            maxHeight = Infinity
+            maxHeight = Infinity,
+            infoBar = null,
+            onInfoBarClick = null
         } = options;
 
         // Don't create duplicate windows
@@ -100,6 +104,32 @@ const WindowManager = {
         titleBar.appendChild(titleText);
         titleBar.appendChild(stripesRight);
 
+        // Info bar (optional — System 7 info pane between title bar and content)
+        let infoBarEl = null;
+        if (infoBar) {
+            infoBarEl = document.createElement('div');
+            infoBarEl.className = 'ap-window-infobar';
+            const leftSlot = document.createElement('span');
+            leftSlot.className = 'ap-infobar-left';
+            leftSlot.textContent = infoBar.left || '';
+            const centerSlot = document.createElement('span');
+            centerSlot.className = 'ap-infobar-center';
+            centerSlot.textContent = infoBar.center || '';
+            const rightSlot = document.createElement('span');
+            rightSlot.className = 'ap-infobar-right';
+            rightSlot.textContent = infoBar.right || '';
+            infoBarEl.appendChild(leftSlot);
+            infoBarEl.appendChild(centerSlot);
+            infoBarEl.appendChild(rightSlot);
+
+            if (onInfoBarClick) {
+                // Don't add 'clickable' class here — toggled dynamically via setInfoBarClickable
+                leftSlot.addEventListener('click', () => onInfoBarClick('left'));
+                centerSlot.addEventListener('click', () => onInfoBarClick('center'));
+                rightSlot.addEventListener('click', () => onInfoBarClick('right'));
+            }
+        }
+
         // Content area
         const contentArea = document.createElement('div');
         contentArea.className = 'ap-window-content';
@@ -114,6 +144,7 @@ const WindowManager = {
         resizeHandle.className = 'ap-window-resize';
 
         win.appendChild(titleBar);
+        if (infoBarEl) win.appendChild(infoBarEl);
         win.appendChild(contentArea);
         win.appendChild(resizeHandle);
 
@@ -130,6 +161,8 @@ const WindowManager = {
             element: win,
             titleBar,
             contentArea,
+            infoBarEl,
+            onInfoBarClick,
             onClose,
             constraints: { minWidth, minHeight, maxWidth, maxHeight }
         });
@@ -239,6 +272,37 @@ const WindowManager = {
         const newH = Math.min(c.maxHeight || Infinity, Math.max(c.minHeight || 150, h));
         if (newW !== w) win.style.width = `${newW}px`;
         if (newH !== h) win.style.height = `${newH}px`;
+    },
+
+    /**
+     * Update info bar content
+     * @param {string} id - Window ID
+     * @param {Object} content - { left, center, right } text values
+     */
+    setInfoBar(id, content) {
+        const windowInfo = this.windows.get(id);
+        if (!windowInfo || !windowInfo.infoBarEl) return;
+        const bar = windowInfo.infoBarEl;
+        if (content.left !== undefined) {
+            bar.querySelector('.ap-infobar-left').textContent = content.left;
+        }
+        if (content.center !== undefined) {
+            bar.querySelector('.ap-infobar-center').textContent = content.center;
+        }
+        if (content.right !== undefined) {
+            bar.querySelector('.ap-infobar-right').textContent = content.right;
+        }
+    },
+
+    /**
+     * Toggle clickable affordance on info bar
+     * @param {string} id - Window ID
+     * @param {boolean} clickable - Whether right slot should appear clickable
+     */
+    setInfoBarClickable(id, clickable) {
+        const windowInfo = this.windows.get(id);
+        if (!windowInfo || !windowInfo.infoBarEl) return;
+        windowInfo.infoBarEl.classList.toggle('clickable', clickable);
     },
 
     // Private: setup drag behavior

@@ -837,9 +837,14 @@ class UnifiedDeviceAPI {
 
         // Save status updates
         if (responseType === 'save-status') {
-            this._log(`Save status: ${json.status}`);
+            const statusText = json.status === 'saved' ? 'Complete' : json.status;
+            this._log(`Save status: ${statusText}`);
             if (this._onSaveStatusChanged) {
                 this._onSaveStatusChanged(json.status);
+            }
+            // When we're waiting for a save response, 'saved' IS the response
+            if (this._pendingCmd === 'save' && json.status === 'saved') {
+                this._resolve(json);
             }
             return;
         }
