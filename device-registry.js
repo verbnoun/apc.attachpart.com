@@ -110,9 +110,9 @@ class DeviceRegistry {
         // Registered APIs for message routing
         this._apis = {};  // { portName: api }
 
-        // Device roles
-        this._controllerPortName = null;
-        this._synthPortName = null;
+        // Route map (replaces singular device roles)
+        this._routes = [];        // Array of { from: controllerPort, to: synthPort }
+        this._configPairs = {};   // { controllerPort: synthPort } — 1:1 config pairing
 
         // Callbacks
         this._onDeviceConnected = null;
@@ -120,6 +120,7 @@ class DeviceRegistry {
         this._onMidiThrough = null;
         this._onAllMidiInput = null;
         this._onValueFeedback = null;
+        this._onRoutesChanged = null;
 
         // Logging
         this._logFn = null;
@@ -269,41 +270,95 @@ class DeviceRegistry {
     }
 
     //==================================================================
-    // PUBLIC: Device Roles
+    // PUBLIC: Route Map (many-to-many MIDI routing)
     //==================================================================
 
-    /**
-     * Set device as controller (for MIDI routing: controller -> synth)
-     * @param {string} portName
-     */
-    setControllerDevice(portName) {
-        this._controllerPortName = portName;
-        this._log(`Controller role: ${portName}`);
+    addRoute(from, to) {
+        if (this.hasRoute(from, to)) return false;
+        this._routes.push({ from, to });
+        this._log(`Route added: ${from} → ${to}`);
+        this._onRoutesChanged?.();
+        return true;
     }
 
-    /**
-     * Set device as synth (for MIDI routing: controller -> synth)
-     * @param {string} portName
-     */
-    setSynthDevice(portName) {
-        this._synthPortName = portName;
-        this._log(`Synth role: ${portName}`);
+    removeRoute(from, to) {
+        const idx = this._routes.findIndex(r => r.from === from && r.to === to);
+        if (idx === -1) return false;
+        this._routes.splice(idx, 1);
+        // Clear config pair if it used this route
+        if (this._configPairs[from] === to) {
+            delete this._configPairs[from];
+        }
+        this._log(`Route removed: ${from} → ${to}`);
+        this._onRoutesChanged?.();
+        return true;
     }
 
-    /**
-     * Get controller port name
-     * @returns {string|null}
-     */
-    getControllerPortName() {
-        return this._controllerPortName;
+    getRoutes() {
+        return [...this._routes];
     }
 
-    /**
-     * Get synth port name
-     * @returns {string|null}
-     */
-    getSynthPortName() {
-        return this._synthPortName;
+    getRoutesFrom(port) {
+        return this._routes.filter(r => r.from === port).map(r => r.to);
+    }
+
+    getRoutesTo(port) {
+        return this._routes.filter(r => r.to === port).map(r => r.from);
+    }
+
+    hasRoute(from, to) {
+        return this._routes.some(r => r.from === from && r.to === to);
+    }
+
+    removeRoutesForPort(port) {
+        const before = this._routes.length;
+        this._routes = this._routes.filter(r => r.from !== port && r.to !== port);
+        // Clear config pairs involving this port
+        for (const ctrl of Object.keys(this._configPairs)) {
+            if (ctrl === port || this._configPairs[ctrl] === port) {
+                delete this._configPairs[ctrl];
+            }
+        }
+        if (this._routes.length !== before) {
+            this._log(`Routes cleared for ${port}`);
+            this._onRoutesChanged?.();
+        }
+    }
+
+    clearRoutes() {
+        this._routes = [];
+        this._configPairs = {};
+        this._onRoutesChanged?.();
+    }
+
+    onRoutesChanged(callback) {
+        this._onRoutesChanged = callback;
+    }
+
+    //==================================================================
+    // PUBLIC: Config Pairs (1:1 controller→synth pairing)
+    //==================================================================
+
+    setConfigPair(controllerPort, synthPort) {
+        if (!this.hasRoute(controllerPort, synthPort)) return false;
+        this._configPairs[controllerPort] = synthPort;
+        this._log(`Config pair: ${controllerPort} ⇄ ${synthPort}`);
+        this._onRoutesChanged?.();
+        return true;
+    }
+
+    clearConfigPair(controllerPort) {
+        if (!(controllerPort in this._configPairs)) return;
+        delete this._configPairs[controllerPort];
+        this._onRoutesChanged?.();
+    }
+
+    getConfigPair(controllerPort) {
+        return this._configPairs[controllerPort] || null;
+    }
+
+    getConfigPairs() {
+        return { ...this._configPairs };
     }
 
     //==================================================================
@@ -363,17 +418,6 @@ class DeviceRegistry {
         return Array.from(this._connectedDevices);
     }
 
-    /**
-     * Check if both controller and synth are connected
-     * @returns {boolean}
-     */
-    isLinked() {
-        return this._controllerPortName &&
-               this._synthPortName &&
-               this._connectedDevices.has(this._controllerPortName) &&
-               this._connectedDevices.has(this._synthPortName);
-    }
-
     //==================================================================
     // PUBLIC: MIDI Logging
     //==================================================================
@@ -421,13 +465,8 @@ class DeviceRegistry {
             if (!nowConnected.has(portName)) {
                 this._log(`Disconnected: ${portName}`, 'warning');
 
-                // Clear role if this device had one
-                if (this._controllerPortName === portName) {
-                    this._controllerPortName = null;
-                }
-                if (this._synthPortName === portName) {
-                    this._synthPortName = null;
-                }
+                // Clear routes involving this port
+                this.removeRoutesForPort(portName);
 
                 // Disable exchange relay if this port was involved
                 if (this._exchangeRelayActive &&
@@ -495,16 +534,16 @@ class DeviceRegistry {
         // Fire all-input callback for MIDI monitor (all non-SysEx from any device)
         this._onAllMidiInput?.(portName, data);
 
-        // Non-SysEx: forward controller -> synth if routing enabled
-        if (this._controllerPortName === portName && this._synthPortName) {
-            this.send(this._synthPortName, data);
+        // Non-SysEx: forward to all route destinations
+        const destinations = this.getRoutesFrom(portName);
+        if (destinations.length > 0) {
+            for (const dest of destinations) {
+                this.send(dest, data);
+            }
+            this._onMidiThrough?.(data, portName);
 
-            // Notify UI for display update
-            this._onMidiThrough?.(data);
-
-            // Optional verbose logging
             if (this._midiLoggingEnabled) {
-                this._log(`ROUTE: [${this._formatMidi(data)}]`, 'midi');
+                this._log(`ROUTE: [${this._formatMidi(data)}] → ${destinations.join(', ')}`, 'midi');
             }
         }
     }

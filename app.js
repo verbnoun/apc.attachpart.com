@@ -32,21 +32,18 @@ function App() {
     const deviceRegistryRef = useRef(null);
     const midiStateRef = useRef(null);
 
-    // Patch state (for devices with PATCHES capability)
-    const [patchList, setPatchList] = useState([]);
-    const [currentPatchIndex, setCurrentPatchIndex] = useState(-1);
-    const [currentPatch, setCurrentPatch] = useState(null);
-    const [topology, setTopology] = useState(null);
+    // Per-synth state map
+    // { 'AP Aach': { patchList, currentPatchIndex, currentPatch, topology }, ... }
+    const [synthState, setSynthState] = useState({});
+    const synthStateRef = useRef(synthState);
+    synthStateRef.current = synthState;
 
     // Config state (for devices with CONFIG capability)
     const [configByDevice, setConfigByDevice] = useState({});
 
-    // Track which device has which role
-    const [synthPortName, setSynthPortName] = useState(null);
-    const [controllerPortName, setControllerPortName] = useState(null);
-
-    // Ref to track synthPortName for use in callbacks (avoids stale closure)
-    const synthPortNameRef = useRef(null);
+    // Routing state (React mirrors of DeviceRegistry route map)
+    const [routes, setRoutes] = useState([]);
+    const [configPairs, setConfigPairs] = useState({});
 
     // Virtual device instances (for UI access)
     const virtualDevicesRef = useRef({});
@@ -98,6 +95,17 @@ function App() {
         }, delay);
     }, []);
 
+    // Helper to update per-synth state
+    const updateSynthState = useCallback((portName, updates) => {
+        setSynthState(prev => ({
+            ...prev,
+            [portName]: {
+                ...(prev[portName] || { patchList: [], currentPatchIndex: -1, currentPatch: null, topology: null }),
+                ...updates
+            }
+        }));
+    }, []);
+
     // Sync logs (separate from main log)
     const [syncLogs, setSyncLogs] = useState([]);
 
@@ -116,7 +124,7 @@ function App() {
 
         const midiState = new MidiState();
         midiStateRef.current = midiState;
-        registry.onMidiThrough((data) => midiState.handleMidiThrough(data));
+        registry.onMidiThrough((data, fromPort) => midiState.handleMidiThrough(data, fromPort));
         registry.onAllMidiInput((portName, data) => midiState.handleAllMidiInput(portName, data));
 
         // Value feedback observer — synth parameter values passing through relay
@@ -127,6 +135,14 @@ function App() {
         // Control surface observer — intercepted set-patch from exchange
         registry.onControlSurface((controls) => {
             midiStateRef.current?.handleControlSurface(controls);
+        });
+
+        // Route map change subscription
+        registry.onRoutesChanged(() => {
+            setRoutes(registry.getRoutes());
+            setConfigPairs({ ...registry.getConfigPairs() });
+            WorkspacePersistence.saveRoutes(registry.getRoutes());
+            WorkspacePersistence.saveConfigPairs(registry.getConfigPairs());
         });
 
         registry.onDeviceConnected((portName) => {
@@ -152,6 +168,16 @@ function App() {
                 virtualDevicesRef.current[abbott._portName] = abbott;
                 addLog('Virtual devices started', 'info');
             }
+
+            // Restore saved routes and config pairs
+            const savedRoutes = WorkspacePersistence.loadRoutes();
+            for (const { from, to } of savedRoutes) {
+                registry.addRoute(from, to);
+            }
+            const savedPairs = WorkspacePersistence.loadConfigPairs();
+            for (const [ctrl, synth] of Object.entries(savedPairs)) {
+                registry.setConfigPair(ctrl, synth);
+            }
         }).catch(err => {
             console.error('Registry init failed:', err);
             addLog(`Registry init failed: ${err.message}`, 'error');
@@ -167,7 +193,7 @@ function App() {
         };
 
         WindowManager.onWindowFocus = (windowId, title) => {
-            const toolWindows = ['log-window', 'expression-pad', 'sync-window', 'preferences'];
+            const toolWindows = ['log-window', 'expression-pad', 'sync-window', 'routing-window', 'preferences'];
             if (!windowId || toolWindows.includes(windowId)) {
                 setFocusedWindow({ id: windowId, type: 'apconsole', portName: null, title: null });
             } else if (windowId.startsWith('config-')) {
@@ -204,7 +230,7 @@ function App() {
                     openLogWindow();
                 } else if (windowId === 'expression-pad') {
                     openExpressionPad();
-                } else if (windowId === 'sync-window') {
+                } else if (windowId === 'sync-window' || windowId === 'routing-window') {
                     openSyncWindow();
                 }
             }
@@ -254,7 +280,7 @@ function App() {
 
             api.onExternalPatchChange((index) => {
                 addLog(`External patch change to ${index}`, 'info');
-                loadPatch(index);
+                loadPatch(portName, index);
             });
 
             // Discover capabilities
@@ -266,23 +292,12 @@ function App() {
             const deviceInfo = api.deviceInfo;
             const capabilities = api.capabilities;
 
-            // Set device roles based on capabilities
-            if (capabilities.includes(CAPABILITIES.CONTROLLER)) {
-                registry.setControllerDevice(portName);
-                setControllerPortName(portName);
-            }
-            if (capabilities.includes(CAPABILITIES.SYNTH)) {
-                registry.setSynthDevice(portName);
-                setSynthPortName(portName);
-                synthPortNameRef.current = portName;
-            }
-
             // Load capability-specific data
             if (capabilities.includes(CAPABILITIES.CONFIG)) {
                 const config = await api.getConfig();
                 // Synth config has modules/mod_targets (used by patch editor)
                 if (config.modules && config.mod_targets) {
-                    setTopology(config);
+                    updateSynthState(portName, { topology: config });
                     addLog(`Loaded config: ${Object.keys(config.mod_targets || {}).length} mod sources`, 'info');
                 }
                 // Controller config has keyboard/pots (stored separately)
@@ -299,8 +314,7 @@ function App() {
                 const patchNames = patches.patches || [];
                 const deviceCurrentIndex = patches.current_index ?? 0;
                 addLog(`Loaded ${patchNames.length} patches (device on patch ${deviceCurrentIndex})`, 'info');
-                setPatchList(patchNames);
-                setCurrentPatchIndex(deviceCurrentIndex);
+                updateSynthState(portName, { patchList: patchNames, currentPatchIndex: deviceCurrentIndex });
             }
 
             // Update device state
@@ -383,19 +397,14 @@ function App() {
             delete windowContainersRef.current[abbottWid];
         }
 
-        // Clear role if this device had one
-        if (synthPortNameRef.current === portName) {
-            setSynthPortName(null);
-            synthPortNameRef.current = null;
-            setTopology(null);
-            setPatchList([]);
-            setCurrentPatchIndex(-1);
-            setCurrentPatch(null);
-        }
-        if (controllerPortName === portName) {
-            setControllerPortName(null);
-            midiStateRef.current?.reset();
-        }
+        // Clear per-synth state
+        setSynthState(prev => {
+            const next = { ...prev };
+            delete next[portName];
+            return next;
+        });
+
+        // Routes are cleaned up by registry disconnect handler
 
         setConfigByDevice(prev => {
             const next = { ...prev };
@@ -414,16 +423,13 @@ function App() {
     // PATCH OPERATIONS
     //------------------------------------------------------------------
 
-    const loadPatch = async (index) => {
-        if (!synthPortName) return null;
-        const api = deviceApisRef.current[synthPortName];
-        if (!api) return null;
-        if (index < 0) return null;
+    const loadPatch = async (portName, index) => {
+        const api = deviceApisRef.current[portName];
+        if (!api || index < 0) return null;
 
         try {
             const patch = await api.getPatch(index);
-            setCurrentPatch(patch);
-            setCurrentPatchIndex(index);
+            updateSynthState(portName, { currentPatch: patch, currentPatchIndex: index });
             return patch;
         } catch (err) {
             addLog(`Failed to load patch: ${err.message}`, 'error');
@@ -431,75 +437,68 @@ function App() {
         }
     };
 
-    const selectPatch = async (index) => {
-        if (!synthPortName) return;
-        const api = deviceApisRef.current[synthPortName];
+    const selectPatch = async (portName, index) => {
+        const api = deviceApisRef.current[portName];
         if (!api) return;
 
         try {
             await api.selectPatch(index);
-            await loadPatch(index);
+            await loadPatch(portName, index);
         } catch (err) {
             addLog(`Failed to select patch: ${err.message}`, 'error');
         }
     };
 
-    const createPatch = async () => {
-        if (!synthPortName) return;
-        const api = deviceApisRef.current[synthPortName];
+    const createPatch = async (portName) => {
+        const api = deviceApisRef.current[portName];
         if (!api) return;
 
+        const ss = synthStateRef.current[portName] || {};
         try {
-            const name = `New Patch ${patchList.length + 1}`;
+            const name = `New Patch ${(ss.patchList || []).length + 1}`;
             await api.createPatch(name);
             const patches = await api.listPatches();
-            setPatchList(patches.patches || []);
-            await selectPatch(patches.patches.length - 1);
+            updateSynthState(portName, { patchList: patches.patches || [] });
+            await selectPatch(portName, patches.patches.length - 1);
         } catch (err) {
             addLog(`Failed to create patch: ${err.message}`, 'error');
         }
     };
 
-    const deletePatch = async (index) => {
-        if (!synthPortName) return;
-        const api = deviceApisRef.current[synthPortName];
+    const deletePatch = async (portName, index) => {
+        const api = deviceApisRef.current[portName];
         if (!api) return;
 
         try {
             await api.deletePatch(index);
             const patches = await api.listPatches();
-            setPatchList(patches.patches || []);
-            setCurrentPatchIndex(-1);
-            setCurrentPatch(null);
+            updateSynthState(portName, { patchList: patches.patches || [], currentPatchIndex: -1, currentPatch: null });
         } catch (err) {
             addLog(`Failed to delete patch: ${err.message}`, 'error');
         }
     };
 
-    const renamePatch = async (index, newName) => {
-        if (!synthPortName) return;
-        const api = deviceApisRef.current[synthPortName];
+    const renamePatch = async (portName, index, newName) => {
+        const api = deviceApisRef.current[portName];
         if (!api) return;
 
         try {
             await api.renamePatch(index, newName);
             const patches = await api.listPatches();
-            setPatchList(patches.patches || []);
+            updateSynthState(portName, { patchList: patches.patches || [] });
         } catch (err) {
             addLog(`Failed to rename patch: ${err.message}`, 'error');
         }
     };
 
-    const movePatch = async (from, to) => {
-        if (!synthPortName) return;
-        const api = deviceApisRef.current[synthPortName];
+    const movePatch = async (portName, from, to) => {
+        const api = deviceApisRef.current[portName];
         if (!api) return;
 
         try {
             await api.movePatch(from, to);
             const patches = await api.listPatches();
-            setPatchList(patches.patches || []);
-            setCurrentPatchIndex(to);
+            updateSynthState(portName, { patchList: patches.patches || [], currentPatchIndex: to });
         } catch (err) {
             addLog(`Failed to move patch: ${err.message}`, 'error');
         }
@@ -509,59 +508,58 @@ function App() {
     // MODULE OPERATIONS
     //------------------------------------------------------------------
 
-    const toggleModule = async (moduleName, enabled) => {
-        if (!synthPortName) return null;
-        const api = deviceApisRef.current[synthPortName];
-        if (!api || currentPatchIndex < 0) return null;
+    const toggleModule = async (portName, moduleName, enabled) => {
+        const api = deviceApisRef.current[portName];
+        const ss = synthStateRef.current[portName] || {};
+        if (!api || (ss.currentPatchIndex ?? -1) < 0) return null;
 
         try {
-            const result = await api.toggleModule(currentPatchIndex, moduleName, enabled);
-            await loadPatch(currentPatchIndex);
-            return result;  // Return for optimistic UI
+            const result = await api.toggleModule(ss.currentPatchIndex, moduleName, enabled);
+            await loadPatch(portName, ss.currentPatchIndex);
+            return result;
         } catch (err) {
             addLog(`Failed to toggle module: ${err.message}`, 'error');
             return null;
         }
     };
 
-    const updateParam = async (paramKey, options) => {
-        // options can be a raw value (number) or object { value, priority }
-        if (!synthPortName) return;
-        const api = deviceApisRef.current[synthPortName];
-        if (!api || currentPatchIndex < 0) return;
+    const updateParam = async (portName, paramKey, options) => {
+        const api = deviceApisRef.current[portName];
+        const ss = synthStateRef.current[portName] || {};
+        if (!api || (ss.currentPatchIndex ?? -1) < 0) return;
 
         try {
-            await api.updateParam(currentPatchIndex, paramKey, options);
-            await loadPatch(currentPatchIndex);
+            await api.updateParam(ss.currentPatchIndex, paramKey, options);
+            await loadPatch(portName, ss.currentPatchIndex);
         } catch (err) {
             addLog(`Failed to update param: ${err.message}`, 'error');
         }
     };
 
-    const toggleModulation = async (targetParam, sourceModule, enabled) => {
-        if (!synthPortName) return null;
-        const api = deviceApisRef.current[synthPortName];
-        if (!api || currentPatchIndex < 0) return null;
+    const toggleModulation = async (portName, targetParam, sourceModule, enabled) => {
+        const api = deviceApisRef.current[portName];
+        const ss = synthStateRef.current[portName] || {};
+        if (!api || (ss.currentPatchIndex ?? -1) < 0) return null;
 
         try {
-            const result = await api.toggleModulation(currentPatchIndex, targetParam, sourceModule, enabled);
-            await loadPatch(currentPatchIndex);
-            return result;  // Return for optimistic UI
+            const result = await api.toggleModulation(ss.currentPatchIndex, targetParam, sourceModule, enabled);
+            await loadPatch(portName, ss.currentPatchIndex);
+            return result;
         } catch (err) {
             addLog(`Failed to toggle modulation: ${err.message}`, 'error');
             return null;
         }
     };
 
-    const updateModulationAmount = async (targetParam, sourceModule, amount) => {
-        if (!synthPortName) return;
-        const api = deviceApisRef.current[synthPortName];
-        if (!api || currentPatchIndex < 0) return;
+    const updateModulationAmount = async (portName, targetParam, sourceModule, amount) => {
+        const api = deviceApisRef.current[portName];
+        const ss = synthStateRef.current[portName] || {};
+        if (!api || (ss.currentPatchIndex ?? -1) < 0) return;
 
         const amountParam = `${targetParam}_${sourceModule}_AMOUNT`;
         try {
-            await api.updateModulationAmount(currentPatchIndex, amountParam, amount);
-            await loadPatch(currentPatchIndex);
+            await api.updateModulationAmount(ss.currentPatchIndex, amountParam, amount);
+            await loadPatch(portName, ss.currentPatchIndex);
         } catch (err) {
             addLog(`Failed to update mod amount: ${err.message}`, 'error');
         }
@@ -744,33 +742,25 @@ function App() {
     };
 
     /**
-     * Trigger exchange between synth and controller
-     * Sends 'controller-available' to synth, which initiates the exchange
+     * Trigger exchange between a specific synth and controller pair
+     * @param {string} controllerPort
+     * @param {string} synthPort
      */
-    const triggerExchange = async () => {
-        // Find synth and controller
-        const synth = Object.entries(devices).find(([_, d]) =>
-            d.status === 'connected' && d.capabilities?.includes('SYNTH')
-        );
-        const controller = Object.entries(devices).find(([_, d]) =>
-            d.status === 'connected' && d.capabilities?.includes('CONTROLLER')
-        );
-
-        if (!synth) {
-            addLog('No synth connected', 'warn');
-            addSyncLog('No synth connected', 'warning');
-            return;
-        }
-        if (!controller) {
-            addLog('No controller connected', 'warn');
-            addSyncLog('No controller connected', 'warning');
-            return;
-        }
-
-        const [synthPort, synthDevice] = synth;
-        const [controllerPort, controllerDevice] = controller;
+    const triggerExchange = async (controllerPort, synthPort) => {
+        const controllerDevice = devices[controllerPort];
+        const synthDevice = devices[synthPort];
         const synthApi = deviceApisRef.current[synthPort];
 
+        if (!synthDevice || synthDevice.status !== 'connected') {
+            addLog('Synth not connected', 'warning');
+            addSyncLog('Synth not connected', 'warning');
+            return;
+        }
+        if (!controllerDevice || controllerDevice.status !== 'connected') {
+            addLog('Controller not connected', 'warning');
+            addSyncLog('Controller not connected', 'warning');
+            return;
+        }
         if (!synthApi) {
             addLog('Synth API not ready', 'error');
             return;
@@ -779,14 +769,12 @@ function App() {
         addLog(`Triggering exchange: ${synthDevice.deviceInfo?.name || synthPort} → ${controllerDevice.deviceInfo?.name || controllerPort}`, 'info');
         addSyncLog(`Syncing: ${synthDevice.deviceInfo?.name || synthPort} → ${controllerDevice.deviceInfo?.name || controllerPort}`, 'info');
 
-        // Enable SysEx relay between synth and controller
         const registry = deviceRegistryRef.current;
         if (registry) {
             registry.enableExchangeRelay(synthPort, controllerPort);
         }
 
         try {
-            // Send controller-available to synth
             const controllerInfo = {
                 device: controllerDevice.deviceInfo?.name || 'Controller',
                 port: controllerPort
@@ -797,20 +785,11 @@ function App() {
         } catch (err) {
             addLog(`Exchange failed: ${err.message}`, 'error');
             addSyncLog(`Exchange failed: ${err.message}`, 'error');
-            // Disable relay on failure
             if (registry) {
                 registry.disableExchangeRelay();
             }
         }
     };
-
-    //------------------------------------------------------------------
-    // DERIVED STATE
-    //------------------------------------------------------------------
-
-    const isLinked = controllerPortName && synthPortName &&
-                     devices[controllerPortName]?.status === 'connected' &&
-                     devices[synthPortName]?.status === 'connected';
 
     //------------------------------------------------------------------
     // WINDOW CONTAINERS (for re-rendering)
@@ -824,25 +803,28 @@ function App() {
             const windowId = `device-${portName}`;
             const container = windowContainersRef.current[windowId];
             if (container && WindowManager.exists(windowId)) {
-                const cConfig = controllerPortName ? configByDevice[controllerPortName] : null;
+                const ss = synthState[portName] || {};
+                // Find the controller that is config-paired with this synth
+                const pairedController = Object.entries(configPairs).find(([_, synth]) => synth === portName)?.[0];
+                const cConfig = pairedController ? configByDevice[pairedController] : null;
 
                 ReactDOM.render(
                     <DeviceAppWindow
                         portName={portName}
                         device={device}
-                        topology={topology}
-                        patchList={patchList}
-                        currentPatchIndex={currentPatchIndex}
-                        currentPatch={currentPatch}
-                        onSelectPatch={selectPatch}
-                        onCreatePatch={createPatch}
-                        onDeletePatch={deletePatch}
-                        onRenamePatch={renamePatch}
-                        onMovePatch={movePatch}
-                        onToggleModule={toggleModule}
-                        onUpdateParam={updateParam}
-                        onToggleModulation={toggleModulation}
-                        onUpdateModAmount={updateModulationAmount}
+                        topology={ss.topology}
+                        patchList={ss.patchList || []}
+                        currentPatchIndex={ss.currentPatchIndex ?? -1}
+                        currentPatch={ss.currentPatch}
+                        onSelectPatch={(idx) => selectPatch(portName, idx)}
+                        onCreatePatch={() => createPatch(portName)}
+                        onDeletePatch={(idx) => deletePatch(portName, idx)}
+                        onRenamePatch={(idx, name) => renamePatch(portName, idx, name)}
+                        onMovePatch={(from, to) => movePatch(portName, from, to)}
+                        onToggleModule={(mod, en) => toggleModule(portName, mod, en)}
+                        onUpdateParam={(key, opts) => updateParam(portName, key, opts)}
+                        onToggleModulation={(t, s, en) => toggleModulation(portName, t, s, en)}
+                        onUpdateModAmount={(t, s, a) => updateModulationAmount(portName, t, s, a)}
                         addLog={addLog}
                         midiState={midiStateRef.current}
                         controllerConfig={cConfig}
@@ -851,8 +833,7 @@ function App() {
                 );
             }
         }
-    }, [devices, topology, patchList, currentPatchIndex, currentPatch,
-        synthPortName, controllerPortName, addLog]);
+    }, [devices, synthState, configPairs, configByDevice, addLog]);
 
     // Re-render config section windows when config state changes
     useEffect(() => {
@@ -881,12 +862,17 @@ function App() {
         }
     }, [devices, configByDevice]);
 
-    // Re-render Log window when logs, topology, or view changes
+    // Re-render Log window when logs, synthState, or view changes
     useEffect(() => {
         const container = windowContainersRef.current['log-window'];
         if (container && WindowManager.exists('log-window')) {
+            // Show focused synth's topology, or first available
+            const focusedSynthTopo = focusedWindow?.portName && synthState[focusedWindow.portName]?.topology;
+            const firstTopo = Object.values(synthState).find(s => s.topology)?.topology || null;
+            const topoForLog = focusedSynthTopo || firstTopo;
+
             ReactDOM.render(
-                <LogWindow logs={logs} topology={topology} activeView={logActiveView} />,
+                <LogWindow logs={logs} topology={topoForLog} activeView={logActiveView} />,
                 container
             );
             // Auto-scroll content area
@@ -905,17 +891,20 @@ function App() {
                 logClearRef.current.style.display = logActiveView === 'log' ? '' : 'none';
             }
         }
-    }, [logs, topology, logActiveView]);
+    }, [logs, synthState, logActiveView, focusedWindow]);
 
     // Re-render Expression Pad when devices change
     useEffect(() => {
         const container = windowContainersRef.current['expression-pad'];
         if (container && WindowManager.exists('expression-pad')) {
+            // Find first synth port as default output
+            const defaultSynthPort = Object.entries(devices)
+                .find(([_, d]) => d.status === 'connected' && d.capabilities?.includes('SYNTH'))?.[0] || null;
             ReactDOM.render(
                 <ExpressionPadWindow
                     devices={devices}
                     deviceApisRef={deviceApisRef}
-                    synthPortName={synthPortName}
+                    synthPortName={defaultSynthPort}
                     deviceRegistry={deviceRegistryRef.current}
                     midiState={midiStateRef.current}
                     addLog={addLog}
@@ -923,23 +912,31 @@ function App() {
                 container
             );
         }
-    }, [synthPortName, devices, addLog]);
+    }, [devices, addLog]);
 
     // Re-render Sync window when devices or sync logs change
     useEffect(() => {
         const container = windowContainersRef.current['sync-window'];
         if (container && WindowManager.exists('sync-window')) {
+            const hasLink = routes.length > 0;
             ReactDOM.render(
                 <SyncWindow
                     devices={devices}
-                    isLinked={isLinked}
-                    onSync={triggerExchange}
+                    isLinked={hasLink}
+                    onSync={() => {
+                        // Legacy sync: find first controller+synth pair from routes
+                        const ctrl = Object.entries(devices).find(([_, d]) =>
+                            d.status === 'connected' && d.capabilities?.includes('CONTROLLER'))?.[0];
+                        const synth = Object.entries(devices).find(([_, d]) =>
+                            d.status === 'connected' && d.capabilities?.includes('SYNTH'))?.[0];
+                        if (ctrl && synth) triggerExchange(ctrl, synth);
+                    }}
                     syncLogs={syncLogs}
                 />,
                 container
             );
         }
-    }, [devices, syncLogs, isLinked]);
+    }, [devices, syncLogs, routes]);
 
     //------------------------------------------------------------------
     // WINDOW OPENERS
@@ -1061,7 +1058,9 @@ function App() {
         windowContainersRef.current[windowId] = container;
 
         const saved = WorkspacePersistence.getWindowState(windowId);
-        const cConfig = controllerPortName ? configByDevice[controllerPortName] : null;
+        const ss = synthState[portName] || {};
+        const pairedController = Object.entries(configPairs).find(([_, synth]) => synth === portName)?.[0];
+        const cConfig = pairedController ? configByDevice[pairedController] : null;
 
         WindowManager.create({
             id: windowId,
@@ -1084,19 +1083,19 @@ function App() {
             <DeviceAppWindow
                 portName={portName}
                 device={device}
-                topology={topology}
-                patchList={patchList}
-                currentPatchIndex={currentPatchIndex}
-                currentPatch={currentPatch}
-                onSelectPatch={selectPatch}
-                onCreatePatch={createPatch}
-                onDeletePatch={deletePatch}
-                onRenamePatch={renamePatch}
-                onMovePatch={movePatch}
-                onToggleModule={toggleModule}
-                onUpdateParam={updateParam}
-                onToggleModulation={toggleModulation}
-                onUpdateModAmount={updateModulationAmount}
+                topology={ss.topology}
+                patchList={ss.patchList || []}
+                currentPatchIndex={ss.currentPatchIndex ?? -1}
+                currentPatch={ss.currentPatch}
+                onSelectPatch={(idx) => selectPatch(portName, idx)}
+                onCreatePatch={() => createPatch(portName)}
+                onDeletePatch={(idx) => deletePatch(portName, idx)}
+                onRenamePatch={(idx, name) => renamePatch(portName, idx, name)}
+                onMovePatch={(from, to) => movePatch(portName, from, to)}
+                onToggleModule={(mod, en) => toggleModule(portName, mod, en)}
+                onUpdateParam={(key, opts) => updateParam(portName, key, opts)}
+                onToggleModulation={(t, s, en) => toggleModulation(portName, t, s, en)}
+                onUpdateModAmount={(t, s, a) => updateModulationAmount(portName, t, s, a)}
                 addLog={addLog}
                 midiState={midiStateRef.current}
                 controllerConfig={cConfig}
@@ -1105,9 +1104,9 @@ function App() {
         );
 
         // Load initial patch if needed
-        if (hasPatch && currentPatch === null && patchList.length > 0) {
-            const initialIndex = currentPatchIndex >= 0 ? currentPatchIndex : 0;
-            loadPatch(initialIndex);
+        if (hasPatch && ss.currentPatch == null && (ss.patchList || []).length > 0) {
+            const initialIndex = (ss.currentPatchIndex ?? -1) >= 0 ? ss.currentPatchIndex : 0;
+            loadPatch(portName, initialIndex);
         }
     };
 
@@ -1186,11 +1185,13 @@ function App() {
 
         WorkspacePersistence.setWasOpen('expression-pad', true);
 
+        const defaultSynthPort = Object.entries(devices)
+            .find(([_, d]) => d.status === 'connected' && d.capabilities?.includes('SYNTH'))?.[0] || null;
         ReactDOM.render(
             <ExpressionPadWindow
                 devices={devices}
                 deviceApisRef={deviceApisRef}
-                synthPortName={synthPortName}
+                synthPortName={defaultSynthPort}
                 deviceRegistry={deviceRegistryRef.current}
                 midiState={midiStateRef.current}
                 addLog={addLog}
@@ -1260,8 +1261,9 @@ function App() {
 
         WorkspacePersistence.setWasOpen('log-window', true);
 
+        const firstTopo = Object.values(synthState).find(s => s.topology)?.topology || null;
         ReactDOM.render(
-            <LogWindow logs={logs} topology={topology} activeView={logActiveView} />,
+            <LogWindow logs={logs} topology={firstTopo} activeView={logActiveView} />,
             container
         );
     };
@@ -1294,11 +1296,18 @@ function App() {
 
         WorkspacePersistence.setWasOpen('sync-window', true);
 
+        const hasLink = routes.length > 0;
         ReactDOM.render(
             <SyncWindow
                 devices={devices}
-                isLinked={isLinked}
-                onSync={triggerExchange}
+                isLinked={hasLink}
+                onSync={() => {
+                    const ctrl = Object.entries(devices).find(([_, d]) =>
+                        d.status === 'connected' && d.capabilities?.includes('CONTROLLER'))?.[0];
+                    const synth = Object.entries(devices).find(([_, d]) =>
+                        d.status === 'connected' && d.capabilities?.includes('SYNTH'))?.[0];
+                    if (ctrl && synth) triggerExchange(ctrl, synth);
+                }}
                 syncLogs={syncLogs}
             />,
             container

@@ -33,7 +33,7 @@ class MidiState {
      * Parses into structured events and notifies all subscribers
      * @param {Uint8Array} data - Raw MIDI bytes
      */
-    handleMidiThrough(data) {
+    handleMidiThrough(data, fromPort = null) {
         const status = data[0] & 0xF0;
         const channel = data[0] & 0x0F;
 

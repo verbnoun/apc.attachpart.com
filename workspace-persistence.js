@@ -15,7 +15,7 @@ const WorkspacePersistence = {
     STORAGE_KEY: 'attachpart-workspace',
 
     // Tool windows (always available, no device dependency)
-    TOOL_WINDOWS: ['log-window', 'expression-pad', 'sync-window'],
+    TOOL_WINDOWS: ['log-window', 'expression-pad', 'routing-window'],
 
     /**
      * Get stored state for a window
@@ -94,6 +94,33 @@ const WorkspacePersistence = {
         return this.TOOL_WINDOWS.filter(windowId =>
             state.windows[windowId]?.wasOpen === true
         );
+    },
+
+    // Route persistence
+    saveRoutes(routes) {
+        try {
+            localStorage.setItem('attachpart-routes', JSON.stringify(routes));
+        } catch (e) { /* ignore */ }
+    },
+
+    loadRoutes() {
+        try {
+            const json = localStorage.getItem('attachpart-routes');
+            return json ? JSON.parse(json) : [];
+        } catch (e) { return []; }
+    },
+
+    saveConfigPairs(configPairs) {
+        try {
+            localStorage.setItem('attachpart-config-pairs', JSON.stringify(configPairs));
+        } catch (e) { /* ignore */ }
+    },
+
+    loadConfigPairs() {
+        try {
+            const json = localStorage.getItem('attachpart-config-pairs');
+            return json ? JSON.parse(json) : {};
+        } catch (e) { return {}; }
     },
 
     // Private: load state from localStorage
