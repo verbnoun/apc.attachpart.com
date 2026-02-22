@@ -2,7 +2,7 @@
  * Attach Part Console - Main Application (Unified Protocol)
  *
  * Architecture:
- * - Menu Bar (top): app name, log/sync buttons, device status
+ * - Menu Bar (top): app name, log/routing buttons, device status
  * - Desktop (main area): device icons + workspace windows
  *
  * Backend layer:
@@ -106,12 +106,12 @@ function App() {
         }));
     }, []);
 
-    // Sync logs (separate from main log)
-    const [syncLogs, setSyncLogs] = useState([]);
+    // Routing logs (separate from main log)
+    const [routingLogs, setRoutingLogs] = useState([]);
 
-    const addSyncLog = useCallback((message, type = 'info') => {
+    const addRoutingLog = useCallback((message, type = 'info') => {
         const timestamp = new Date().toLocaleTimeString();
-        setSyncLogs(prev => [...prev.slice(-49), { message, type, timestamp }]);
+        setRoutingLogs(prev => [...prev.slice(-49), { message, type, timestamp }]);
     }, []);
 
     //------------------------------------------------------------------
@@ -193,7 +193,7 @@ function App() {
         };
 
         WindowManager.onWindowFocus = (windowId, title) => {
-            const toolWindows = ['log-window', 'expression-pad', 'sync-window', 'routing-window', 'preferences'];
+            const toolWindows = ['log-window', 'expression-pad', 'routing-window', 'preferences'];
             if (!windowId || toolWindows.includes(windowId)) {
                 setFocusedWindow({ id: windowId, type: 'apconsole', portName: null, title: null });
             } else if (windowId.startsWith('config-')) {
@@ -755,12 +755,12 @@ function App() {
 
         if (!synthDevice || synthDevice.status !== 'connected') {
             addLog('Synth not connected', 'warning');
-            addSyncLog('Synth not connected', 'warning');
+            addRoutingLog('Synth not connected', 'warning');
             return;
         }
         if (!controllerDevice || controllerDevice.status !== 'connected') {
             addLog('Controller not connected', 'warning');
-            addSyncLog('Controller not connected', 'warning');
+            addRoutingLog('Controller not connected', 'warning');
             return;
         }
         if (!synthApi) {
@@ -769,7 +769,7 @@ function App() {
         }
 
         addLog(`Triggering exchange: ${synthDevice.deviceInfo?.name || synthPort} → ${controllerDevice.deviceInfo?.name || controllerPort}`, 'info');
-        addSyncLog(`Syncing: ${synthDevice.deviceInfo?.name || synthPort} → ${controllerDevice.deviceInfo?.name || controllerPort}`, 'info');
+        addRoutingLog(`Syncing: ${synthDevice.deviceInfo?.name || synthPort} → ${controllerDevice.deviceInfo?.name || controllerPort}`, 'info');
 
         const registry = deviceRegistryRef.current;
         if (registry) {
@@ -783,10 +783,10 @@ function App() {
             };
             await synthApi.sendControllerAvailable(controllerInfo);
             addLog('Exchange initiated', 'success');
-            addSyncLog('Exchange initiated', 'success');
+            addRoutingLog('Exchange initiated', 'success');
         } catch (err) {
             addLog(`Exchange failed: ${err.message}`, 'error');
-            addSyncLog(`Exchange failed: ${err.message}`, 'error');
+            addRoutingLog(`Exchange failed: ${err.message}`, 'error');
             if (registry) {
                 registry.disableExchangeRelay();
             }
@@ -916,30 +916,6 @@ function App() {
         }
     }, [devices, addLog]);
 
-    // Re-render Sync window when devices or sync logs change
-    useEffect(() => {
-        const container = windowContainersRef.current['sync-window'];
-        if (container && WindowManager.exists('sync-window')) {
-            const hasLink = routes.length > 0;
-            ReactDOM.render(
-                <SyncWindow
-                    devices={devices}
-                    isLinked={hasLink}
-                    onSync={() => {
-                        // Legacy sync: find first controller+synth pair from routes
-                        const ctrl = Object.entries(devices).find(([_, d]) =>
-                            d.status === 'connected' && d.capabilities?.includes('CONTROLLER'))?.[0];
-                        const synth = Object.entries(devices).find(([_, d]) =>
-                            d.status === 'connected' && d.capabilities?.includes('SYNTH'))?.[0];
-                        if (ctrl && synth) triggerExchange(ctrl, synth);
-                    }}
-                    syncLogs={syncLogs}
-                />,
-                container
-            );
-        }
-    }, [devices, syncLogs, routes]);
-
     // Re-render Routing window when routes/config pairs/devices change
     useEffect(() => {
         const container = windowContainersRef.current['routing-window'];
@@ -958,12 +934,12 @@ function App() {
                             triggerExchange(ctrl, synth);
                         }
                     }}
-                    routingLogs={syncLogs}
+                    routingLogs={routingLogs}
                 />,
                 container
             );
         }
-    }, [devices, routes, configPairs, syncLogs]);
+    }, [devices, routes, configPairs, routingLogs]);
 
     //------------------------------------------------------------------
     // WINDOW OPENERS
@@ -1295,52 +1271,6 @@ function App() {
         );
     };
 
-    const openSyncWindow = () => {
-        if (WindowManager.exists('sync-window')) {
-            WindowManager.focus('sync-window');
-            return;
-        }
-
-        const container = document.createElement('div');
-        container.style.height = '100%';
-        windowContainersRef.current['sync-window'] = container;
-
-        const saved = WorkspacePersistence.getWindowState('sync-window');
-
-        WindowManager.create({
-            id: 'sync-window',
-            title: 'Sync',
-            x: saved?.x ?? 300,
-            y: saved?.y ?? 80,
-            width: saved?.width ?? 380,
-            height: saved?.height ?? 350,
-            content: container,
-            theme: 'tool',
-            onClose: () => {
-                delete windowContainersRef.current['sync-window'];
-            }
-        });
-
-        WorkspacePersistence.setWasOpen('sync-window', true);
-
-        const hasLink = routes.length > 0;
-        ReactDOM.render(
-            <SyncWindow
-                devices={devices}
-                isLinked={hasLink}
-                onSync={() => {
-                    const ctrl = Object.entries(devices).find(([_, d]) =>
-                        d.status === 'connected' && d.capabilities?.includes('CONTROLLER'))?.[0];
-                    const synth = Object.entries(devices).find(([_, d]) =>
-                        d.status === 'connected' && d.capabilities?.includes('SYNTH'))?.[0];
-                    if (ctrl && synth) triggerExchange(ctrl, synth);
-                }}
-                syncLogs={syncLogs}
-            />,
-            container
-        );
-    };
-
     const openRoutingWindow = () => {
         if (WindowManager.exists('routing-window')) {
             WindowManager.focus('routing-window');
@@ -1383,7 +1313,7 @@ function App() {
                         triggerExchange(ctrl, synth);
                     }
                 }}
-                routingLogs={syncLogs}
+                routingLogs={routingLogs}
             />,
             container
         );
@@ -2253,8 +2183,8 @@ function RoutingWindow({ devices, routes, configPairs, onAddRoute, onRemoveRoute
                     {routingLogs.length === 0 ? (
                         <span className="ap-text-muted">Routing log</span>
                     ) : routingLogs.map((log, i) => (
-                        <div key={i} className={`ap-sync-log-entry ap-sync-log-${log.type}`}>
-                            <span className="ap-sync-log-time">[{log.timestamp}]</span>
+                        <div key={i} className={`ap-routing-log-entry ap-routing-log-${log.type}`}>
+                            <span className="ap-routing-log-time">[{log.timestamp}]</span>
                             {' '}<span>{log.message}</span>
                         </div>
                     ))}
@@ -2325,73 +2255,11 @@ function RoutingWindow({ devices, routes, configPairs, onAddRoute, onRemoveRoute
                 {routingLogs.length === 0 ? (
                     <span className="ap-text-muted">Routing log</span>
                 ) : routingLogs.map((log, i) => (
-                    <div key={i} className={`ap-sync-log-entry ap-sync-log-${log.type}`}>
-                        <span className="ap-sync-log-time">[{log.timestamp}]</span>
+                    <div key={i} className={`ap-routing-log-entry ap-routing-log-${log.type}`}>
+                        <span className="ap-routing-log-time">[{log.timestamp}]</span>
                         {' '}<span>{log.message}</span>
                     </div>
                 ))}
-            </div>
-        </div>
-    );
-}
-
-//======================================================================
-// SYNC WINDOW
-//======================================================================
-
-function SyncWindow({ devices, isLinked, onSync, syncLogs }) {
-    const scrollRef = useRef(null);
-
-    useEffect(() => {
-        if (scrollRef.current) {
-            scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-        }
-    }, [syncLogs]);
-
-    const deviceEntries = Object.entries(devices).filter(([_, d]) => d.status === 'connected');
-
-    const getRole = (device) => {
-        if (device.capabilities?.includes('CONTROLLER')) return 'Controller';
-        if (device.capabilities?.includes('SYNTH')) return 'Synth';
-        return 'Device';
-    };
-
-    return (
-        <div className="ap-sync-window">
-            <div className="ap-sync-devices">
-                {deviceEntries.length === 0 ? (
-                    <div className="ap-sync-no-devices">No devices connected</div>
-                ) : (
-                    deviceEntries.map(([portName, device]) => (
-                        <div key={portName} className="ap-sync-device-row">
-                            <span className="ap-sync-device-led connected"></span>
-                            <span className="ap-sync-device-name">
-                                {device.deviceInfo?.name || portName}
-                            </span>
-                            <span className="ap-sync-device-role">{getRole(device)}</span>
-                        </div>
-                    ))
-                )}
-            </div>
-            <button
-                className="ap-btn ap-sync-btn"
-                onClick={onSync}
-                disabled={!isLinked}
-            >
-                {isLinked ? 'SYNC DEVICES' : 'LINK REQUIRED'}
-            </button>
-            <div className="ap-sync-output" ref={scrollRef}>
-                {syncLogs.length === 0 ? (
-                    <span className="ap-text-muted">Sync output will appear here</span>
-                ) : (
-                    syncLogs.map((log, i) => (
-                        <div key={i} className={`ap-sync-log-entry ap-sync-log-${log.type}`}>
-                            <span className="ap-sync-log-time">[{log.timestamp}]</span>
-                            {' '}
-                            <span>{log.message}</span>
-                        </div>
-                    ))
-                )}
             </div>
         </div>
     );

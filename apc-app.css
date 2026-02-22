@@ -2425,96 +2425,24 @@ html, body {
     line-height: 1.6;
 }
 
-/* ============================================================
-   SYNC WINDOW
-   ============================================================ */
-
-.ap-sync-window {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-    gap: var(--ap-spacing-sm);
-}
-
-.ap-sync-devices {
-    display: flex;
-    flex-direction: column;
-    gap: var(--ap-spacing-xs);
-}
-
-.ap-sync-no-devices {
-    font-size: var(--ap-font-size-xs);
-    color: var(--ap-text-muted);
-    text-align: center;
-    padding: var(--ap-spacing-sm);
-}
-
-.ap-sync-device-row {
-    display: flex;
-    align-items: center;
-    gap: var(--ap-spacing-sm);
-    padding: var(--ap-spacing-xs) var(--ap-spacing-sm);
-    background: var(--ap-bg-secondary);
-    border: 1px solid var(--ap-bg-tertiary);
-}
-
-.ap-sync-device-led {
-    width: 6px;
-    height: 6px;
-    background: var(--ap-text-muted);
-    flex-shrink: 0;
-}
-
-.ap-sync-device-led.connected {
-    background: var(--ap-accent-green);
-    box-shadow: 0 0 4px var(--ap-accent-green);
-}
-
-.ap-sync-device-name {
-    font-size: var(--ap-font-size-xs);
-    color: var(--ap-text-primary);
-    flex: 1;
-}
-
-.ap-sync-device-role {
-    font-size: 7px;
-    color: var(--ap-text-muted);
-    text-transform: uppercase;
-}
-
-.ap-sync-btn {
-    align-self: center;
-    margin: var(--ap-spacing-xs) 0;
-}
-
-.ap-sync-output {
-    flex: 1;
-    overflow-y: auto;
-    background: var(--ap-bg-secondary);
-    border: 1px solid var(--ap-bg-tertiary);
-    padding: var(--ap-spacing-sm);
-    font-family: var(--ap-font-family);
-    font-size: var(--ap-font-size-xs);
-    line-height: 1.6;
-}
-
-.ap-sync-log-entry {
+/* Routing log entry styles (used by RoutingWindow) */
+.ap-routing-log-entry {
     color: var(--ap-text-secondary);
 }
 
-.ap-sync-log-time {
+.ap-routing-log-time {
     color: var(--ap-text-muted);
 }
 
-.ap-sync-log-success {
+.ap-routing-log-success {
     color: var(--ap-accent-green);
 }
 
-.ap-sync-log-error {
+.ap-routing-log-error {
     color: var(--ap-accent-red);
 }
 
-.ap-sync-log-warning {
+.ap-routing-log-warning {
     color: var(--ap-accent-yellow);
 }
 
