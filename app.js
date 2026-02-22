@@ -230,8 +230,10 @@ function App() {
                     openLogWindow();
                 } else if (windowId === 'expression-pad') {
                     openExpressionPad();
-                } else if (windowId === 'sync-window' || windowId === 'routing-window') {
-                    openSyncWindow();
+                } else if (windowId === 'routing-window') {
+                    openRoutingWindow();
+                } else if (windowId === 'sync-window') {
+                    openRoutingWindow(); // Migration: old sync → new routing
                 }
             }
         }, 0);
@@ -938,6 +940,31 @@ function App() {
         }
     }, [devices, syncLogs, routes]);
 
+    // Re-render Routing window when routes/config pairs/devices change
+    useEffect(() => {
+        const container = windowContainersRef.current['routing-window'];
+        if (container && WindowManager.exists('routing-window')) {
+            ReactDOM.render(
+                <RoutingWindow
+                    devices={devices}
+                    routes={routes}
+                    configPairs={configPairs}
+                    onAddRoute={(from, to) => deviceRegistryRef.current?.addRoute(from, to)}
+                    onRemoveRoute={(from, to) => deviceRegistryRef.current?.removeRoute(from, to)}
+                    onSetConfigPair={(ctrl, synth) => {
+                        const registry = deviceRegistryRef.current;
+                        if (registry) {
+                            registry.setConfigPair(ctrl, synth);
+                            triggerExchange(ctrl, synth);
+                        }
+                    }}
+                    routingLogs={syncLogs}
+                />,
+                container
+            );
+        }
+    }, [devices, routes, configPairs, syncLogs]);
+
     //------------------------------------------------------------------
     // WINDOW OPENERS
     //------------------------------------------------------------------
@@ -1314,6 +1341,54 @@ function App() {
         );
     };
 
+    const openRoutingWindow = () => {
+        if (WindowManager.exists('routing-window')) {
+            WindowManager.focus('routing-window');
+            return;
+        }
+
+        const container = document.createElement('div');
+        container.style.height = '100%';
+        windowContainersRef.current['routing-window'] = container;
+
+        const saved = WorkspacePersistence.getWindowState('routing-window');
+
+        WindowManager.create({
+            id: 'routing-window',
+            title: 'Routing',
+            x: saved?.x ?? 300,
+            y: saved?.y ?? 80,
+            width: saved?.width ?? 420,
+            height: saved?.height ?? 380,
+            content: container,
+            theme: 'tool',
+            onClose: () => {
+                delete windowContainersRef.current['routing-window'];
+            }
+        });
+
+        WorkspacePersistence.setWasOpen('routing-window', true);
+
+        ReactDOM.render(
+            <RoutingWindow
+                devices={devices}
+                routes={routes}
+                configPairs={configPairs}
+                onAddRoute={(from, to) => deviceRegistryRef.current?.addRoute(from, to)}
+                onRemoveRoute={(from, to) => deviceRegistryRef.current?.removeRoute(from, to)}
+                onSetConfigPair={(ctrl, synth) => {
+                    const registry = deviceRegistryRef.current;
+                    if (registry) {
+                        registry.setConfigPair(ctrl, synth);
+                        triggerExchange(ctrl, synth);
+                    }
+                }}
+                routingLogs={syncLogs}
+            />,
+            container
+        );
+    };
+
     const openPreferencesWindow = () => {
         if (WindowManager.exists('preferences')) {
             WindowManager.focus('preferences');
@@ -1403,7 +1478,7 @@ function App() {
                     if (portName) openConfigWindow(portName, section);
                 }}
                 onLogClick={() => openLogWindow()}
-                onSyncClick={() => openSyncWindow()}
+                onSyncClick={() => openRoutingWindow()}
                 onExpressionPadClick={() => openExpressionPad()}
                 onPreferencesClick={() => openPreferencesWindow()}
                 onOpenDeviceTool={openDeviceToolWindow}
@@ -2146,6 +2221,115 @@ function ExpressionPadWindow({ devices, deviceApisRef, synthPortName, deviceRegi
                         );
                     })
                 )}
+            </div>
+        </div>
+    );
+}
+
+//======================================================================
+// ROUTING WINDOW
+//======================================================================
+
+function RoutingWindow({ devices, routes, configPairs, onAddRoute, onRemoveRoute, onSetConfigPair, routingLogs }) {
+    const scrollRef = useRef(null);
+
+    useEffect(() => {
+        if (scrollRef.current) {
+            scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+        }
+    }, [routingLogs]);
+
+    const connectedDevices = Object.entries(devices).filter(([_, d]) => d.status === 'connected');
+    const controllers = connectedDevices.filter(([_, d]) => d.capabilities?.includes('CONTROLLER'));
+    const synths = connectedDevices.filter(([_, d]) => d.capabilities?.includes('SYNTH'));
+
+    const getName = (portName) => devices[portName]?.deviceInfo?.name || portName;
+
+    if (controllers.length === 0 && synths.length === 0) {
+        return (
+            <div className="ap-routing-window">
+                <div className="ap-routing-empty">No devices connected</div>
+                <div className="ap-routing-log" ref={scrollRef}>
+                    {routingLogs.length === 0 ? (
+                        <span className="ap-text-muted">Routing log</span>
+                    ) : routingLogs.map((log, i) => (
+                        <div key={i} className={`ap-sync-log-entry ap-sync-log-${log.type}`}>
+                            <span className="ap-sync-log-time">[{log.timestamp}]</span>
+                            {' '}<span>{log.message}</span>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <div className="ap-routing-window">
+            {/* Matrix: controllers as rows, synths as columns */}
+            <div className="ap-routing-matrix">
+                {/* Header row */}
+                <div className="ap-routing-header-row">
+                    <div className="ap-routing-corner"></div>
+                    {synths.map(([port]) => (
+                        <div key={port} className="ap-routing-col-header">{getName(port)}</div>
+                    ))}
+                    {synths.length > 0 && <div className="ap-routing-col-header ap-routing-config-header">Config</div>}
+                </div>
+
+                {/* Controller rows */}
+                {controllers.map(([ctrlPort]) => {
+                    const wiredSynths = routes.filter(r => r.from === ctrlPort).map(r => r.to);
+                    const currentPair = configPairs[ctrlPort] || null;
+
+                    return (
+                        <div key={ctrlPort} className="ap-routing-row">
+                            <div className="ap-routing-row-label">{getName(ctrlPort)}</div>
+                            {synths.map(([synthPort]) => {
+                                const isWired = wiredSynths.includes(synthPort);
+                                return (
+                                    <div key={synthPort} className="ap-routing-cell">
+                                        <button
+                                            className={`ap-routing-toggle ${isWired ? 'on' : ''}`}
+                                            onClick={() => isWired ? onRemoveRoute(ctrlPort, synthPort) : onAddRoute(ctrlPort, synthPort)}
+                                            title={isWired ? 'Remove MIDI route' : 'Add MIDI route'}
+                                        >
+                                            {isWired ? '\u25CF' : '\u25CB'}
+                                        </button>
+                                    </div>
+                                );
+                            })}
+                            {synths.length > 0 && (
+                                <div className="ap-routing-cell ap-routing-config-cell">
+                                    <select
+                                        className="ap-routing-config-select"
+                                        value={currentPair || ''}
+                                        onChange={(e) => {
+                                            const val = e.target.value;
+                                            if (val) onSetConfigPair(ctrlPort, val);
+                                        }}
+                                    >
+                                        <option value="">—</option>
+                                        {wiredSynths.map(sp => (
+                                            <option key={sp} value={sp}>{getName(sp)}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            )}
+                        </div>
+                    );
+                })}
+            </div>
+
+            {/* Routing log */}
+            <div className="ap-routing-log" ref={scrollRef}>
+                {routingLogs.length === 0 ? (
+                    <span className="ap-text-muted">Routing log</span>
+                ) : routingLogs.map((log, i) => (
+                    <div key={i} className={`ap-sync-log-entry ap-sync-log-${log.type}`}>
+                        <span className="ap-sync-log-time">[{log.timestamp}]</span>
+                        {' '}<span>{log.message}</span>
+                    </div>
+                ))}
             </div>
         </div>
     );

@@ -48,7 +48,7 @@ function MenuBar({ focusedWindow, onOpenConfigWindow, onLogClick, onSyncClick, o
                 Console Log
             </button>
             <button className="ap-menubar-dropdown-item" onMouseDown={(e) => handleItemClick(onSyncClick, e)}>
-                Sync
+                Routing
             </button>
             <button className="ap-menubar-dropdown-item" onMouseDown={(e) => handleItemClick(onExpressionPadClick, e)}>
                 Expression Pad

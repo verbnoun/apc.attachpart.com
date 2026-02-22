@@ -2292,6 +2292,140 @@ html, body {
 }
 
 /* ============================================================
+   ROUTING WINDOW
+   ============================================================ */
+
+.ap-routing-window {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    gap: var(--ap-spacing-sm);
+}
+
+.ap-routing-empty {
+    font-size: var(--ap-font-size-xs);
+    color: var(--ap-text-muted);
+    text-align: center;
+    padding: var(--ap-spacing-md);
+}
+
+.ap-routing-matrix {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    border: 1px solid var(--ap-bg-tertiary);
+}
+
+.ap-routing-header-row {
+    display: flex;
+    align-items: center;
+    background: var(--ap-bg-secondary);
+    border-bottom: 1px solid var(--ap-bg-tertiary);
+}
+
+.ap-routing-corner {
+    width: 100px;
+    min-width: 100px;
+    flex-shrink: 0;
+}
+
+.ap-routing-col-header {
+    flex: 1;
+    text-align: center;
+    font-size: var(--ap-font-size-xs);
+    font-family: var(--ap-font-family);
+    color: var(--ap-text-secondary);
+    padding: var(--ap-spacing-xs) var(--ap-spacing-sm);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ap-routing-config-header {
+    color: var(--ap-text-muted);
+    font-style: italic;
+}
+
+.ap-routing-row {
+    display: flex;
+    align-items: center;
+    border-bottom: 1px solid var(--ap-bg-secondary);
+}
+
+.ap-routing-row:last-child {
+    border-bottom: none;
+}
+
+.ap-routing-row-label {
+    width: 100px;
+    min-width: 100px;
+    flex-shrink: 0;
+    font-size: var(--ap-font-size-xs);
+    font-family: var(--ap-font-family);
+    color: var(--ap-text-primary);
+    padding: var(--ap-spacing-xs) var(--ap-spacing-sm);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ap-routing-cell {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--ap-spacing-xs);
+}
+
+.ap-routing-toggle {
+    font-size: 18px;
+    line-height: 1;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--ap-text-muted);
+    padding: 2px 8px;
+}
+
+.ap-routing-toggle:hover {
+    color: var(--ap-text-primary);
+}
+
+.ap-routing-toggle.on {
+    color: var(--ap-accent-green);
+}
+
+.ap-routing-toggle.on:hover {
+    color: var(--ap-accent-red);
+}
+
+.ap-routing-config-cell {
+    min-width: 90px;
+}
+
+.ap-routing-config-select {
+    font-family: var(--ap-font-family);
+    font-size: 10px;
+    padding: 1px 2px;
+    background: #ffffff;
+    color: #000000;
+    border: 1px solid #000000;
+    cursor: pointer;
+    max-width: 90px;
+}
+
+.ap-routing-log {
+    flex: 1;
+    overflow-y: auto;
+    background: var(--ap-bg-secondary);
+    border: 1px solid var(--ap-bg-tertiary);
+    padding: var(--ap-spacing-sm);
+    font-family: var(--ap-font-family);
+    font-size: var(--ap-font-size-xs);
+    line-height: 1.6;
+}
+
+/* ============================================================
    SYNC WINDOW
    ============================================================ */
 
