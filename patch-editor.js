@@ -283,6 +283,17 @@ function PatchEditorWindow({
     // Build module definitions from topology (or use defaults)
     const moduleDefinitions = useMemo(() => buildModuleDefinitions(topology), [topology]);
 
+    // Fixed modules mode: all audio + mod modules always visible and non-removable (e.g., Aach FM synth)
+    // Distinct from readonly (device config is fixed) which both Candide and Aach set
+    const hasFixedModules = topology?.fixed_modules === true;
+
+    // Check if a module is fixed (non-removable) in fixed_modules mode
+    const controlIds = useMemo(() => new Set(moduleDefinitions.control.map(m => m.id)), [moduleDefinitions]);
+    const isFixedModule = useCallback((moduleId) => {
+        if (!hasFixedModules) return false;
+        return !controlIds.has(moduleId); // Audio + mod are fixed
+    }, [hasFixedModules, controlIds]);
+
     // Node positions (stored locally, could be persisted later)
     const [nodePositions, setNodePositions] = useState({});
 
@@ -329,7 +340,7 @@ function PatchEditorWindow({
         prevPatchRef.current = currentPatch;
     }, [currentPatch]);
 
-    // Clear optimistic state when real patch data arrives
+    // Clear optimistic state and stale port positions when real patch data arrives
     useEffect(() => {
         setOptimisticDeletes(new Set());
         setOptimisticAdds(new Set());
@@ -353,6 +364,7 @@ function PatchEditorWindow({
 
     // Get enabled modules from current patch
     // Unified rule: module is enabled if it has params OR has active modulation routes
+    // Readonly mode: audio + mod always enabled; control sources from patch data
     const enabledModules = useMemo(() => {
         if (!currentPatch) return new Set();
         const enabled = new Set();
@@ -366,7 +378,6 @@ function PatchEditorWindow({
             if (typeof moduleData !== 'object' || !moduleData) return;
             Object.keys(moduleData).forEach(key => {
                 if (!key.endsWith('_AMOUNT')) return;
-                // Find which source this AMOUNT param is for
                 const withoutAmount = key.slice(0, -7);
                 knownSources.forEach(src => {
                     if (withoutAmount.endsWith('_' + src)) {
@@ -375,6 +386,20 @@ function PatchEditorWindow({
                 });
             });
         });
+
+        if (hasFixedModules) {
+            // Audio + mod: always enabled
+            moduleDefinitions.audio.forEach(m => enabled.add(m.id));
+            moduleDefinitions.mod.forEach(m => enabled.add(m.id));
+            // Control: from active routes (same as normal third pass)
+            activeSources.forEach(src => {
+                if (controlIds.has(src)) enabled.add(src);
+            });
+            // Apply optimistic changes for control sources
+            optimisticDeletes.forEach(id => { if (controlIds.has(id)) enabled.delete(id); });
+            optimisticAdds.forEach(id => { if (controlIds.has(id)) enabled.add(id); });
+            return enabled;
+        }
 
         // Second pass: determine enabled modules from patch keys
         Object.keys(currentPatch).forEach(key => {
@@ -392,8 +417,6 @@ function PatchEditorWindow({
         });
 
         // Third pass: add control sources that have active routes
-        // (VELOCITY, PRESSURE, BEND don't have their own patch keys,
-        // they only appear as suffixes in _AMOUNT params)
         activeSources.forEach(src => enabled.add(src));
 
         // Apply optimistic changes
@@ -401,10 +424,12 @@ function PatchEditorWindow({
         optimisticAdds.forEach(id => enabled.add(id));
 
         return enabled;
-    }, [currentPatch, optimisticDeletes, optimisticAdds]);
+    }, [currentPatch, optimisticDeletes, optimisticAdds, hasFixedModules, moduleDefinitions, controlIds]);
 
     // Extract existing modulation connections from patch
     // Scans for {TARGET}_{SOURCE}_AMOUNT params to find active routes
+    // Readonly mode: fixed wires from topology.mod_targets for non-control sources,
+    // editable wires from _AMOUNT params for control sources
     const modConnections = useMemo(() => {
         if (!currentPatch) return [];
         const connections = [];
@@ -412,43 +437,84 @@ function PatchEditorWindow({
         // Known modulation sources (to parse from AMOUNT param names)
         const knownSources = ['VELOCITY', 'PRESSURE', 'BEND', 'GLFO', 'VLFO', 'MOD_ENV', 'VAMP_ENV'];
 
-        // Scan all modules for AMOUNT params
-        Object.entries(currentPatch).forEach(([moduleId, moduleData]) => {
-            if (typeof moduleData !== 'object' || !moduleData) return;
-            if (['name', 'version', 'index'].includes(moduleId)) return;
-
-            Object.entries(moduleData).forEach(([key, value]) => {
-                // Match {TARGET}_{SOURCE}_AMOUNT pattern
-                if (!key.endsWith('_AMOUNT')) return;
-
-                // Parse source from key: e.g., "FILTER_FREQUENCY_MOD_ENV_AMOUNT"
-                const withoutAmount = key.slice(0, -7); // Remove "_AMOUNT"
-
-                // Find which source this is
-                let source = null;
-                let target = null;
-                for (const src of knownSources) {
-                    if (withoutAmount.endsWith('_' + src)) {
-                        source = src;
-                        target = withoutAmount.slice(0, -(src.length + 1)); // Remove "_SOURCE"
-                        break;
+        if (hasFixedModules && topology?.mod_targets) {
+            // Fixed wires from mod sources (non-control) via topology
+            Object.entries(topology.mod_targets).forEach(([sourceId, targets]) => {
+                if (controlIds.has(sourceId)) return; // Skip control sources
+                targets.forEach(targetParam => {
+                    // Find which module owns this param
+                    for (const [modKey, modData] of Object.entries(currentPatch)) {
+                        if (typeof modData !== 'object' || !modData) continue;
+                        if (['name', 'version', 'index'].includes(modKey)) continue;
+                        if (modData[targetParam]) {
+                            connections.push({ from: sourceId, toModule: modKey, toParam: targetParam, amount: null, fixed: true });
+                            break;
+                        }
                     }
-                }
-
-                if (source && target) {
-                    connections.push({
-                        from: source,
-                        toModule: moduleId,
-                        toParam: target,
-                        amount: typeof value === 'object' ? value.initial : value
-                    });
-                }
+                });
             });
-        });
 
-        // Apply optimistic wire changes
-        // Filter out optimistically deleted wires
+            // Editable wires from control sources via _AMOUNT params
+            Object.entries(currentPatch).forEach(([moduleId, moduleData]) => {
+                if (typeof moduleData !== 'object' || !moduleData) return;
+                if (['name', 'version', 'index'].includes(moduleId)) return;
+
+                Object.entries(moduleData).forEach(([key, value]) => {
+                    if (!key.endsWith('_AMOUNT')) return;
+                    const withoutAmount = key.slice(0, -7);
+                    let source = null;
+                    let target = null;
+                    for (const src of knownSources) {
+                        if (withoutAmount.endsWith('_' + src)) {
+                            source = src;
+                            target = withoutAmount.slice(0, -(src.length + 1));
+                            break;
+                        }
+                    }
+                    // Only include control source wires (editable)
+                    if (source && target && controlIds.has(source)) {
+                        connections.push({
+                            from: source,
+                            toModule: moduleId,
+                            toParam: target,
+                            amount: typeof value === 'object' ? value.initial : value
+                        });
+                    }
+                });
+            });
+        } else {
+            // Normal mode: all wires from _AMOUNT params
+            Object.entries(currentPatch).forEach(([moduleId, moduleData]) => {
+                if (typeof moduleData !== 'object' || !moduleData) return;
+                if (['name', 'version', 'index'].includes(moduleId)) return;
+
+                Object.entries(moduleData).forEach(([key, value]) => {
+                    if (!key.endsWith('_AMOUNT')) return;
+                    const withoutAmount = key.slice(0, -7);
+                    let source = null;
+                    let target = null;
+                    for (const src of knownSources) {
+                        if (withoutAmount.endsWith('_' + src)) {
+                            source = src;
+                            target = withoutAmount.slice(0, -(src.length + 1));
+                            break;
+                        }
+                    }
+                    if (source && target) {
+                        connections.push({
+                            from: source,
+                            toModule: moduleId,
+                            toParam: target,
+                            amount: typeof value === 'object' ? value.initial : value
+                        });
+                    }
+                });
+            });
+        }
+
+        // Apply optimistic wire changes (only to non-fixed wires)
         const filtered = connections.filter(conn => {
+            if (conn.fixed) return true; // Fixed wires can't be deleted
             const wireKey = `${conn.from}:${conn.toModule}:${conn.toParam}`;
             return !optimisticWireDeletes.has(wireKey);
         });
@@ -462,11 +528,12 @@ function PatchEditorWindow({
         });
 
         return filtered;
-    }, [currentPatch, optimisticWireDeletes, optimisticWireAdds]);
+    }, [currentPatch, optimisticWireDeletes, optimisticWireAdds, hasFixedModules, topology, controlIds]);
 
     // Select a module (click on header)
     const handleSelectModule = (moduleId) => {
         if (wiringFrom) return; // Don't select while wiring
+        if (isFixedModule(moduleId)) return; // Fixed modules not selectable
         log('Module Selected', { moduleId });
         setSelection({
             type: 'module',
@@ -477,6 +544,9 @@ function PatchEditorWindow({
 
     // Select a wire (click on wire path)
     const handleSelectWire = (wireKey) => {
+        // Fixed wires not selectable
+        const conn = modConnections.find(c => `${c.from}:${c.toModule}:${c.toParam}` === wireKey);
+        if (conn?.fixed) return;
         log('Wire Selected', { wireKey });
         setSelection({
             type: 'wire',
@@ -665,6 +735,11 @@ function PatchEditorWindow({
             if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
             if (e.key === 'Delete' || e.key === 'Backspace') {
+                if (selection.type === 'module' && isFixedModule(selection.moduleId)) return;
+                if (selection.type === 'wire') {
+                    const conn = modConnections.find(c => `${c.from}:${c.toModule}:${c.toParam}` === selection.wireKey);
+                    if (conn?.fixed) return;
+                }
                 e.preventDefault();
                 if (selection.type === 'module') {
                     showDeleteConfirmation('module', selection.moduleId);
@@ -686,7 +761,7 @@ function PatchEditorWindow({
 
         document.addEventListener('keydown', handleKeyDown);
         return () => document.removeEventListener('keydown', handleKeyDown);
-    }, [selection, confirmDialog, wiringFrom]);
+    }, [selection, confirmDialog, wiringFrom, isFixedModule, modConnections]);
 
     return (
         <div className="ap-patch-editor" onMouseUp={handleCancelWiring}>
@@ -711,6 +786,7 @@ function PatchEditorWindow({
                 onAddModule={handleAddModule}
                 currentPatch={currentPatch}
                 pendingModuleId={pendingModule?.moduleId}
+                hasFixedModules={hasFixedModules}
             />
 
             {/* Node Workspace with Loading Overlay */}
@@ -720,6 +796,7 @@ function PatchEditorWindow({
                     moduleDefinitions={moduleDefinitions}
                     currentPatch={currentPatch}
                     enabledModules={enabledModules}
+                    hasFixedModules={hasFixedModules}
                     nodePositions={nodePositions}
                     onNodePositionChange={(id, pos) => setNodePositions(prev => ({ ...prev, [id]: pos }))}
                     onSelectModule={handleSelectModule}
@@ -888,7 +965,7 @@ function PatchesList({ patches, currentIndex, onSelect, onCreate, onDelete, onRe
 // MODULE DRAWER
 //======================================================================
 
-function ModuleDrawer({ moduleDefinitions, enabledModules, onAddModule, currentPatch, pendingModuleId }) {
+function ModuleDrawer({ moduleDefinitions, enabledModules, onAddModule, currentPatch, pendingModuleId, hasFixedModules }) {
     const [showJson, setShowJson] = useState(false);
 
     return (
@@ -897,20 +974,24 @@ function ModuleDrawer({ moduleDefinitions, enabledModules, onAddModule, currentP
                 <span>MODULES</span>
             </div>
             <div className="ap-drawer-scroll">
-                <DrawerSection
-                    title="AUDIO"
-                    modules={moduleDefinitions.audio}
-                    enabledModules={enabledModules}
-                    onAddModule={onAddModule}
-                    pendingModuleId={pendingModuleId}
-                />
-                <DrawerSection
-                    title="MOD"
-                    modules={moduleDefinitions.mod}
-                    enabledModules={enabledModules}
-                    onAddModule={onAddModule}
-                    pendingModuleId={pendingModuleId}
-                />
+                {!hasFixedModules && (
+                    <DrawerSection
+                        title="AUDIO"
+                        modules={moduleDefinitions.audio}
+                        enabledModules={enabledModules}
+                        onAddModule={onAddModule}
+                        pendingModuleId={pendingModuleId}
+                    />
+                )}
+                {!hasFixedModules && (
+                    <DrawerSection
+                        title="MOD"
+                        modules={moduleDefinitions.mod}
+                        enabledModules={enabledModules}
+                        onAddModule={onAddModule}
+                        pendingModuleId={pendingModuleId}
+                    />
+                )}
                 <DrawerSection
                     title="CONTROL"
                     modules={moduleDefinitions.control}
@@ -979,25 +1060,6 @@ function DrawerSection({ title, modules, enabledModules, onAddModule, pendingMod
 //======================================================================
 
 function JsonPopover({ patch, onClose }) {
-    const popoverRef = useRef(null);
-
-    // Close on outside click
-    useEffect(() => {
-        const handleClick = (e) => {
-            if (popoverRef.current && !popoverRef.current.contains(e.target)) {
-                onClose();
-            }
-        };
-        // Use setTimeout to avoid immediate close from the button click
-        const timer = setTimeout(() => {
-            document.addEventListener('mousedown', handleClick);
-        }, 0);
-        return () => {
-            clearTimeout(timer);
-            document.removeEventListener('mousedown', handleClick);
-        };
-    }, [onClose]);
-
     // Close on Escape
     useEffect(() => {
         const handleKey = (e) => {
@@ -1010,12 +1072,14 @@ function JsonPopover({ patch, onClose }) {
     const jsonString = JSON.stringify(patch, null, 2);
 
     return (
-        <div className="ap-json-popover" ref={popoverRef}>
-            <div className="ap-json-popover-header">
-                <span>Patch JSON</span>
-                <button className="ap-json-popover-close" onClick={onClose}>X</button>
+        <div className="ap-modal-overlay" onClick={onClose}>
+            <div className="ap-json-modal" onClick={e => e.stopPropagation()}>
+                <div className="ap-window-titlebar">
+                    <button className="ap-window-close" onClick={onClose}></button>
+                    <div className="ap-window-title">Patch JSON</div>
+                </div>
+                <pre className="ap-json-modal-content">{jsonString}</pre>
             </div>
-            <pre className="ap-json-popover-content">{jsonString}</pre>
         </div>
     );
 }
@@ -1080,6 +1144,7 @@ function NodeWorkspace({
     moduleDefinitions,
     currentPatch,
     enabledModules,
+    hasFixedModules,
     nodePositions,
     onNodePositionChange,
     onSelectModule,
@@ -1110,11 +1175,10 @@ function NodeWorkspace({
     const [hoverTarget, setHoverTarget] = useState(null); // { module, param }
     const [isDragOver, setIsDragOver] = useState(false);
 
-    // Pan state
-    const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
+    // Pan state (mouse drag to scroll)
     const [isPanning, setIsPanning] = useState(false);
     const panStartRef = useRef({ x: 0, y: 0 });
-    const panStartOffsetRef = useRef({ x: 0, y: 0 });
+    const scrollStartRef = useRef({ left: 0, top: 0 });
     const panContainerRef = useRef(null);
 
     // Port position registry - tracks actual DOM positions of all ports
@@ -1126,13 +1190,13 @@ function NodeWorkspace({
     // Callback for nodes to report their port positions
     // Collects in ref, then batches a single state update
     const handlePortPositionChange = useCallback((portId, globalPos) => {
-        const wsRect = workspaceRef.current?.getBoundingClientRect();
-        if (!wsRect) return;
+        const pcRect = panContainerRef.current?.getBoundingClientRect();
+        if (!pcRect) return;
 
-        // Store in ref (no re-render)
+        // Store in ref (no re-render) — relative to pan container
         const newPos = {
-            x: globalPos.x - wsRect.left - panOffset.x,
-            y: globalPos.y - wsRect.top - panOffset.y
+            x: globalPos.x - pcRect.left,
+            y: globalPos.y - pcRect.top
         };
 
         // Only update if position actually changed
@@ -1150,7 +1214,7 @@ function NodeWorkspace({
         positionUpdateTimeoutRef.current = setTimeout(() => {
             setPortPositions({ ...portPositionsRef.current });
         }, 10);
-    }, [panOffset]);
+    }, []);
 
     // Cleanup timeout on unmount
     useEffect(() => {
@@ -1161,28 +1225,48 @@ function NodeWorkspace({
         };
     }, []);
 
-    // Default positions matching intended layout
+    // Clear stale port positions when switching patches (prevents phantom wires)
+    // Track by patch index — not object identity — so param edits don't wipe positions
+    const patchIdentityRef = useRef(null);
+    useEffect(() => {
+        const identity = currentPatch?.index;
+        if (identity !== patchIdentityRef.current) {
+            portPositionsRef.current = {};
+            setPortPositions({});
+            patchIdentityRef.current = identity;
+        }
+    }, [currentPatch]);
+
+    // Content offset — ensures scroll margin on north/west edges
+    const CONTENT_OFFSET = 100;
+
+    // Default positions matching intended layout (offset from origin for scroll margin)
     const DEFAULT_POSITIONS = {
         // Audio - oscillators stacked vertically, then filter/amp/effects flow right
-        OSC0:     { x: 50, y: 50 },
-        OSC1:     { x: 50, y: 160 },
-        OSC2:     { x: 50, y: 270 },
-        FILTER:   { x: 250, y: 50 },
-        VAMP:     { x: 450, y: 50 },
-        DISTORT:  { x: 650, y: 50 },
-        DELAY:    { x: 650, y: 160 },
-        CHORDS:   { x: 450, y: 160 },
+        OSC0:     { x: CONTENT_OFFSET + 0,   y: CONTENT_OFFSET + 0 },
+        OSC1:     { x: CONTENT_OFFSET + 0,   y: CONTENT_OFFSET + 110 },
+        OSC2:     { x: CONTENT_OFFSET + 0,   y: CONTENT_OFFSET + 220 },
+        FILTER:   { x: CONTENT_OFFSET + 200, y: CONTENT_OFFSET + 0 },
+        VAMP:     { x: CONTENT_OFFSET + 400, y: CONTENT_OFFSET + 0 },
+        DISTORT:  { x: CONTENT_OFFSET + 600, y: CONTENT_OFFSET + 0 },
+        DELAY:    { x: CONTENT_OFFSET + 600, y: CONTENT_OFFSET + 110 },
+        CHORDS:   { x: CONTENT_OFFSET + 400, y: CONTENT_OFFSET + 110 },
 
         // Mod sources - below audio
-        MOD_ENV:  { x: 50, y: 420 },
-        VAMP_ENV: { x: 250, y: 420 },
-        GLFO:     { x: 50, y: 530 },
-        VLFO:     { x: 250, y: 530 },
+        MOD_ENV:  { x: CONTENT_OFFSET + 0,   y: CONTENT_OFFSET + 370 },
+        VAMP_ENV: { x: CONTENT_OFFSET + 200, y: CONTENT_OFFSET + 370 },
+        GLFO:     { x: CONTENT_OFFSET + 0,   y: CONTENT_OFFSET + 480 },
+        VLFO:     { x: CONTENT_OFFSET + 200, y: CONTENT_OFFSET + 480 },
+
+        // Aach FM modules
+        CARRIER:   { x: CONTENT_OFFSET + 200, y: CONTENT_OFFSET + 0 },
+        MODULATOR: { x: CONTENT_OFFSET + 0,   y: CONTENT_OFFSET + 0 },
+        AMP_ENV:   { x: CONTENT_OFFSET + 0,   y: CONTENT_OFFSET + 200 },
 
         // Control sources - bottom
-        VELOCITY: { x: 50, y: 640 },
-        PRESSURE: { x: 200, y: 640 },
-        BEND:     { x: 350, y: 640 },
+        VELOCITY: { x: CONTENT_OFFSET + 0,   y: CONTENT_OFFSET + 590 },
+        PRESSURE: { x: CONTENT_OFFSET + 150, y: CONTENT_OFFSET + 590 },
+        BEND:     { x: CONTENT_OFFSET + 300, y: CONTENT_OFFSET + 590 },
     };
 
     // Get default position for a module
@@ -1197,11 +1281,11 @@ function NodeWorkspace({
         const moduleDef = allModules.find(m => m.id === moduleId);
 
         if (moduleDef?.type === 'audio') {
-            return { x: 50 + index * 200, y: 50 };
+            return { x: CONTENT_OFFSET + index * 200, y: CONTENT_OFFSET };
         } else if (moduleDef?.type === 'mod') {
-            return { x: 50 + index * 150, y: 420 };
+            return { x: CONTENT_OFFSET + index * 150, y: CONTENT_OFFSET + 370 };
         } else {
-            return { x: 50 + index * 150, y: 640 };
+            return { x: CONTENT_OFFSET + index * 150, y: CONTENT_OFFSET + 590 };
         }
     };
 
@@ -1212,6 +1296,78 @@ function NodeWorkspace({
         const control = moduleDefinitions.control.filter(m => enabledModules.has(m.id));
         return { audio, mod, control };
     }, [moduleDefinitions, enabledModules]);
+
+    // Compute pan container size from node bounding box + margin
+    const contentBounds = useMemo(() => {
+        const MARGIN = 200;
+        const FALLBACK_W = 200, FALLBACK_H = 120;
+        let maxX = 0, maxY = 0;
+
+        // Use port positions for actual node extent where available
+        const moduleBounds = {};
+        Object.entries(portPositions).forEach(([portId, pos]) => {
+            const moduleId = portId.split(':')[0];
+            if (!moduleBounds[moduleId]) {
+                moduleBounds[moduleId] = { maxX: -Infinity, maxY: -Infinity };
+            }
+            moduleBounds[moduleId].maxX = Math.max(moduleBounds[moduleId].maxX, pos.x);
+            moduleBounds[moduleId].maxY = Math.max(moduleBounds[moduleId].maxY, pos.y);
+        });
+
+        [enabledByType.audio, enabledByType.mod, enabledByType.control].flat().forEach((m, i) => {
+            const pos = nodePositions[m.id] || getDefaultPosition(m.id, i);
+            const bounds = moduleBounds[m.id];
+            const nodeRight = bounds ? bounds.maxX + 20 : pos.x + FALLBACK_W;
+            const nodeBottom = bounds ? bounds.maxY + 20 : pos.y + FALLBACK_H;
+            maxX = Math.max(maxX, nodeRight);
+            maxY = Math.max(maxY, nodeBottom);
+        });
+
+        return { width: maxX + MARGIN, height: maxY + MARGIN };
+    }, [enabledByType, nodePositions, getDefaultPosition, portPositions]);
+
+    // Compute group box outlines for each module type
+    // Uses port positions to measure actual rendered node extent
+    const groupBoxes = useMemo(() => {
+        const PAD = 20;
+        const FALLBACK_W = 200, FALLBACK_H = 120;
+        const groups = [];
+
+        // Build per-module bounding box from port positions
+        const moduleBounds = {};
+        Object.entries(portPositions).forEach(([portId, pos]) => {
+            const moduleId = portId.split(':')[0];
+            if (!moduleBounds[moduleId]) {
+                moduleBounds[moduleId] = { maxX: -Infinity, maxY: -Infinity };
+            }
+            moduleBounds[moduleId].maxX = Math.max(moduleBounds[moduleId].maxX, pos.x);
+            moduleBounds[moduleId].maxY = Math.max(moduleBounds[moduleId].maxY, pos.y);
+        });
+
+        [
+            { modules: enabledByType.audio, color: 'var(--ap-accent-green)', label: 'AUDIO' },
+            { modules: enabledByType.mod, color: 'var(--ap-accent-yellow)', label: 'MOD' },
+            { modules: enabledByType.control, color: 'var(--ap-accent-purple)', label: 'CONTROL' }
+        ].forEach(({ modules, color, label }) => {
+            if (modules.length === 0) return;
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            modules.forEach((m, i) => {
+                const pos = nodePositions[m.id] || getDefaultPosition(m.id, i);
+                const bounds = moduleBounds[m.id];
+                // Right/bottom edge: use port positions if available, else fallback
+                const nodeRight = bounds ? bounds.maxX + 20 : pos.x + FALLBACK_W;
+                const nodeBottom = bounds ? bounds.maxY + 20 : pos.y + FALLBACK_H;
+                minX = Math.min(minX, pos.x);
+                minY = Math.min(minY, pos.y);
+                maxX = Math.max(maxX, nodeRight);
+                maxY = Math.max(maxY, nodeBottom);
+            });
+            groups.push({ x: minX - PAD, y: minY - PAD,
+                           width: maxX - minX + 2 * PAD, height: maxY - minY + 2 * PAD,
+                           color, label });
+        });
+        return groups;
+    }, [enabledByType, nodePositions, getDefaultPosition, portPositions]);
 
     // Handle node drag
     const handleMouseDown = (moduleId, e) => {
@@ -1227,11 +1383,11 @@ function NodeWorkspace({
     };
 
     const handleMouseMove = (e) => {
-        if (!draggingNode || !workspaceRef.current) return;
+        if (!draggingNode || !panContainerRef.current) return;
 
-        const rect = workspaceRef.current.getBoundingClientRect();
-        const newX = e.clientX - rect.left - dragOffset.x - panOffset.x;
-        const newY = e.clientY - rect.top - dragOffset.y - panOffset.y;
+        const pcRect = panContainerRef.current.getBoundingClientRect();
+        const newX = e.clientX - pcRect.left - dragOffset.x;
+        const newY = e.clientY - pcRect.top - dragOffset.y;
 
         onNodePositionChange(draggingNode, { x: Math.max(0, newX), y: Math.max(0, newY) });
     };
@@ -1251,41 +1407,29 @@ function NodeWorkspace({
         }
     }, [draggingNode, dragOffset]);
 
-    // Wheel handler — 2-finger scroll pans workspace
-    const handleWheel = useCallback((e) => {
-        e.preventDefault();
-        setPanOffset(prev => ({
-            x: prev.x - e.deltaX,
-            y: prev.y - e.deltaY
-        }));
-    }, []);
-
-    // Attach wheel with passive:false (React onWheel is passive by default)
-    useEffect(() => {
-        const el = workspaceRef.current;
-        if (!el) return;
-        el.addEventListener('wheel', handleWheel, { passive: false });
-        return () => el.removeEventListener('wheel', handleWheel);
-    }, [handleWheel, !!currentPatch]);
-
-    // Background drag-to-pan
+    // Background drag-to-pan (adjusts native scroll position)
     const handlePanStart = (e) => {
         if (e.button !== 0) return;
         // Only pan when clicking empty workspace or the pan container
         if (e.target !== workspaceRef.current && e.target !== panContainerRef.current) return;
+        // Don't pan when clicking on scrollbar area (let native resize/scroll handle it)
+        const ws = workspaceRef.current;
+        const rect = ws.getBoundingClientRect();
+        if (e.clientX > rect.left + ws.clientWidth || e.clientY > rect.top + ws.clientHeight) return;
         setIsPanning(true);
         panStartRef.current = { x: e.clientX, y: e.clientY };
-        panStartOffsetRef.current = { ...panOffset };
+        scrollStartRef.current = {
+            left: workspaceRef.current.scrollLeft,
+            top: workspaceRef.current.scrollTop
+        };
     };
 
     const handlePanMove = useCallback((e) => {
         if (!isPanning) return;
         const dx = e.clientX - panStartRef.current.x;
         const dy = e.clientY - panStartRef.current.y;
-        setPanOffset({
-            x: panStartOffsetRef.current.x + dx,
-            y: panStartOffsetRef.current.y + dy
-        });
+        workspaceRef.current.scrollLeft = scrollStartRef.current.left - dx;
+        workspaceRef.current.scrollTop = scrollStartRef.current.top - dy;
     }, [isPanning]);
 
     const handlePanEnd = useCallback(() => {
@@ -1303,36 +1447,42 @@ function NodeWorkspace({
         }
     }, [isPanning, handlePanMove, handlePanEnd]);
 
-    // Build audio wires with proper parallel routing
-    // OSCs -> Filter (parallel), Filter -> Amp, Amp -> Effects (chain)
+    // Build audio wires — topology-driven chain or Candide hardcoded fallback
     const audioWires = useMemo(() => {
         const wires = [];
-        const modules = enabledByType.audio;
 
-        // Find modules by category/role
+        // Topology-driven: wire consecutive modules from audio_chain
+        if (topology?.audio_chain) {
+            const chain = topology.audio_chain;
+            for (let i = 0; i < chain.length - 1; i++) {
+                if (enabledModules.has(chain[i]) && enabledModules.has(chain[i + 1])) {
+                    wires.push({ from: chain[i], to: chain[i + 1], type: 'audio' });
+                }
+            }
+            return wires;
+        }
+
+        // Candide fallback: OSCs -> Filter -> Amp -> Effects
+        const modules = enabledByType.audio;
         const oscillators = modules.filter(m => m.id.startsWith('OSC'));
         const filter = modules.find(m => m.id === 'FILTER');
         const amp = modules.find(m => m.id === 'VAMP');
         const effects = modules.filter(m => ['DISTORT', 'DELAY'].includes(m.id));
 
-        // OSCs -> Filter (parallel)
         if (filter) {
             oscillators.forEach(osc => {
                 wires.push({ from: osc.id, to: filter.id, type: 'audio' });
             });
         } else if (amp) {
-            // No filter - OSCs go directly to amp
             oscillators.forEach(osc => {
                 wires.push({ from: osc.id, to: amp.id, type: 'audio' });
             });
         }
 
-        // Filter -> Amp
         if (filter && amp) {
             wires.push({ from: filter.id, to: amp.id, type: 'audio' });
         }
 
-        // Amp -> Effects chain
         if (amp && effects.length > 0) {
             wires.push({ from: amp.id, to: effects[0].id, type: 'audio' });
             for (let i = 0; i < effects.length - 1; i++) {
@@ -1341,13 +1491,13 @@ function NodeWorkspace({
         }
 
         return wires;
-    }, [enabledByType.audio]);
+    }, [enabledByType.audio, topology, enabledModules]);
 
     // Handle workspace mouse move for wiring
     const handleWorkspaceMouseMove = (e) => {
-        if (wiringFrom && workspaceRef.current) {
-            const rect = workspaceRef.current.getBoundingClientRect();
-            onWiringMouseMove({ x: e.clientX - rect.left - panOffset.x, y: e.clientY - rect.top - panOffset.y });
+        if (wiringFrom && panContainerRef.current) {
+            const pcRect = panContainerRef.current.getBoundingClientRect();
+            onWiringMouseMove({ x: e.clientX - pcRect.left, y: e.clientY - pcRect.top });
         }
     };
 
@@ -1372,13 +1522,19 @@ function NodeWorkspace({
         const moduleId = e.dataTransfer.getData('moduleId');
         if (!moduleId) return;
 
-        // Calculate drop position relative to workspace
-        const rect = workspaceRef.current?.getBoundingClientRect();
-        if (!rect) return;
+        // Readonly: only allow control module drops
+        if (hasFixedModules) {
+            const moduleDef = findModuleDef(moduleId, moduleDefinitions);
+            if (moduleDef?.type !== 'control') return;
+        }
+
+        // Calculate drop position relative to pan container
+        const pcRect = panContainerRef.current?.getBoundingClientRect();
+        if (!pcRect) return;
 
         const dropPosition = {
-            x: e.clientX - rect.left - 50 - panOffset.x,  // Center the node
-            y: e.clientY - rect.top - 15 - panOffset.y
+            x: e.clientX - pcRect.left - 50,  // Center the node
+            y: e.clientY - pcRect.top - 15
         };
 
         log('Module Dropped', { moduleId, position: dropPosition });
@@ -1431,25 +1587,25 @@ function NodeWorkspace({
 
     // Calculate envelope params for both envelopes (for overlay feature)
     const envelopeData = useMemo(() => {
-        if (!currentPatch) return { MOD_ENV: null, VAMP_ENV: null };
+        if (!currentPatch) return {};
 
         const extractEnvelopeParams = (moduleId) => {
             const moduleData = currentPatch[moduleId];
             if (!moduleData) return null;
 
-            const findParam = (suffix) => {
+            const findParam = (...suffixes) => {
                 for (const [key, value] of Object.entries(moduleData)) {
-                    if (key.endsWith(suffix) && typeof value === 'object' && value.initial !== undefined) {
+                    if (suffixes.some(s => key.endsWith(s)) && typeof value === 'object' && value.initial !== undefined) {
                         return value.initial;
                     }
                 }
                 return null;
             };
 
-            const attack = findParam('_ATTACK_TIME');
-            const decay = findParam('_DECAY_TIME');
-            const sustain = findParam('_SUSTAIN_LEVEL');
-            const release = findParam('_RELEASE_TIME');
+            const attack = findParam('_ATTACK_TIME', '_ATTACK');
+            const decay = findParam('_DECAY_TIME', '_DECAY');
+            const sustain = findParam('_SUSTAIN_LEVEL', '_SUSTAIN');
+            const release = findParam('_RELEASE_TIME', '_RELEASE');
 
             if (attack !== null && decay !== null && sustain !== null && release !== null) {
                 return { attack, decay, sustain, release };
@@ -1457,10 +1613,12 @@ function NodeWorkspace({
             return null;
         };
 
-        return {
-            MOD_ENV: extractEnvelopeParams('MOD_ENV'),
-            VAMP_ENV: extractEnvelopeParams('VAMP_ENV')
-        };
+        // Extract envelope data for all envelope-type modules
+        const data = {};
+        ['MOD_ENV', 'VAMP_ENV', 'AMP_ENV'].forEach(id => {
+            data[id] = extractEnvelopeParams(id);
+        });
+        return data;
     }, [currentPatch]);
 
     if (!currentPatch) {
@@ -1475,9 +1633,8 @@ function NodeWorkspace({
 
     return (
         <div
-            className={`ap-node-workspace ${wiringFrom ? 'wiring' : ''} ${isDragOver ? 'drag-over' : ''} ${isPanning ? 'panning' : ''}`}
+            className={`ap-node-workspace ap-scroll-both ${wiringFrom ? 'wiring' : ''} ${isDragOver ? 'drag-over' : ''} ${isPanning ? 'panning' : ''}`}
             ref={workspaceRef}
-            style={{ backgroundPosition: `${panOffset.x}px ${panOffset.y}px` }}
             onMouseDown={handlePanStart}
             onMouseMove={handleWorkspaceMouseMove}
             onClick={handleWorkspaceClick}
@@ -1488,10 +1645,23 @@ function NodeWorkspace({
             <div
                 className="ap-pan-container"
                 ref={panContainerRef}
-                style={{ transform: `translate(${panOffset.x}px, ${panOffset.y}px)` }}
+                style={{ width: contentBounds.width, height: contentBounds.height }}
             >
             {/* SVG layer for wires */}
-            <svg className="ap-wires-layer" width="10000" height="10000">
+            <svg className="ap-wires-layer" width={contentBounds.width} height={contentBounds.height}>
+                {/* Group boxes behind nodes */}
+                {groupBoxes.map((box, i) => (
+                    <g key={`group-${i}`}>
+                        <rect x={box.x} y={box.y} width={box.width} height={box.height}
+                              fill="none" stroke={box.color}
+                              strokeOpacity="0.5" strokeWidth="2" rx="8" />
+                        <text x={box.x + 8} y={box.y + 14} fill={box.color} opacity="0.4"
+                              fontSize="11" fontFamily="Chicago_12, Chicago, sans-serif">
+                            {box.label}
+                        </text>
+                    </g>
+                ))}
+
                 {/* Audio wires */}
                 {audioWires.map((wire, i) => (
                     <Wire
@@ -1542,9 +1712,10 @@ function NodeWorkspace({
                         position={pos}
                         isSelected={isSelected}
                         isDeleting={isDeleting}
+                        isFixed={hasFixedModules}
                         onMouseDown={(e) => handleMouseDown(module.id, e)}
                         onSelectModule={() => onSelectModule(module.id)}
-                        onRemoveModule={() => onRemoveModule(module.id)}
+                        onRemoveModule={hasFixedModules ? undefined : () => onRemoveModule(module.id)}
                         wiringFrom={wiringFrom}
                         onParamDrop={onWireDrop}
                         onPortPositionChange={handlePortPositionChange}
@@ -1581,11 +1752,14 @@ function NodeWorkspace({
                         position={pos}
                         isSelected={isSelected}
                         isDeleting={isDeleting}
+                        isFixed={hasFixedModules}
                         onMouseDown={(e) => handleMouseDown(module.id, e)}
                         onSelectModule={() => onSelectModule(module.id)}
-                        onRemoveModule={() => onRemoveModule(module.id)}
-                        onStartWiring={() => onStartWiring(module.id, module.type)}
+                        onRemoveModule={hasFixedModules ? undefined : () => onRemoveModule(module.id)}
+                        onStartWiring={hasFixedModules ? undefined : () => onStartWiring(module.id, module.type)}
                         isWiringSource={wiringFrom?.moduleId === module.id}
+                        wiringFrom={wiringFrom}
+                        onParamDrop={onWireDrop}
                         onPortPositionChange={handlePortPositionChange}
                         selectedWireTarget={selectedWireTarget}
                         onUpdateParam={onUpdateParam}
@@ -2073,6 +2247,7 @@ function Node({
     isSelected,
     isDeleting,
     isPending,
+    isFixed,              // Fixed module in readonly topology (no delete, no output wiring)
     onMouseDown,
     onSelectModule,
     onRemoveModule,
@@ -2144,7 +2319,7 @@ function Node({
 
     // Check if this is an envelope module
     const isEnvelopeModule = module.category === 'envelope' ||
-        module.id === 'MOD_ENV' || module.id === 'VAMP_ENV';
+        module.id === 'MOD_ENV' || module.id === 'VAMP_ENV' || module.id === 'AMP_ENV';
 
     // Check if this is an oscillator module
     const isOscillatorModule = module.category === 'oscillator' ||
@@ -2155,22 +2330,23 @@ function Node({
         module.id === 'GLFO' || module.id === 'VLFO';
 
     // Get envelope params (ADSR) if this is an envelope module
+    // Handles both Candide naming (_ATTACK_TIME, _SUSTAIN_LEVEL) and Aach naming (_ATTACK, _SUSTAIN)
     const envelopeParams = useMemo(() => {
         if (!isEnvelopeModule || !moduleData) return null;
 
-        const findParam = (suffix) => {
+        const findParam = (...suffixes) => {
             for (const [key, value] of Object.entries(moduleData)) {
-                if (key.endsWith(suffix) && typeof value === 'object' && value.initial !== undefined) {
+                if (suffixes.some(s => key.endsWith(s)) && typeof value === 'object' && value.initial !== undefined) {
                     return value.initial;
                 }
             }
             return null;
         };
 
-        const attack = findParam('_ATTACK_TIME');
-        const decay = findParam('_DECAY_TIME');
-        const sustain = findParam('_SUSTAIN_LEVEL');
-        const release = findParam('_RELEASE_TIME');
+        const attack = findParam('_ATTACK_TIME', '_ATTACK');
+        const decay = findParam('_DECAY_TIME', '_DECAY');
+        const sustain = findParam('_SUSTAIN_LEVEL', '_SUSTAIN');
+        const release = findParam('_RELEASE_TIME', '_RELEASE');
 
         if (attack !== null && decay !== null && sustain !== null && release !== null) {
             return { attack, decay, sustain, release };
@@ -2251,6 +2427,7 @@ function Node({
     if (isSelected) classNames.push('selected');
     if (isDeleting) classNames.push('deleting');
     if (isPending) classNames.push('pending');
+    if (isFixed) classNames.push('fixed');
     if (isEnvelopeModule) classNames.push('ap-node-envelope');
     if (isOscillatorModule) classNames.push('ap-node-oscillator');
     if (isLfoModule) classNames.push('ap-node-lfo');
@@ -2264,7 +2441,7 @@ function Node({
     const getWavesForParam = (param) => {
         if (!topology?.waves) return null;
         let waveList = null;
-        if (isOscillatorModule) waveList = topology.waves.osc;
+        if (isOscillatorModule || module.type === 'audio') waveList = topology.waves.osc;
         else if (isLfoModule) waveList = topology.waves.lfo;
         if (!waveList || waveList.length === 0) return null;
         // Param range must match wave list indices
@@ -2286,22 +2463,24 @@ function Node({
                         className="ap-node-port ap-node-port-header-in"
                     />
                 )}
-                {/* Delete button */}
-                <button
-                    className="ap-node-delete-btn"
-                    onMouseDown={(e) => e.stopPropagation()}
-                    onClick={handleDeleteClick}
-                    title="Remove module"
-                >
-                    X
-                </button>
+                {/* Delete button - hidden for fixed modules */}
+                {!isFixed && (
+                    <button
+                        className="ap-node-delete-btn"
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onClick={handleDeleteClick}
+                        title="Remove module"
+                    >
+                        X
+                    </button>
+                )}
                 <span className="ap-node-title">{module.name}</span>
-                {/* Output port - all modules */}
+                {/* Output port - disabled for fixed modules */}
                 <div
                     ref={headerOutputRef}
                     className={`ap-node-port ap-node-port-header-out ${isWiringSource ? 'active' : ''}`}
-                    onMouseDown={(module.type === 'mod' || module.type === 'control') ? handlePortClick : undefined}
-                    title={(module.type === 'mod' || module.type === 'control') ? "Drag to connect" : undefined}
+                    onMouseDown={(!isFixed && (module.type === 'mod' || module.type === 'control')) ? handlePortClick : undefined}
+                    title={(!isFixed && (module.type === 'mod' || module.type === 'control')) ? "Drag to connect" : undefined}
                 />
             </div>
             <div className="ap-node-body">
@@ -2514,7 +2693,7 @@ function NodeParamSlider({ param, onUpdateParam }) {
 //======================================================================
 
 function ModWire({ connection, wireKey, portPositions, isSelected, onSelect }) {
-    const { from, toModule, toParam, amount } = connection;
+    const { from, toModule, toParam, amount, fixed } = connection;
 
     // Get port positions from registry
     const fromPort = portPositions[`${from}:out`];
@@ -2530,7 +2709,6 @@ function ModWire({ connection, wireKey, portPositions, isSelected, onSelect }) {
     const y2 = toPort.y;
 
     // Always use horizontal stubs - exit right, enter left
-    // Scale offset based on vertical distance - more vertical = more horizontal stub needed
     const dx = Math.abs(x2 - x1);
     const dy = Math.abs(y2 - y1);
     const offset = Math.max(40, Math.min(200, dx / 3 + dy / 2));
@@ -2544,22 +2722,24 @@ function ModWire({ connection, wireKey, portPositions, isSelected, onSelect }) {
 
     const handleClick = (e) => {
         e.stopPropagation();
-        if (onSelect) {
+        if (!fixed && onSelect) {
             onSelect();
         }
     };
 
     return (
-        <g className={`ap-mod-wire ${isSelected ? 'selected' : ''}`}>
-            {/* Invisible wider path for easier clicking */}
-            <path
-                d={pathD}
-                stroke="transparent"
-                strokeWidth={24}
-                fill="none"
-                style={{ cursor: 'pointer' }}
-                onClick={handleClick}
-            />
+        <g className={`ap-mod-wire ${isSelected ? 'selected' : ''} ${fixed ? 'fixed' : ''}`}>
+            {/* Invisible wider path for easier clicking (not for fixed wires) */}
+            {!fixed && (
+                <path
+                    d={pathD}
+                    stroke="transparent"
+                    strokeWidth={24}
+                    fill="none"
+                    style={{ cursor: 'pointer' }}
+                    onClick={handleClick}
+                />
+            )}
             {/* Visible wire path */}
             <path
                 d={pathD}
@@ -2567,6 +2747,7 @@ function ModWire({ connection, wireKey, portPositions, isSelected, onSelect }) {
                 strokeWidth={isSelected ? 3 : 2}
                 fill="none"
                 strokeDasharray="4,2"
+                opacity={fixed ? 0.6 : 1}
                 style={{ pointerEvents: 'none' }}
             />
             {/* Selection glow effect */}
@@ -2581,17 +2762,19 @@ function ModWire({ connection, wireKey, portPositions, isSelected, onSelect }) {
                     style={{ pointerEvents: 'none' }}
                 />
             )}
-            {/* Amount label */}
-            <text
-                x={(x1 + x2) / 2}
-                y={(y1 + y2) / 2 - 5}
-                fill={color}
-                fontSize="8"
-                textAnchor="middle"
-                style={{ fontFamily: 'var(--ap-font-family)', pointerEvents: 'none' }}
-            >
-                {amount}
-            </text>
+            {/* Amount label (not for fixed wires) */}
+            {!fixed && (
+                <text
+                    x={(x1 + x2) / 2}
+                    y={(y1 + y2) / 2 - 5}
+                    fill={color}
+                    fontSize="8"
+                    textAnchor="middle"
+                    style={{ fontFamily: 'var(--ap-font-family)', pointerEvents: 'none' }}
+                >
+                    {amount}
+                </text>
+            )}
         </g>
     );
 }
@@ -2688,6 +2871,7 @@ function Wire({ from, to, type, portPositions }) {
 function NodeContextMenu({
     moduleId,
     moduleDefinitions,
+    topology,
     patch,
     position,
     onClose,
@@ -2749,14 +2933,13 @@ function NodeContextMenu({
     }, [moduleData]);
 
     // For mod sources: find where they're actively routed
-    // New model: Check for {TARGET}_{SOURCE}_AMOUNT params in target modules
+    // Uses topology.mod_targets as single source of truth for valid targets
     const routedTargets = useMemo(() => {
         if (!isModSource || !patch) return [];
         const targets = [];
 
-        // Get this source's valid targets list
-        const sourceData = patch[moduleId];
-        const validTargets = sourceData?.targets || [];
+        // Get this source's valid targets from topology (single source of truth)
+        const validTargets = topology?.mod_targets?.[moduleId] || [];
 
         // For each valid target, check if there's an active AMOUNT param
         validTargets.forEach(targetParam => {
@@ -2786,7 +2969,7 @@ function NodeContextMenu({
         });
 
         return targets;
-    }, [isModSource, moduleId, patch]);
+    }, [isModSource, moduleId, patch, topology]);
 
     // Constrain position to viewport
     const constrainedPos = useMemo(() => {
@@ -2843,6 +3026,7 @@ function NodeContextMenu({
                                 param={param}
                                 moduleData={moduleData}
                                 patch={patch}
+                                topology={topology}
                                 onToggle={onToggleModulation}
                                 onAmountChange={onUpdateModAmount}
                             />
@@ -2980,11 +3164,11 @@ function ParameterControl({ moduleId, param, onUpdate }) {
 // MODULATION CONTROL
 //======================================================================
 
-function ModulationControl({ moduleId, param, moduleData, patch, onToggle, onAmountChange }) {
-    // Get sources that CAN modulate this param (from source's targets array)
+function ModulationControl({ moduleId, param, moduleData, patch, topology, onToggle, onAmountChange }) {
+    // Get sources that CAN modulate this param (from topology.mod_targets — single source of truth)
     const availableSources = MOD_SOURCES.filter(source => {
-        const sourceData = patch?.[source];
-        return sourceData?.targets?.includes(param.key);
+        const targets = topology?.mod_targets?.[source] || [];
+        return targets.includes(param.key);
     });
 
     if (availableSources.length === 0) return null;

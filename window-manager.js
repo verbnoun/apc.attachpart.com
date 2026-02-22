@@ -209,6 +209,8 @@ const WindowManager = {
             let resizeDir;
             if (typeof resizable === 'string') {
                 resizeDir = resizable; // 'vertical', 'horizontal', 'both'
+            } else if (resizableOpt === true) {
+                resizeDir = 'both';
             } else {
                 resizeDir = (hScroll && vScroll) ? 'both' : hScroll ? 'horizontal' : 'vertical';
             }

@@ -1,7 +1,7 @@
 /**
  * Aach - 2-operator FM synth (virtual device)
  *
- * Capabilities: IDENTITY, SYNTH, PATCHES, PARAMS
+ * Capabilities: IDENTITY, SYNTH, PATCHES, PARAMS, CONFIG
  *
  * Audio chain (per voice):
  *   modOsc(noteFreq * modRatio) -> modGain(modDepth) -> carrier.frequency
@@ -40,7 +40,7 @@ class Aach extends VirtualDevice {
 
         // Topology (returned by config-get for patch editor)
         this._topology = {
-            status: 'ok', op: 'config', readonly: true,
+            status: 'ok', op: 'config', readonly: true, fixed_modules: true,
             modules: {
                 audio: [
                     { id: 'CARRIER', name: 'Carrier' },
@@ -50,11 +50,16 @@ class Aach extends VirtualDevice {
                     { id: 'AMP_ENV', name: 'Amp Env' }
                 ],
                 control: [
-                    { id: 'VELOCITY', name: 'Velocity' }
+                    { id: 'VELOCITY', name: 'Velocity' },
+                    { id: 'PRESSURE', name: 'Pressure' },
+                    { id: 'BEND', name: 'Bend' }
                 ]
             },
             mod_targets: {
-                VELOCITY: ['CARRIER_LEVEL', 'MOD_DEPTH'],
+                VELOCITY: ['CARRIER_LEVEL', 'MOD_DEPTH', 'CARRIER_RATIO', 'MOD_RATIO',
+                           'AMP_ENV_ATTACK', 'AMP_ENV_DECAY', 'AMP_ENV_SUSTAIN', 'AMP_ENV_RELEASE'],
+                PRESSURE: ['CARRIER_LEVEL', 'MOD_DEPTH', 'CARRIER_RATIO', 'MOD_RATIO', 'AMP_ENV_SUSTAIN'],
+                BEND:     ['CARRIER_RATIO', 'MOD_RATIO', 'CARRIER_LEVEL', 'MOD_DEPTH'],
                 AMP_ENV:  ['CARRIER_LEVEL']
             },
             audio_chain: ['MODULATOR', 'CARRIER'],
@@ -95,11 +100,15 @@ class Aach extends VirtualDevice {
             },
             AMP_ENV: {
                 name: 'Amp Env',
+                targets: ['CARRIER_LEVEL'],
                 AMP_ENV_ATTACK:  { name: 'Attack',  priority: 3, initial: atk, range: [0.001, 2], cc: 23 },
                 AMP_ENV_DECAY:   { name: 'Decay',   priority: 4, initial: dec, range: [0.001, 2], cc: 24 },
                 AMP_ENV_SUSTAIN: { name: 'Sustain', priority: 5, initial: sus, range: [0, 1],     cc: 25 },
                 AMP_ENV_RELEASE: { name: 'Release', priority: 6, initial: rel, range: [0.001, 3], cc: 26 }
-            }
+            },
+            VELOCITY: { name: 'Velocity' },
+            PRESSURE: { name: 'Pressure' },
+            BEND: { name: 'Bend' }
         };
     }
 
@@ -177,15 +186,15 @@ class Aach extends VirtualDevice {
                 break;
 
             case 'toggle-module':
-                this._sendResponse({ status: 'ok', op: 'toggle-module' });
+                this._handleToggleModule(json);
                 break;
 
             case 'toggle-modulation':
-                this._sendResponse({ status: 'ok', op: 'toggle-modulation' });
+                this._handleToggleModulation(json);
                 break;
 
             case 'update-modulation-amount':
-                this._sendResponse({ status: 'ok', op: 'update-modulation-amount' });
+                this._handleUpdateModAmount(json);
                 break;
 
             case 'toggle-cc':
@@ -224,6 +233,15 @@ class Aach extends VirtualDevice {
             this._noteOn(channel, data[1], data[2]);
         } else if (status === 0x80 || (status === 0x90 && data[2] === 0)) {
             this._noteOff(channel);
+        } else if (status === 0xE0) {
+            // Pitch bend
+            const raw = data[1] | (data[2] << 7);
+            const bend = (raw - 8192) / 8192; // -1 to +1
+            this._applyBend(channel, bend);
+        } else if (status === 0xD0) {
+            // Channel pressure (aftertouch)
+            const pressure = data[1] / 127;
+            this._applyPressure(channel, pressure);
         }
     }
 
@@ -291,8 +309,9 @@ class Aach extends VirtualDevice {
         }
 
         const patch = this._patches[idx];
-        // Deep clone to avoid mutations, set index
+        // Deep clone to avoid mutations, set index; exclude _disabled stash
         const response = JSON.parse(JSON.stringify(patch));
+        delete response._disabled;
         response.index = idx;
         this._sendResponse(response);
     }
@@ -336,6 +355,100 @@ class Aach extends VirtualDevice {
         this._sendResponse({ status: 'ok', op: 'move-patch' });
     }
 
+    _handleToggleModule(json) {
+        const patch = this._patches[json.index];
+        if (!patch) {
+            this._sendResponse({ error: 'Invalid patch index' });
+            return;
+        }
+
+        const moduleId = json.module;
+        if (json.enabled) {
+            // Re-enable: restore from stashed data or create defaults
+            if (patch._disabled?.[moduleId]) {
+                patch[moduleId] = patch._disabled[moduleId];
+                delete patch._disabled[moduleId];
+            }
+        } else {
+            // Disable: stash module data, strip params (keep name + targets)
+            if (patch[moduleId]) {
+                if (!patch._disabled) patch._disabled = {};
+                patch._disabled[moduleId] = patch[moduleId];
+                delete patch[moduleId];
+
+                // Also remove any _AMOUNT params referencing this module as source
+                for (const [modKey, modData] of Object.entries(patch)) {
+                    if (typeof modData !== 'object' || !modData) continue;
+                    if (['name', 'version', 'index', '_disabled'].includes(modKey)) continue;
+                    for (const key of Object.keys(modData)) {
+                        if (key.endsWith(`_${moduleId}_AMOUNT`)) {
+                            delete modData[key];
+                        }
+                    }
+                }
+            }
+        }
+
+        this._sendResponse({ status: 'ok', op: 'toggle-module' });
+    }
+
+    _handleToggleModulation(json) {
+        const patch = this._patches[json.index];
+        if (!patch) {
+            this._sendResponse({ error: 'Invalid patch index' });
+            return;
+        }
+
+        const { target: targetParam, source: sourceModule, enabled } = json;
+
+        // Find which module owns the target param
+        for (const [modKey, modData] of Object.entries(patch)) {
+            if (typeof modData !== 'object' || !modData) continue;
+            if (['name', 'version', 'index', '_disabled'].includes(modKey)) continue;
+
+            if (modData[targetParam]) {
+                const amountKey = `${targetParam}_${sourceModule}_AMOUNT`;
+                if (enabled) {
+                    // Create amount param with default value
+                    modData[amountKey] = { name: `${sourceModule} Amount`, initial: 0.5, range: [-1, 1] };
+                } else {
+                    // Remove amount param
+                    delete modData[amountKey];
+                }
+                break;
+            }
+        }
+
+        this._sendResponse({ status: 'ok', op: 'toggle-modulation' });
+    }
+
+    _handleUpdateModAmount(json) {
+        const patch = this._patches[json.index];
+        if (!patch) {
+            this._sendResponse({ error: 'Invalid patch index' });
+            return;
+        }
+
+        const { param: amountParam, value } = json;
+
+        // Find the module containing this _AMOUNT param
+        for (const [modKey, modData] of Object.entries(patch)) {
+            if (typeof modData !== 'object' || !modData) continue;
+            if (['name', 'version', 'index', '_disabled'].includes(modKey)) continue;
+
+            if (modData[amountParam]) {
+                if (typeof modData[amountParam] === 'object') {
+                    modData[amountParam].initial = value;
+                } else {
+                    modData[amountParam] = value;
+                }
+                break;
+            }
+        }
+
+        this._sendResponse({ status: 'ok', op: 'update-modulation-amount' });
+    }
+
     //--------------------------------------------------------------
     // Value feedback (binary SysEx, same format as Candide)
     //--------------------------------------------------------------
@@ -369,25 +482,61 @@ class Aach extends VirtualDevice {
         return this._audioCtx;
     }
 
+    // Read _AMOUNT params for a control source from patch data
+    // Returns { CARRIER_LEVEL: 0.5, MOD_DEPTH: -0.3, ... }
+    _getModAmounts(patch, source) {
+        const amounts = {};
+        const suffix = `_${source}_AMOUNT`;
+        for (const [modKey, modData] of Object.entries(patch)) {
+            if (typeof modData !== 'object' || !modData) continue;
+            if (['name', 'version', 'index', '_disabled'].includes(modKey)) continue;
+            for (const [key, value] of Object.entries(modData)) {
+                if (!key.endsWith(suffix)) continue;
+                const param = key.slice(0, -(source.length + 8)); // Strip _{SOURCE}_AMOUNT
+                amounts[param] = typeof value === 'object' ? value.initial : value;
+            }
+        }
+        return amounts;
+    }
+
     _noteOn(channel, note, velocity) {
         const ctx = this._ensureAudioCtx();
         const now = ctx.currentTime;
         const patch = this._patches[this._currentPatchIndex];
 
-        // Read params from current patch
-        const carrierRatio = patch.CARRIER.CARRIER_RATIO.initial;
-        const carrierLevel = patch.CARRIER.CARRIER_LEVEL.initial;
-        const carrierWave  = patch.CARRIER.CARRIER_WAVE.initial;
-        const modRatio     = patch.MODULATOR.MOD_RATIO.initial;
-        const modDepth     = patch.MODULATOR.MOD_DEPTH.initial;
-        const modWave      = patch.MODULATOR.MOD_WAVE.initial;
-        const attack       = patch.AMP_ENV.AMP_ENV_ATTACK.initial;
-        const decay        = patch.AMP_ENV.AMP_ENV_DECAY.initial;
-        const sustain      = patch.AMP_ENV.AMP_ENV_SUSTAIN.initial;
-        const release      = patch.AMP_ENV.AMP_ENV_RELEASE.initial;
+        // Read base params from current patch
+        const baseCarrierRatio = patch.CARRIER.CARRIER_RATIO.initial;
+        const baseCarrierLevel = patch.CARRIER.CARRIER_LEVEL.initial;
+        const carrierWave      = patch.CARRIER.CARRIER_WAVE.initial;
+        const baseModRatio     = patch.MODULATOR.MOD_RATIO.initial;
+        const baseModDepth     = patch.MODULATOR.MOD_DEPTH.initial;
+        const modWave          = patch.MODULATOR.MOD_WAVE.initial;
+        const baseAttack       = patch.AMP_ENV.AMP_ENV_ATTACK.initial;
+        const baseDecay        = patch.AMP_ENV.AMP_ENV_DECAY.initial;
+        const baseSustain      = patch.AMP_ENV.AMP_ENV_SUSTAIN.initial;
+        const baseRelease      = patch.AMP_ENV.AMP_ENV_RELEASE.initial;
+
+        // Apply velocity modulation (data-driven from _AMOUNT params)
+        // Formula: effective = base * (1 - amount + amount * vel)
+        //   amount=0 → base,  amount=1 vel=1 → base,  amount=1 vel=0 → 0
+        const velAmounts = this._getModAmounts(patch, 'VELOCITY');
+        const vel = velocity / 127;
+        const applyVel = (base, paramKey) => {
+            const a = velAmounts[paramKey];
+            if (a === undefined) return base;
+            return Math.max(0, base * (1 - a + a * vel));
+        };
+
+        const carrierRatio = applyVel(baseCarrierRatio, 'CARRIER_RATIO');
+        const carrierLevel = applyVel(baseCarrierLevel, 'CARRIER_LEVEL');
+        const modRatio     = applyVel(baseModRatio, 'MOD_RATIO');
+        const modDepth     = applyVel(baseModDepth, 'MOD_DEPTH');
+        const attack       = applyVel(baseAttack, 'AMP_ENV_ATTACK');
+        const decay        = applyVel(baseDecay, 'AMP_ENV_DECAY');
+        const sustain      = applyVel(baseSustain, 'AMP_ENV_SUSTAIN');
+        const release      = applyVel(baseRelease, 'AMP_ENV_RELEASE');
 
         const noteFreq = 440 * Math.pow(2, (note - 69) / 12);
-        const vol = (velocity / 127) * carrierLevel;
 
         // Stop previous voice on same channel
         this._noteOff(channel);
@@ -412,12 +561,10 @@ class Aach extends VirtualDevice {
         // Envelope gain (ADSR shapes amplitude)
         const envGain = ctx.createGain();
         envGain.gain.setValueAtTime(0, now);
-        // Attack
-        envGain.gain.linearRampToValueAtTime(vol, now + attack);
-        // Decay -> Sustain
-        envGain.gain.setTargetAtTime(vol * sustain, now + attack, decay / 3);
+        envGain.gain.linearRampToValueAtTime(carrierLevel, now + attack);
+        envGain.gain.setTargetAtTime(carrierLevel * sustain, now + attack, decay / 3);
 
-        // Master gain (overall level)
+        // Master gain (overall level, also used for continuous level modulation)
         const masterGain = ctx.createGain();
         masterGain.gain.value = 0.3;
 
@@ -432,7 +579,15 @@ class Aach extends VirtualDevice {
 
         this._voices.set(channel, {
             modOsc, modGain, carrierOsc, envGain, masterGain,
-            release, note
+            release, note, noteFreq,
+            // Velocity-adjusted base values (for pressure/bend to modulate from)
+            carrierRatio, carrierLevel, modRatio, modDepth, sustain,
+            // Modulation amounts for continuous control (read once at note-on)
+            pressureAmounts: this._getModAmounts(patch, 'PRESSURE'),
+            bendAmounts: this._getModAmounts(patch, 'BEND'),
+            // Current continuous values
+            currentPressure: 0,
+            currentBend: 0
         });
     }
 
@@ -455,6 +610,79 @@ class Aach extends VirtualDevice {
         carrierOsc.stop(stopTime);
 
         this._voices.delete(channel);
+    }
+
+    // Combined pressure + bend modulation (data-driven from _AMOUNT params)
+    // Both sources contribute additively to the same audio params.
+    // Reads LIVE amounts from patch data so wires added mid-note take effect.
+    _updateContinuousMod(channel) {
+        const voice = this._voices.get(channel);
+        if (!voice) return;
+
+        const patch = this._patches[this._currentPatchIndex];
+        const pressureAmounts = this._getModAmounts(patch, 'PRESSURE');
+        const bendAmounts = this._getModAmounts(patch, 'BEND');
+        const hasPressure = Object.keys(pressureAmounts).length > 0;
+        const hasBend = Object.keys(bendAmounts).length > 0;
+        if (!hasPressure && !hasBend) return;
+
+        const now = this._audioCtx.currentTime;
+        const p = voice.currentPressure;
+        const b = voice.currentBend;
+
+        // Carrier frequency (ratio → semitones → frequency)
+        const cRatioP = (pressureAmounts.CARRIER_RATIO || 0) * p * 12;
+        const cRatioB = (bendAmounts.CARRIER_RATIO || 0) * b * 12;
+        const cSemitones = cRatioP + cRatioB;
+        voice.carrierOsc.frequency.setValueAtTime(
+            voice.noteFreq * voice.carrierRatio * Math.pow(2, cSemitones / 12), now
+        );
+
+        // Modulator frequency
+        const mRatioP = (pressureAmounts.MOD_RATIO || 0) * p * 12;
+        const mRatioB = (bendAmounts.MOD_RATIO || 0) * b * 12;
+        const mSemitones = mRatioP + mRatioB;
+        voice.modOsc.frequency.setValueAtTime(
+            voice.noteFreq * voice.modRatio * Math.pow(2, mSemitones / 12), now
+        );
+
+        // Mod depth (multiplicative: 1 + combined offset)
+        const depthP = (pressureAmounts.MOD_DEPTH || 0) * p;
+        const depthB = (bendAmounts.MOD_DEPTH || 0) * b;
+        voice.modGain.gain.setValueAtTime(
+            Math.max(0, voice.modDepth * (1 + depthP + depthB)), now
+        );
+
+        // Carrier level (via masterGain, base 0.3)
+        const levelP = (pressureAmounts.CARRIER_LEVEL || 0) * p;
+        const levelB = (bendAmounts.CARRIER_LEVEL || 0) * b;
+        voice.masterGain.gain.setValueAtTime(
+            Math.max(0, 0.3 * (1 + levelP + levelB)), now
+        );
+
+        // Envelope sustain level (pressure can swell/reduce sustain)
+        const susP = (pressureAmounts.AMP_ENV_SUSTAIN || 0) * p;
+        const susB = (bendAmounts.AMP_ENV_SUSTAIN || 0) * b;
+        if (susP !== 0 || susB !== 0) {
+            const effSustain = Math.max(0, Math.min(1, voice.sustain * (1 + susP + susB)));
+            voice.envGain.gain.cancelScheduledValues(now);
+            voice.envGain.gain.setValueAtTime(voice.envGain.gain.value, now);
+            voice.envGain.gain.setTargetAtTime(voice.carrierLevel * effSustain, now, 0.05);
+        }
+    }
+
+    _applyBend(channel, bend) {
+        const voice = this._voices.get(channel);
+        if (!voice) return;
+        voice.currentBend = bend;
+        this._updateContinuousMod(channel);
+    }
+
+    _applyPressure(channel, pressure) {
+        const voice = this._voices.get(channel);
+        if (!voice) return;
+        voice.currentPressure = pressure;
+        this._updateContinuousMod(channel);
     }
 }
 

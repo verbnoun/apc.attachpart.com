@@ -1075,6 +1075,7 @@ function App() {
             content: container,
             theme: 'synth',
             padding: false,
+            resizable: true,
             onClose: () => {
                 delete windowContainersRef.current[windowId];
             }
