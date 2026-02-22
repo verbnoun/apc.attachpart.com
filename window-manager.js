@@ -30,8 +30,10 @@ const WindowManager = {
      *   height: number - initial height
      *   content: HTMLElement | string - window content
      *   onClose: () => void - called when window closes
-     *   hScroll: boolean - horizontal scrollbar + horizontal resize (default false)
-     *   vScroll: boolean - vertical scrollbar + vertical resize (default false)
+     *   hScroll: boolean - horizontal scrollbar (default false)
+     *   vScroll: boolean - vertical scrollbar (default false)
+     *   resizable: boolean|string - resize handle: true/'both', 'vertical', 'horizontal', false
+     *                               (default: derived from hScroll/vScroll for backward compat)
      *   padding: boolean - content area has 16px padding (default true)
      *   infoBar: { left, center, right } | null - optional info bar below title
      *   onInfoBarClick: (slot) => void - called when info bar slot is clicked
@@ -50,6 +52,7 @@ const WindowManager = {
             theme = null,
             hScroll = false,
             vScroll = false,
+            resizable: resizableOpt,
             padding = true,
             minWidth = 250,
             minHeight = 150,
@@ -65,8 +68,9 @@ const WindowManager = {
             return this.windows.get(id).element;
         }
 
-        // Derive resize behavior from scroll properties
-        const resizable = hScroll || vScroll;
+        // Derive resize behavior: explicit resizable property takes priority,
+        // otherwise fall back to scroll properties for backward compat
+        const resizable = resizableOpt !== undefined ? resizableOpt : (hScroll || vScroll);
 
         // Create window structure
         const win = document.createElement('div');
@@ -74,6 +78,21 @@ const WindowManager = {
         if (hScroll && vScroll) cls += ' ap-scroll-both';
         else if (hScroll) cls += ' ap-scroll-h';
         else if (vScroll) cls += ' ap-scroll-v';
+        // Resizable class for resize handle visibility + cursor (independent of scroll)
+        if (resizable) {
+            let dir;
+            if (typeof resizable === 'string') {
+                dir = resizable;
+            } else if (resizableOpt === true) {
+                dir = 'both';
+            } else {
+                // Backward compat: derive from scroll
+                dir = (hScroll && vScroll) ? 'both' : hScroll ? 'horizontal' : 'vertical';
+            }
+            if (dir === 'both') cls += ' ap-resizable-both';
+            else if (dir === 'horizontal') cls += ' ap-resizable-h';
+            else cls += ' ap-resizable-v';
+        }
         if (!padding) cls += ' ap-no-padding';
         win.className = cls;
         win.id = `window-${id}`;
@@ -185,7 +204,14 @@ const WindowManager = {
         // Setup interactions
         this._setupDrag(id, win, titleBar);
         if (resizable) {
-            const resizeDir = (hScroll && vScroll) ? 'both' : hScroll ? 'horizontal' : 'vertical';
+            // Determine resize direction from explicit resizable value,
+            // or derive from scroll properties for backward compat
+            let resizeDir;
+            if (typeof resizable === 'string') {
+                resizeDir = resizable; // 'vertical', 'horizontal', 'both'
+            } else {
+                resizeDir = (hScroll && vScroll) ? 'both' : hScroll ? 'horizontal' : 'vertical';
+            }
             this._setupResize(id, win, resizeHandle, resizeDir);
         }
         this._setupFocus(id, win);

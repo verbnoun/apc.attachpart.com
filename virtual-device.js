@@ -1,0 +1,158 @@
+/**
+ * VirtualDevice - Base class for software MIDI devices
+ *
+ * Bridges between raw MIDI/SysEx on the port and JSON command handling.
+ * Subclasses implement handleCommand(json) and work at JSON level,
+ * same pattern as MockBartleby/MockCandide.
+ *
+ * Uses MidiPortManager virtual ports so the entire stack above
+ * (DeviceRegistry, UnifiedDeviceAPI, app.js) works unchanged.
+ */
+
+class VirtualDevice {
+    /**
+     * @param {MidiPortManager} portManager - The port manager instance
+     * @param {string} portName - Must match a KNOWN_PORTS entry
+     */
+    constructor(portManager, portName) {
+        this._portManager = portManager;
+        this._portName = portName;
+        this._started = false;
+
+        // MIDI log for app windows
+        this._midiLog = [];         // { dir: 'in'|'out', desc: string, timestamp: number }
+        this._logSubscribers = new Set();
+    }
+
+    /**
+     * Register virtual port and start receiving
+     */
+    start() {
+        if (this._started) return;
+        this._portManager.addVirtualPort(this._portName, (data) => {
+            this._handleRawMidi(data);
+        });
+        this._started = true;
+        console.log(`[${this._portName}] Started`);
+    }
+
+    /**
+     * Unregister virtual port
+     */
+    stop() {
+        if (!this._started) return;
+        this._portManager.removeVirtualPort(this._portName);
+        this._started = false;
+        console.log(`[${this._portName}] Stopped`);
+    }
+
+    /**
+     * Handle raw MIDI data from APC (via portManager.send → onReceive)
+     * Decodes SysEx → JSON and routes to handleCommand().
+     * Non-SysEx routed to handleMidi().
+     * @private
+     */
+    _handleRawMidi(data) {
+        const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+
+        // Non-SysEx — pass to subclass for MIDI handling (notes, CC, etc.)
+        if (bytes[0] !== 0xF0) {
+            this._logMidi('in', this._describeMidi(bytes));
+            this.handleMidi(bytes);
+            return;
+        }
+
+        // SysEx — decode to JSON
+        const json = decodeSysExToJson(bytes);
+        if (!json) return;
+
+        this._logMidi('in', `cmd: ${json.cmd}`);
+        console.log(`[${this._portName}] RX: ${json.cmd}`);
+
+        // Defer response to next microtask so API's pending state is fully set
+        Promise.resolve().then(() => {
+            this.handleCommand(json);
+        });
+    }
+
+    /**
+     * Send a JSON response back to APC (encodes as SysEx)
+     * @param {Object} json - Response object
+     */
+    _sendResponse(json) {
+        const sysex = encodeJsonToSysEx(json);
+        const desc = json.cmd || json.status || json.op || 'response';
+        this._logMidi('out', `resp: ${desc}`);
+        console.log(`[${this._portName}] TX: ${desc}`);
+        this._portManager.injectMessage(this._portName, sysex);
+    }
+
+    /**
+     * Send raw MIDI data back to APC (non-SysEx)
+     * @param {Uint8Array} data
+     */
+    _sendMidi(data) {
+        const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+        this._logMidi('out', this._describeMidi(bytes));
+        this._portManager.injectMessage(this._portName, data);
+    }
+
+    /**
+     * Handle a JSON command from APC — subclass must override
+     * @param {Object} json - Decoded command
+     */
+    handleCommand(json) {
+        console.warn(`[${this._portName}] Unhandled command: ${json.cmd}`);
+    }
+
+    /**
+     * Handle non-SysEx MIDI from APC — subclass may override
+     * @param {Uint8Array} data - Raw MIDI bytes
+     */
+    handleMidi(data) {
+        // Default: ignore
+    }
+
+    //------------------------------------------------------------------
+    // MIDI LOG
+    //------------------------------------------------------------------
+
+    _logMidi(dir, desc) {
+        const entry = { dir, desc, timestamp: Date.now() };
+        this._midiLog.push(entry);
+        if (this._midiLog.length > 200) this._midiLog.shift();
+        for (const cb of this._logSubscribers) cb(entry);
+    }
+
+    subscribeMidiLog(callback) {
+        this._logSubscribers.add(callback);
+        return () => this._logSubscribers.delete(callback);
+    }
+
+    getMidiLog() {
+        return this._midiLog;
+    }
+
+    _describeMidi(bytes) {
+        if (bytes.length === 0) return 'empty';
+        const status = bytes[0] & 0xF0;
+        const ch = bytes[0] & 0x0F;
+        switch (status) {
+            case 0x90: return bytes[2] > 0
+                ? `NoteOn ${bytes[1]} vel=${bytes[2]} ch${ch}`
+                : `NoteOff ${bytes[1]} ch${ch}`;
+            case 0x80: return `NoteOff ${bytes[1]} ch${ch}`;
+            case 0xB0: return `CC${bytes[1]}=${bytes[2]} ch${ch}`;
+            case 0xE0: {
+                const bend = ((bytes[2] << 7) | bytes[1]) - 8192;
+                return `Bend ${bend} ch${ch}`;
+            }
+            case 0xD0: return `Pressure ${bytes[1]} ch${ch}`;
+            case 0xC0: return `PgmChange ${bytes[1]} ch${ch}`;
+            case 0xF0: return `SysEx (${bytes.length} bytes)`;
+            default: return `0x${bytes[0].toString(16)} (${bytes.length} bytes)`;
+        }
+    }
+}
+
+window.VirtualDevice = VirtualDevice;

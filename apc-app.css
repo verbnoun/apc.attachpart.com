@@ -427,20 +427,20 @@ html, body {
     z-index: 2;
 }
 
-/* Show grow box when any scroll is enabled */
-.ap-scroll-v .ap-window-resize,
-.ap-scroll-h .ap-window-resize,
-.ap-scroll-both .ap-window-resize {
+/* Show grow box when resizable (independent of scroll) */
+.ap-resizable-v .ap-window-resize,
+.ap-resizable-h .ap-window-resize,
+.ap-resizable-both .ap-window-resize {
     display: block;
 }
 
 /* Vertical-only resize: custom B&W up/down cursor */
-.ap-scroll-v .ap-window-resize {
+.ap-resizable-v .ap-window-resize {
     cursor: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="10" height="16"><polygon points="5,0 1,5 9,5" fill="black"/><polygon points="5,16 1,11 9,11" fill="black"/><rect x="4" y="5" width="2" height="6" fill="black"/></svg>') 5 8, s-resize;
 }
 
 /* Horizontal-only resize: custom B&W left/right cursor */
-.ap-scroll-h .ap-window-resize {
+.ap-resizable-h .ap-window-resize {
     cursor: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="16" height="10"><polygon points="0,5 5,1 5,9" fill="black"/><polygon points="16,5 11,1 11,9" fill="black"/><rect x="5" y="4" width="6" height="2" fill="black"/></svg>') 8 5, e-resize;
 }
 
@@ -2921,3 +2921,213 @@ html, body {
 .ap-node-lfo {
     min-width: 150px;
 }
+
+/* ============================================================
+   ABBOTT STEP SEQUENCER
+   ============================================================ */
+
+.ap-abbott {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+/* Transport bar */
+.ap-abbott-transport {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 8px 12px;
+    background: #ffffff;
+    border-bottom: 1.5px solid #000000;
+    flex-shrink: 0;
+}
+
+.ap-abbott-play {
+    min-width: 64px;
+}
+
+.ap-abbott-play.active {
+    background: #000000;
+    color: #ffffff;
+}
+
+.ap-abbott-tempo {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.ap-abbott-tempo-label {
+    font-family: Chicago_12;
+    font-size: 12px;
+    color: #808080;
+}
+
+.ap-abbott-tempo-input {
+    width: 56px;
+    text-align: center;
+    font-size: 14px;
+    padding: 2px 4px;
+}
+
+/* Remove spinner arrows from number input */
+.ap-abbott-tempo-input::-webkit-inner-spin-button,
+.ap-abbott-tempo-input::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+.ap-abbott-tempo-input[type=number] {
+    -moz-appearance: textfield;
+}
+
+.ap-abbott-step-display {
+    font-family: Chicago_12;
+    font-size: 12px;
+    color: #808080;
+    margin-left: auto;
+}
+
+/* Grid wrapper — scrollable area */
+.ap-abbott-grid-wrapper {
+    flex: 1;
+    overflow: auto;
+}
+
+/* Grid — CSS grid layout */
+.ap-abbott-grid {
+    display: inline-flex;
+    flex-direction: column;
+    min-width: 100%;
+}
+
+/* Header row (step numbers) */
+.ap-abbott-header-row {
+    display: flex;
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: #ffffff;
+}
+
+.ap-abbott-corner {
+    background: #ffffff;
+    border-bottom: 1.5px solid #000000;
+    border-right: 1px solid #c0c0c0;
+}
+
+.ap-abbott-step-header {
+    width: 32px;
+    min-width: 32px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: Chicago_12;
+    font-size: 9px;
+    color: #808080;
+    background: #ffffff;
+    border-bottom: 1.5px solid #000000;
+    border-right: 1px solid #eeeeee;
+    flex-shrink: 0;
+}
+
+.ap-abbott-step-header.bar-start {
+    border-left: 1px solid #c0c0c0;
+}
+
+.ap-abbott-step-header.active {
+    background: #000000;
+    color: #ffffff;
+}
+
+/* Pitch rows */
+.ap-abbott-row {
+    display: flex;
+    height: 18px;
+    min-height: 18px;
+}
+
+.ap-abbott-row.black-key {
+    background: #f0f0f0;
+}
+
+.ap-abbott-row.octave-start {
+    border-top: 1.5px solid #c0c0c0;
+}
+
+/* Pitch label column */
+.ap-abbott-pitch-label {
+    width: 40px;
+    min-width: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding-right: 6px;
+    font-family: Chicago_12;
+    font-size: 8px;
+    color: #808080;
+    background: #ffffff;
+    border-right: 1px solid #c0c0c0;
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    flex-shrink: 0;
+}
+
+.ap-abbott-row.black-key .ap-abbott-pitch-label {
+    color: #555555;
+    background: #f0f0f0;
+}
+
+/* Grid cells */
+.ap-abbott-cell {
+    width: 32px;
+    min-width: 32px;
+    height: 18px;
+    border-right: 1px solid #eeeeee;
+    border-bottom: 1px solid #eeeeee;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.ap-abbott-cell.bar-start {
+    border-left: 1px solid #c0c0c0;
+}
+
+.ap-abbott-cell:hover {
+    background: #e0e0e0;
+}
+
+.ap-abbott-row.black-key .ap-abbott-cell {
+    border-right-color: #e0e0e0;
+    border-bottom-color: #e0e0e0;
+}
+
+.ap-abbott-row.black-key .ap-abbott-cell:hover {
+    background: #d0d0d0;
+}
+
+/* Active note */
+.ap-abbott-cell.on {
+    background: #000000;
+}
+
+.ap-abbott-cell.on:hover {
+    background: #333333;
+}
+
+/* Playhead column highlight */
+.ap-abbott-cell.playhead {
+    background: #eeeeee;
+    box-shadow: inset 0 0 0 1px #c0c0c0;
+}
+
+.ap-abbott-cell.playhead.on {
+    background: #d4a574;
+}
+
+.ap-abbott-cell.playhead.on:hover {
+    background: #c09060;
+}
+

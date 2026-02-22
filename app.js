@@ -48,8 +48,11 @@ function App() {
     // Ref to track synthPortName for use in callbacks (avoids stale closure)
     const synthPortNameRef = useRef(null);
 
+    // Virtual device instances (for UI access)
+    const virtualDevicesRef = useRef({});
+
     // Focused window info (for per-app menu bar)
-    // { id, type: 'apconsole'|'bartleby'|'candide', portName, title }
+    // { id, type: 'apconsole'|'bartleby'|'candide'|'abbott', portName, title }
     const [focusedWindow, setFocusedWindow] = useState({ id: null, type: 'apconsole', portName: null, title: null });
 
     // Logs
@@ -138,6 +141,17 @@ function App() {
 
         registry.init(addLog).then(() => {
             addLog('Device registry initialized', 'info');
+
+            // Start virtual devices (software MIDI devices living in APC)
+            const pm = registry.getPortManager();
+            if (pm) {
+                const vSynth = new Aach(pm);
+                const abbott = new Abbott(pm);
+                vSynth.start();
+                abbott.start();
+                virtualDevicesRef.current[abbott._portName] = abbott;
+                addLog('Virtual devices started', 'info');
+            }
         }).catch(err => {
             console.error('Registry init failed:', err);
             addLog(`Registry init failed: ${err.message}`, 'error');
@@ -164,6 +178,11 @@ function App() {
                 const device = devicesRef.current[portName];
                 const deviceName = device?.deviceInfo?.name || portName;
                 setFocusedWindow({ id: windowId, type: 'bartleby', portName, title: deviceName });
+            } else if (windowId.startsWith('abbott-')) {
+                const portName = windowId.replace('abbott-', '');
+                const device = devicesRef.current[portName];
+                const deviceName = device?.deviceInfo?.name || portName;
+                setFocusedWindow({ id: windowId, type: 'abbott', portName, title: deviceName });
             } else if (windowId.startsWith('device-')) {
                 const portName = windowId.replace('device-', '');
                 const device = devicesRef.current[portName];
@@ -299,18 +318,28 @@ function App() {
 
             // Auto-reopen windows if they were previously open
             if (capabilities.includes(CAPABILITIES.CONTROLLER)) {
-                // Reopen any config section windows that were open
-                setTimeout(() => {
-                    const sections = WorkspacePersistence.getOpenConfigWindows(portName);
-                    if (sections.length > 0) {
-                        for (const section of sections) {
-                            openConfigWindow(portName, section);
-                        }
-                    } else if (WorkspacePersistence.wasDeviceWindowOpen(portName)) {
-                        // Migration: old device window was open, open curves as default
-                        openConfigWindow(portName, 'curves');
+                const project = deviceInfo?.project;
+                if (project === 'Abbott') {
+                    // Abbott opens its own sequencer window
+                    const abbottWid = `abbott-${portName}`;
+                    const abbottState = WorkspacePersistence.getWindowState(abbottWid);
+                    if (abbottState?.wasOpen) {
+                        setTimeout(() => openAbbottWindow(portName), 0);
                     }
-                }, 0);
+                } else {
+                    // Bartleby and other controllers open config section windows
+                    setTimeout(() => {
+                        const sections = WorkspacePersistence.getOpenConfigWindows(portName);
+                        if (sections.length > 0) {
+                            for (const section of sections) {
+                                openConfigWindow(portName, section);
+                            }
+                        } else if (WorkspacePersistence.wasDeviceWindowOpen(portName)) {
+                            // Migration: old device window was open, open curves as default
+                            openConfigWindow(portName, 'curves');
+                        }
+                    }, 0);
+                }
             } else if (WorkspacePersistence.wasDeviceWindowOpen(portName)) {
                 setTimeout(() => openDeviceApp(portName), 0);
             }
@@ -345,6 +374,13 @@ function App() {
                 WindowManager.close(configWid);
                 delete windowContainersRef.current[configWid];
             }
+        }
+
+        // Close Abbott window if open
+        const abbottWid = `abbott-${portName}`;
+        if (WindowManager.exists(abbottWid)) {
+            WindowManager.close(abbottWid);
+            delete windowContainersRef.current[abbottWid];
         }
 
         // Clear role if this device had one
@@ -1000,9 +1036,14 @@ function App() {
         if (!device) return;
         const capabilities = device.capabilities || [];
 
-        // Controllers open config section windows instead of a device window
+        // Controllers: dispatch by device project
         if (capabilities.includes(CAPABILITIES.CONTROLLER)) {
-            openConfigWindow(portName, 'curves');
+            const project = device.deviceInfo?.project;
+            if (project === 'Abbott') {
+                openAbbottWindow(portName);
+            } else {
+                openConfigWindow(portName, 'curves');
+            }
             return;
         }
 
@@ -1068,6 +1109,53 @@ function App() {
             const initialIndex = currentPatchIndex >= 0 ? currentPatchIndex : 0;
             loadPatch(initialIndex);
         }
+    };
+
+    const openAbbottWindow = (portName) => {
+        const windowId = `abbott-${portName}`;
+        if (WindowManager.exists(windowId)) {
+            WindowManager.focus(windowId);
+            return;
+        }
+
+        const device = devices[portName];
+        if (!device) return;
+        const deviceName = device.deviceInfo?.name || 'Abbott';
+        const abbottDevice = virtualDevicesRef.current[portName];
+        if (!abbottDevice) {
+            addLog(`Abbott device instance not found for ${portName}`, 'error');
+            return;
+        }
+
+        const container = document.createElement('div');
+        container.style.height = '100%';
+        windowContainersRef.current[windowId] = container;
+
+        const saved = WorkspacePersistence.getWindowState(windowId);
+
+        WindowManager.create({
+            id: windowId,
+            title: deviceName,
+            x: saved?.x ?? 80,
+            y: saved?.y ?? 30,
+            width: saved?.width ?? 700,
+            height: saved?.height ?? 600,
+            content: container,
+            theme: 'controller',
+            hScroll: true,
+            vScroll: true,
+            padding: false,
+            onClose: () => {
+                delete windowContainersRef.current[windowId];
+            }
+        });
+
+        WorkspacePersistence.setWasOpen(windowId, true);
+
+        ReactDOM.render(
+            <AbbottWindow device={abbottDevice} />,
+            container
+        );
     };
 
     const openExpressionPad = () => {

@@ -159,6 +159,14 @@ class DeviceRegistry {
         this._log('Device registry initialized');
     }
 
+    /**
+     * Get the underlying MidiPortManager (for virtual port registration)
+     * @returns {MidiPortManager}
+     */
+    getPortManager() {
+        return this._portManager;
+    }
+
     //==================================================================
     // PUBLIC: API Registration
     //==================================================================

@@ -70,8 +70,16 @@ const COMMAND_CAPABILITIES = {
 const KNOWN_PORTS = [
     'Bartleby MPE',
     'Candide MPE',
-    'Dagon MPE'  // Future
+    'Dagon MPE',           // Future hardware
+    'AP Aach',             // Software FM synth (lives in APC)
+    'AP Abbott'             // Software step sequencer controller (lives in APC)
 ];
+
+// Port → capability set (virtual devices declare capabilities here)
+const PORT_CAPABILITIES = {
+    'AP Aach': [CAPABILITIES.IDENTITY, CAPABILITIES.SYNTH, CAPABILITIES.PATCHES, CAPABILITIES.PARAMS],
+    'AP Abbott': [CAPABILITIES.IDENTITY, CAPABILITIES.CONTROLLER, CAPABILITIES.CONFIG]
+};
 
 //======================================================================
 // SYSEX CONSTANTS
@@ -125,6 +133,7 @@ function getRequiredCapability(cmd) {
 window.CAPABILITIES = CAPABILITIES;
 window.COMMAND_CAPABILITIES = COMMAND_CAPABILITIES;
 window.KNOWN_PORTS = KNOWN_PORTS;
+window.PORT_CAPABILITIES = PORT_CAPABILITIES;
 window.SYSEX_MANUFACTURER_ID = SYSEX_MANUFACTURER_ID;
 window.SYSEX_DEVICE_ID = SYSEX_DEVICE_ID;
 window.commandAllowed = commandAllowed;

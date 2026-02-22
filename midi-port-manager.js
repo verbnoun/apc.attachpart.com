@@ -19,6 +19,9 @@ class MidiPortManager {
         // Message callbacks by port name
         this._messageCallbacks = {};  // { portName: callback }
 
+        // Virtual ports (software devices, no hardware)
+        this._virtualPorts = new Map();  // name → { onReceive: fn }
+
         // Debounce for onPortsChanged
         this._debounceTimer = null;
         this._debounceMs = 300;
@@ -83,21 +86,25 @@ class MidiPortManager {
     //==================================================================
 
     /**
-     * Get all current input port names
+     * Get all current input port names (hardware + virtual)
      * @returns {string[]}
      */
     getInputNames() {
-        if (!this._midiAccess) return [];
-        return Array.from(this._midiAccess.inputs.values()).map(p => p.name);
+        const hw = this._midiAccess
+            ? Array.from(this._midiAccess.inputs.values()).map(p => p.name)
+            : [];
+        return [...hw, ...this._virtualPorts.keys()];
     }
 
     /**
-     * Get all current output port names
+     * Get all current output port names (hardware + virtual)
      * @returns {string[]}
      */
     getOutputNames() {
-        if (!this._midiAccess) return [];
-        return Array.from(this._midiAccess.outputs.values()).map(p => p.name);
+        const hw = this._midiAccess
+            ? Array.from(this._midiAccess.outputs.values()).map(p => p.name)
+            : [];
+        return [...hw, ...this._virtualPorts.keys()];
     }
 
     /**
@@ -130,6 +137,18 @@ class MidiPortManager {
      * @returns {boolean} - true if sent, false if port not found
      */
     send(portName, data) {
+        // Virtual port — deliver directly to device's onReceive handler
+        const virtualPort = this._virtualPorts.get(portName);
+        if (virtualPort) {
+            try {
+                virtualPort.onReceive(data);
+                return true;
+            } catch (e) {
+                this._log(`Virtual send to '${portName}' failed: ${e.message}`, 'error');
+                return false;
+            }
+        }
+
         if (!this._midiAccess) {
             this._log(`Send failed: MIDI not initialized`, 'error');
             return false;
@@ -169,6 +188,46 @@ class MidiPortManager {
     offMessage(portName) {
         delete this._messageCallbacks[portName];
         this._log(`Message callback unregistered for '${portName}'`);
+    }
+
+    //==================================================================
+    // PUBLIC: Virtual Ports
+    //==================================================================
+
+    /**
+     * Register a virtual port (software device, no hardware)
+     * Virtual ports appear in getInputNames/getOutputNames and receive
+     * data via their onReceive callback when send() targets them.
+     * @param {string} name - Port name (must match KNOWN_PORTS entry)
+     * @param {Function} onReceive - Called with (data) when APC sends to this port
+     */
+    addVirtualPort(name, onReceive) {
+        this._virtualPorts.set(name, { onReceive });
+        this._log(`Virtual port added: ${name}`);
+        this._resetDebounceTimer();
+    }
+
+    /**
+     * Unregister a virtual port
+     * @param {string} name - Port name
+     */
+    removeVirtualPort(name) {
+        this._virtualPorts.delete(name);
+        this._log(`Virtual port removed: ${name}`);
+        this._resetDebounceTimer();
+    }
+
+    /**
+     * Inject a message FROM a virtual port into the system
+     * Simulates receiving MIDI input — routes through the same
+     * _handleMessage path as hardware input.
+     * @param {string} name - Virtual port name (the sender)
+     * @param {Uint8Array|Array} data - MIDI data
+     */
+    injectMessage(name, data) {
+        // Wrap in a fake event object matching Web MIDI MIDIMessageEvent
+        const event = { data: data instanceof Uint8Array ? data : new Uint8Array(data) };
+        this._handleMessage(name, event);
     }
 
     //==================================================================
