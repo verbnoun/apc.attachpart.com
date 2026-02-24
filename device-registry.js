@@ -341,6 +341,12 @@ class DeviceRegistry {
 
     setConfigPair(controllerPort, synthPort) {
         if (!this.hasRoute(controllerPort, synthPort)) return false;
+        // Config is 1:1 both ways — clear any existing pair involving this synth
+        for (const [ctrl, synth] of Object.entries(this._configPairs)) {
+            if (synth === synthPort && ctrl !== controllerPort) {
+                delete this._configPairs[ctrl];
+            }
+        }
         this._configPairs[controllerPort] = synthPort;
         this._log(`Config pair: ${controllerPort} ⇄ ${synthPort}`);
         this._onRoutesChanged?.();

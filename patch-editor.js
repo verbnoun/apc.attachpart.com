@@ -283,8 +283,8 @@ function PatchEditorWindow({
     // Build module definitions from topology (or use defaults)
     const moduleDefinitions = useMemo(() => buildModuleDefinitions(topology), [topology]);
 
-    // Fixed modules mode: all audio + mod modules always visible and non-removable (e.g., Aach FM synth)
-    // Distinct from readonly (device config is fixed) which both Candide and Aach set
+    // Fixed modules mode: all audio + mod modules always visible and non-removable (e.g., Estragon FM synth)
+    // Distinct from readonly (device config is fixed) which both Candide and Estragon set
     const hasFixedModules = topology?.fixed_modules === true;
 
     // Check if a module is fixed (non-removable) in fixed_modules mode
@@ -1258,7 +1258,7 @@ function NodeWorkspace({
         GLFO:     { x: CONTENT_OFFSET + 0,   y: CONTENT_OFFSET + 480 },
         VLFO:     { x: CONTENT_OFFSET + 200, y: CONTENT_OFFSET + 480 },
 
-        // Aach FM modules
+        // Estragon FM modules
         CARRIER:   { x: CONTENT_OFFSET + 200, y: CONTENT_OFFSET + 0 },
         MODULATOR: { x: CONTENT_OFFSET + 0,   y: CONTENT_OFFSET + 0 },
         AMP_ENV:   { x: CONTENT_OFFSET + 0,   y: CONTENT_OFFSET + 200 },
@@ -1633,7 +1633,7 @@ function NodeWorkspace({
 
     return (
         <div
-            className={`ap-node-workspace ap-scroll-both ${wiringFrom ? 'wiring' : ''} ${isDragOver ? 'drag-over' : ''} ${isPanning ? 'panning' : ''}`}
+            className={`ap-node-workspace ${wiringFrom ? 'wiring' : ''} ${isDragOver ? 'drag-over' : ''} ${isPanning ? 'panning' : ''}`}
             ref={workspaceRef}
             onMouseDown={handlePanStart}
             onMouseMove={handleWorkspaceMouseMove}
@@ -1648,7 +1648,7 @@ function NodeWorkspace({
                 style={{ width: contentBounds.width, height: contentBounds.height }}
             >
             {/* SVG layer for wires */}
-            <svg className="ap-wires-layer" width={contentBounds.width} height={contentBounds.height}>
+            <svg className="ap-wire-layer" width={contentBounds.width} height={contentBounds.height}>
                 {/* Group boxes behind nodes */}
                 {groupBoxes.map((box, i) => (
                     <g key={`group-${i}`}>
@@ -2330,7 +2330,7 @@ function Node({
         module.id === 'GLFO' || module.id === 'VLFO';
 
     // Get envelope params (ADSR) if this is an envelope module
-    // Handles both Candide naming (_ATTACK_TIME, _SUSTAIN_LEVEL) and Aach naming (_ATTACK, _SUSTAIN)
+    // Handles both Candide naming (_ATTACK_TIME, _SUSTAIN_LEVEL) and Estragon naming (_ATTACK, _SUSTAIN)
     const envelopeParams = useMemo(() => {
         if (!isEnvelopeModule || !moduleData) return null;
 
@@ -2460,7 +2460,7 @@ function Node({
                 {isAudioModule && (
                     <div
                         ref={headerInputRef}
-                        className="ap-node-port ap-node-port-header-in"
+                        className="ap-port ap-node-port ap-node-port-header-in"
                     />
                 )}
                 {/* Delete button - hidden for fixed modules */}
@@ -2478,7 +2478,7 @@ function Node({
                 {/* Output port - disabled for fixed modules */}
                 <div
                     ref={headerOutputRef}
-                    className={`ap-node-port ap-node-port-header-out ${isWiringSource ? 'active' : ''}`}
+                    className={`ap-port ap-node-port ap-node-port-header-out ${isWiringSource ? 'active' : ''}`}
                     onMouseDown={(!isFixed && (module.type === 'mod' || module.type === 'control')) ? handlePortClick : undefined}
                     title={(!isFixed && (module.type === 'mod' || module.type === 'control')) ? "Drag to connect" : undefined}
                 />
@@ -2544,7 +2544,7 @@ function Node({
                                 {/* Param input port for modulation targets */}
                                 <div
                                     ref={el => paramPortRefs.current[param.key] = el}
-                                    className="ap-node-port ap-node-port-param-in"
+                                    className="ap-port-sm ap-node-port-param-in"
                                 />
                                 <PriorityBadge
                                     priority={param.priority}
@@ -2695,83 +2695,36 @@ function NodeParamSlider({ param, onUpdateParam }) {
 function ModWire({ connection, wireKey, portPositions, isSelected, onSelect }) {
     const { from, toModule, toParam, amount, fixed } = connection;
 
-    // Get port positions from registry
     const fromPort = portPositions[`${from}:out`];
     const toPort = portPositions[`${toModule}:${toParam}:in`];
-
-    // Don't render until we have positions
     if (!fromPort || !toPort) return null;
 
-    // Wire endpoints
-    const x1 = fromPort.x;
-    const y1 = fromPort.y;
-    const x2 = toPort.x;
-    const y2 = toPort.y;
-
-    // Always use horizontal stubs - exit right, enter left
-    const dx = Math.abs(x2 - x1);
-    const dy = Math.abs(y2 - y1);
-    const offset = Math.max(40, Math.min(200, dx / 3 + dy / 2));
-    const cx1 = x1 + offset;
-    const cy1 = y1;
-    const cx2 = x2 - offset;
-    const cy2 = y2;
-
+    const { x: x1, y: y1 } = fromPort;
+    const { x: x2, y: y2 } = toPort;
     const color = WIRE_COLORS[from] || 'var(--ap-wire-mod)';
-    const pathD = `M ${x1} ${y1} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${x2} ${y2}`;
+    const pathD = apBezierPath(x1, y1, x2, y2);
 
     const handleClick = (e) => {
         e.stopPropagation();
-        if (!fixed && onSelect) {
-            onSelect();
-        }
+        if (!fixed && onSelect) onSelect();
     };
 
     return (
-        <g className={`ap-mod-wire ${isSelected ? 'selected' : ''} ${fixed ? 'fixed' : ''}`}>
-            {/* Invisible wider path for easier clicking (not for fixed wires) */}
+        <g className={`ap-wire-group ap-mod-wire ${isSelected ? 'selected' : ''} ${fixed ? 'fixed' : ''}`}>
             {!fixed && (
-                <path
-                    d={pathD}
-                    stroke="transparent"
-                    strokeWidth={24}
-                    fill="none"
-                    style={{ cursor: 'pointer' }}
-                    onClick={handleClick}
-                />
+                <path d={pathD} stroke="transparent" strokeWidth={24} fill="none"
+                      style={{ cursor: 'pointer' }} onClick={handleClick} />
             )}
-            {/* Visible wire path */}
-            <path
-                d={pathD}
-                stroke={color}
-                strokeWidth={isSelected ? 3 : 2}
-                fill="none"
-                strokeDasharray="4,2"
-                opacity={fixed ? 0.6 : 1}
-                style={{ pointerEvents: 'none' }}
-            />
-            {/* Selection glow effect */}
+            <path d={pathD} stroke={color} strokeWidth={isSelected ? 3 : 2} fill="none"
+                  strokeDasharray="4,2" opacity={fixed ? 0.6 : 1}
+                  style={{ pointerEvents: 'none' }} />
             {isSelected && (
-                <path
-                    d={pathD}
-                    stroke={color}
-                    strokeWidth={6}
-                    fill="none"
-                    strokeDasharray="4,2"
-                    opacity={0.3}
-                    style={{ pointerEvents: 'none' }}
-                />
+                <path d={pathD} stroke={color} strokeWidth={6} fill="none"
+                      strokeDasharray="4,2" opacity={0.3} style={{ pointerEvents: 'none' }} />
             )}
-            {/* Amount label (not for fixed wires) */}
             {!fixed && (
-                <text
-                    x={(x1 + x2) / 2}
-                    y={(y1 + y2) / 2 - 5}
-                    fill={color}
-                    fontSize="8"
-                    textAnchor="middle"
-                    style={{ fontFamily: 'var(--ap-font-family)', pointerEvents: 'none' }}
-                >
+                <text x={(x1 + x2) / 2} y={(y1 + y2) / 2 - 5} fill={color} fontSize="8"
+                      textAnchor="middle" style={{ fontFamily: 'var(--ap-font-family)', pointerEvents: 'none' }}>
                     {amount}
                 </text>
             )}
@@ -2784,40 +2737,10 @@ function ModWire({ connection, wireKey, portPositions, isSelected, onSelect }) {
 //======================================================================
 
 function DraggingWire({ fromModule, mousePos, portPositions }) {
-    // Get source port position from registry
     const fromPort = portPositions[`${fromModule}:out`];
-
-    // Don't render until we have position
     if (!fromPort) return null;
-
-    const x1 = fromPort.x;
-    const y1 = fromPort.y;
-    const x2 = mousePos.x;
-    const y2 = mousePos.y;
-
-    // Always use horizontal stubs - exit right, enter left
-    // Scale offset based on vertical distance - more vertical = more horizontal stub needed
-    const dx = Math.abs(x2 - x1);
-    const dy = Math.abs(y2 - y1);
-    const offset = Math.max(40, Math.min(200, dx / 3 + dy / 2));
-    const cx1 = x1 + offset;
-    const cy1 = y1;
-    const cx2 = x2 - offset;
-    const cy2 = y2;
-
     const color = WIRE_COLORS[fromModule] || 'var(--ap-wire-mod)';
-
-    return (
-        <path
-            d={`M ${x1} ${y1} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${x2} ${y2}`}
-            stroke={color}
-            strokeWidth={2}
-            fill="none"
-            strokeDasharray="4,2"
-            opacity={0.7}
-            className="ap-dragging-wire"
-        />
-    );
+    return <APPreviewWire fromPos={fromPort} toPos={mousePos} color={color} />;
 }
 
 //======================================================================
@@ -2825,42 +2748,18 @@ function DraggingWire({ fromModule, mousePos, portPositions }) {
 //======================================================================
 
 function Wire({ from, to, type, portPositions }) {
-    // Get port positions from registry
     const fromPort = portPositions[`${from}:out`];
     const toPort = portPositions[`${to}:in`];
-
-    // Don't render until we have positions
     if (!fromPort || !toPort) return null;
-
-    // Wire endpoints
-    const x1 = fromPort.x;
-    const y1 = fromPort.y;
-    const x2 = toPort.x;
-    const y2 = toPort.y;
-
-    // Always use horizontal stubs - exit right, enter left
-    // Scale offset based on vertical distance - more vertical = more horizontal stub needed
-    const dx = Math.abs(x2 - x1);
-    const dy = Math.abs(y2 - y1);
-    const offset = Math.max(40, Math.min(200, dx / 3 + dy / 2));
-    const cx1 = x1 + offset;
-    const cy1 = y1;
-    const cx2 = x2 - offset;
-    const cy2 = y2;
 
     const strokeColor = type === 'audio' ? 'var(--ap-wire-audio)' : 'var(--ap-wire-mod)';
     const strokeWidth = type === 'audio' ? 3 : 2;
     const strokeDash = type === 'audio' ? 'none' : '4,4';
 
     return (
-        <path
-            d={`M ${x1} ${y1} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${x2} ${y2}`}
-            stroke={strokeColor}
-            strokeWidth={strokeWidth}
-            strokeDasharray={strokeDash}
-            fill="none"
-            className="ap-wire"
-        />
+        <path d={apBezierPath(fromPort.x, fromPort.y, toPort.x, toPort.y)}
+              stroke={strokeColor} strokeWidth={strokeWidth}
+              strokeDasharray={strokeDash} fill="none" className="ap-wire" />
     );
 }
 

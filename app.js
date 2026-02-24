@@ -33,7 +33,7 @@ function App() {
     const midiStateRef = useRef(null);
 
     // Per-synth state map
-    // { 'AP Aach': { patchList, currentPatchIndex, currentPatch, topology }, ... }
+    // { 'AP Estragon': { patchList, currentPatchIndex, currentPatch, topology }, ... }
     const [synthState, setSynthState] = useState({});
     const synthStateRef = useRef(synthState);
     synthStateRef.current = synthState;
@@ -49,7 +49,7 @@ function App() {
     const virtualDevicesRef = useRef({});
 
     // Focused window info (for per-app menu bar)
-    // { id, type: 'apconsole'|'bartleby'|'candide'|'abbott', portName, title }
+    // { id, type: 'apconsole'|'bartleby'|'candide'|'ahab', portName, title }
     const [focusedWindow, setFocusedWindow] = useState({ id: null, type: 'apconsole', portName: null, title: null });
 
     // Logs
@@ -57,6 +57,7 @@ function App() {
     const [logActiveView, setLogActiveView] = useState('log');
     const logCountRef = useRef(null);
     const logClearRef = useRef(null);
+    const logSelectRef = useRef(null);
 
     const addLog = useCallback((message, type = 'info') => {
         const timestamp = new Date().toLocaleTimeString();
@@ -161,11 +162,11 @@ function App() {
             // Start virtual devices (software MIDI devices living in APC)
             const pm = registry.getPortManager();
             if (pm) {
-                const vSynth = new Aach(pm);
-                const abbott = new Abbott(pm);
+                const vSynth = new Estragon(pm);
+                const ahab = new Ahab(pm);
                 vSynth.start();
-                abbott.start();
-                virtualDevicesRef.current[abbott._portName] = abbott;
+                ahab.start();
+                virtualDevicesRef.current[ahab._portName] = ahab;
                 addLog('Virtual devices started', 'info');
             }
 
@@ -193,7 +194,7 @@ function App() {
         };
 
         WindowManager.onWindowFocus = (windowId, title) => {
-            const toolWindows = ['log-window', 'expression-pad', 'routing-window', 'preferences'];
+            const toolWindows = ['log-window', 'expression-pad', 'routing-window', 'preferences', 'style-guide'];
             if (!windowId || toolWindows.includes(windowId)) {
                 setFocusedWindow({ id: windowId, type: 'apconsole', portName: null, title: null });
             } else if (windowId.startsWith('config-')) {
@@ -204,11 +205,11 @@ function App() {
                 const device = devicesRef.current[portName];
                 const deviceName = device?.deviceInfo?.name || portName;
                 setFocusedWindow({ id: windowId, type: 'bartleby', portName, title: deviceName });
-            } else if (windowId.startsWith('abbott-')) {
-                const portName = windowId.replace('abbott-', '');
+            } else if (windowId.startsWith('ahab-')) {
+                const portName = windowId.replace('ahab-', '');
                 const device = devicesRef.current[portName];
                 const deviceName = device?.deviceInfo?.name || portName;
-                setFocusedWindow({ id: windowId, type: 'abbott', portName, title: deviceName });
+                setFocusedWindow({ id: windowId, type: 'ahab', portName, title: deviceName });
             } else if (windowId.startsWith('device-')) {
                 const portName = windowId.replace('device-', '');
                 const device = devicesRef.current[portName];
@@ -234,6 +235,8 @@ function App() {
                     openRoutingWindow();
                 } else if (windowId === 'sync-window') {
                     openRoutingWindow(); // Migration: old sync → new routing
+                } else if (windowId === 'style-guide') {
+                    openStyleGuide();
                 }
             }
         }, 0);
@@ -335,12 +338,12 @@ function App() {
             // Auto-reopen windows if they were previously open
             if (capabilities.includes(CAPABILITIES.CONTROLLER)) {
                 const project = deviceInfo?.project;
-                if (project === 'Abbott') {
-                    // Abbott opens its own sequencer window
-                    const abbottWid = `abbott-${portName}`;
-                    const abbottState = WorkspacePersistence.getWindowState(abbottWid);
-                    if (abbottState?.wasOpen) {
-                        setTimeout(() => openAbbottWindow(portName), 0);
+                if (project === 'Ahab') {
+                    // Ahab opens its own sequencer window
+                    const ahabWid = `ahab-${portName}`;
+                    const ahabState = WorkspacePersistence.getWindowState(ahabWid);
+                    if (ahabState?.wasOpen) {
+                        setTimeout(() => openAhabWindow(portName), 0);
                     }
                 } else {
                     // Bartleby and other controllers open config section windows
@@ -392,11 +395,11 @@ function App() {
             }
         }
 
-        // Close Abbott window if open
-        const abbottWid = `abbott-${portName}`;
-        if (WindowManager.exists(abbottWid)) {
-            WindowManager.close(abbottWid);
-            delete windowContainersRef.current[abbottWid];
+        // Close Ahab window if open
+        const ahabWid = `ahab-${portName}`;
+        if (WindowManager.exists(ahabWid)) {
+            WindowManager.close(ahabWid);
+            delete windowContainersRef.current[ahabWid];
         }
 
         // Clear per-synth state
@@ -740,6 +743,8 @@ function App() {
         addLog(`Tool: ${tool}`, 'info');
         if (tool === 'expression') {
             openExpressionPad();
+        } else if (tool === 'style-guide') {
+            openStyleGuide();
         }
     };
 
@@ -884,6 +889,10 @@ function App() {
                     contentArea.scrollTop = contentArea.scrollHeight;
                 });
             }
+            // Update view selector to reflect current value
+            if (logSelectRef.current) {
+                logSelectRef.current.update({ value: logActiveView });
+            }
             // Update count (hide in topology view)
             if (logCountRef.current) {
                 logCountRef.current.textContent = logActiveView === 'log'
@@ -934,6 +943,7 @@ function App() {
                             triggerExchange(ctrl, synth);
                         }
                     }}
+                    onClearConfigPair={(ctrl) => deviceRegistryRef.current?.clearConfigPair(ctrl)}
                     routingLogs={routingLogs}
                 />,
                 container
@@ -947,8 +957,8 @@ function App() {
 
     // Per-section window size constraints
     const CONFIG_SECTION_SIZES = {
-        curves:  { width: 500, height: 620, maxHeight: 700, vScroll: true },
-        dials:   { width: 1400, height: 220, hScroll: true },
+        curves:  { width: 500, height: 620, maxHeight: 700, columns: [{ flex: 1, scroll: 'v' }], resizable: 'vertical' },
+        dials:   { width: 1400, height: 220, columns: [{ flex: 1, scroll: 'h' }], resizable: 'horizontal' },
         pedal:   { width: 360, height: 250 },
         screen:  { width: 360, height: 250 }
     };
@@ -980,7 +990,6 @@ function App() {
 
         const sizes = CONFIG_SECTION_SIZES[section];
         const container = document.createElement('div');
-        if (!sizes.vScroll) container.style.height = '100%';
         windowContainersRef.current[windowId] = container;
 
         const saved = WorkspacePersistence.getWindowState(windowId);
@@ -995,8 +1004,8 @@ function App() {
             content: container,
             theme: 'controller',
             maxHeight: sizes.maxHeight,
-            hScroll: sizes.hScroll || false,
-            vScroll: sizes.vScroll || false,
+            columns: sizes.columns,
+            resizable: sizes.resizable,
             padding: false,
             infoBar: {
                 left: '',
@@ -1039,8 +1048,8 @@ function App() {
         // Controllers: dispatch by device project
         if (capabilities.includes(CAPABILITIES.CONTROLLER)) {
             const project = device.deviceInfo?.project;
-            if (project === 'Abbott') {
-                openAbbottWindow(portName);
+            if (project === 'Ahab') {
+                openAhabWindow(portName);
             } else {
                 openConfigWindow(portName, 'curves');
             }
@@ -1057,7 +1066,6 @@ function App() {
         const hasPatch = capabilities.includes(CAPABILITIES.PATCHES);
 
         const container = document.createElement('div');
-        container.style.height = '100%';
         windowContainersRef.current[windowId] = container;
 
         const saved = WorkspacePersistence.getWindowState(windowId);
@@ -1076,6 +1084,7 @@ function App() {
             theme: 'synth',
             padding: false,
             resizable: true,
+            columns: [{ flex: 1, fixed: true }],
             onClose: () => {
                 delete windowContainersRef.current[windowId];
             }
@@ -1114,8 +1123,8 @@ function App() {
         }
     };
 
-    const openAbbottWindow = (portName) => {
-        const windowId = `abbott-${portName}`;
+    const openAhabWindow = (portName) => {
+        const windowId = `ahab-${portName}`;
         if (WindowManager.exists(windowId)) {
             WindowManager.focus(windowId);
             return;
@@ -1123,15 +1132,14 @@ function App() {
 
         const device = devices[portName];
         if (!device) return;
-        const deviceName = device.deviceInfo?.name || 'Abbott';
-        const abbottDevice = virtualDevicesRef.current[portName];
-        if (!abbottDevice) {
-            addLog(`Abbott device instance not found for ${portName}`, 'error');
+        const deviceName = device.deviceInfo?.name || 'Ahab';
+        const ahabDevice = virtualDevicesRef.current[portName];
+        if (!ahabDevice) {
+            addLog(`Ahab device instance not found for ${portName}`, 'error');
             return;
         }
 
         const container = document.createElement('div');
-        container.style.height = '100%';
         windowContainersRef.current[windowId] = container;
 
         const saved = WorkspacePersistence.getWindowState(windowId);
@@ -1141,12 +1149,12 @@ function App() {
             title: deviceName,
             x: saved?.x ?? 80,
             y: saved?.y ?? 30,
-            width: saved?.width ?? 700,
-            height: saved?.height ?? 600,
+            width: saved?.width ?? 620,
+            height: saved?.height ?? 720,
             content: container,
             theme: 'controller',
-            hScroll: true,
-            vScroll: true,
+            resizable: true,
+            columns: [{ flex: 1, fixed: true }],
             padding: false,
             onClose: () => {
                 delete windowContainersRef.current[windowId];
@@ -1156,7 +1164,7 @@ function App() {
         WorkspacePersistence.setWasOpen(windowId, true);
 
         ReactDOM.render(
-            <AbbottWindow device={abbottDevice} />,
+            <AhabWindow device={ahabDevice} />,
             container
         );
     };
@@ -1168,7 +1176,6 @@ function App() {
         }
 
         const container = document.createElement('div');
-        container.style.height = '100%';
         windowContainersRef.current['expression-pad'] = container;
 
         const saved = WorkspacePersistence.getWindowState('expression-pad');
@@ -1182,6 +1189,7 @@ function App() {
             height: saved?.height ?? 420,
             content: container,
             theme: 'tool',
+            columns: [{ flex: 1, fixed: true }],
             onClose: () => {
                 delete windowContainersRef.current['expression-pad'];
             }
@@ -1204,6 +1212,40 @@ function App() {
         );
     };
 
+    const openStyleGuide = () => {
+        if (WindowManager.exists('style-guide')) {
+            WindowManager.focus('style-guide');
+            return;
+        }
+
+        const container = document.createElement('div');
+        windowContainersRef.current['style-guide'] = container;
+
+        const saved = WorkspacePersistence.getWindowState('style-guide');
+
+        WindowManager.create({
+            id: 'style-guide',
+            title: 'Style Guide',
+            x: saved?.x ?? 60,
+            y: saved?.y ?? 20,
+            width: saved?.width ?? 580,
+            height: saved?.height ?? 700,
+            content: container,
+            theme: 'tool',
+            resizable: true,
+            onClose: () => {
+                delete windowContainersRef.current['style-guide'];
+            }
+        });
+
+        WorkspacePersistence.setWasOpen('style-guide', true);
+
+        ReactDOM.render(
+            <StyleGuide />,
+            container
+        );
+    };
+
     const openLogWindow = () => {
         if (WindowManager.exists('log-window')) {
             WindowManager.focus('log-window');
@@ -1211,22 +1253,19 @@ function App() {
         }
 
         const container = document.createElement('div');
-        container.style.height = '100%';
         windowContainersRef.current['log-window'] = container;
 
         const saved = WorkspacePersistence.getWindowState('log-window');
 
         // Info bar left: view selector dropdown
-        const viewSelect = document.createElement('select');
-        viewSelect.className = 'ap-infobar-select';
-        const optLog = document.createElement('option');
-        optLog.value = 'log'; optLog.textContent = 'Log';
-        const optTopo = document.createElement('option');
-        optTopo.value = 'topo'; optTopo.textContent = 'Topology';
-        viewSelect.appendChild(optLog);
-        viewSelect.appendChild(optTopo);
-        viewSelect.value = logActiveView;
-        viewSelect.addEventListener('change', () => setLogActiveView(viewSelect.value));
+        const viewSelectHandle = APSelect.create({
+            value: logActiveView,
+            options: [{ value: 'log', label: 'Log' }, { value: 'topo', label: 'Topology' }],
+            onChange: (val) => setLogActiveView(val),
+            className: 'ap-infobar-select'
+        });
+        logSelectRef.current = viewSelectHandle;
+        const viewSelect = viewSelectHandle.element;
 
         // Info bar right: count + clear button
         const rightContainer = document.createElement('span');
@@ -1253,13 +1292,15 @@ function App() {
             height: saved?.height ?? 350,
             content: container,
             theme: 'tool',
-            vScroll: true,
+            columns: [{ flex: 1, scroll: 'v' }],
+            resizable: 'vertical',
             padding: false,
             infoBar: { left: viewSelect, right: rightContainer },
             onClose: () => {
                 delete windowContainersRef.current['log-window'];
                 logCountRef.current = null;
                 logClearRef.current = null;
+                logSelectRef.current = null;
             }
         });
 
@@ -1279,7 +1320,6 @@ function App() {
         }
 
         const container = document.createElement('div');
-        container.style.height = '100%';
         windowContainersRef.current['routing-window'] = container;
 
         const saved = WorkspacePersistence.getWindowState('routing-window');
@@ -1293,6 +1333,7 @@ function App() {
             height: saved?.height ?? 380,
             content: container,
             theme: 'tool',
+            columns: [{ flex: 1, fixed: true }],
             onClose: () => {
                 delete windowContainersRef.current['routing-window'];
             }
@@ -1314,6 +1355,7 @@ function App() {
                         triggerExchange(ctrl, synth);
                     }
                 }}
+                onClearConfigPair={(ctrl) => deviceRegistryRef.current?.clearConfigPair(ctrl)}
                 routingLogs={routingLogs}
             />,
             container
@@ -1327,7 +1369,6 @@ function App() {
         }
 
         const container = document.createElement('div');
-        container.style.height = '100%';
         windowContainersRef.current['preferences'] = container;
 
         const saved = WorkspacePersistence.getWindowState('preferences');
@@ -1341,6 +1382,7 @@ function App() {
             height: saved?.height ?? 280,
             content: container,
             theme: 'tool',
+            columns: [{ flex: 1, fixed: true }],
             onClose: () => {
                 delete windowContainersRef.current['preferences'];
             }
@@ -1364,7 +1406,6 @@ function App() {
 
         const deviceName = device.deviceInfo?.name || portName;
         const container = document.createElement('div');
-        container.style.height = '100%';
         windowContainersRef.current[windowId] = container;
 
         const saved = WorkspacePersistence.getWindowState(windowId);
@@ -1378,6 +1419,7 @@ function App() {
             height: saved?.height ?? (tool === 'firmware' ? 300 : 340),
             content: container,
             theme: 'tool',
+            columns: [{ flex: 1, fixed: true }],
             onClose: () => {
                 delete windowContainersRef.current[windowId];
             }
@@ -1413,6 +1455,7 @@ function App() {
                 onExpressionPadClick={() => openExpressionPad()}
                 onPreferencesClick={() => openPreferencesWindow()}
                 onOpenDeviceTool={openDeviceToolWindow}
+                onToolOpen={handleToolOpen}
             />
             <Desktop
                 devices={devices}
@@ -2161,7 +2204,153 @@ function ExpressionPadWindow({ devices, deviceApisRef, synthPortName, deviceRegi
 // ROUTING WINDOW
 //======================================================================
 
-function RoutingWindow({ devices, routes, configPairs, onAddRoute, onRemoveRoute, onSetConfigPair, routingLogs }) {
+function RoutingPanel({ controllers, synths, routes, configPairs,
+                        onAddRoute, onRemoveRoute, onSetConfigPair, onClearConfigPair, getName }) {
+    const panelRef = useRef(null);
+
+    // Shared primitives from ap-wires.js
+    const { positions: portPositions, setRef } = usePortPositions(panelRef, [controllers, synths, routes, configPairs]);
+    const { wiring, mousePos, startWire, cancelWire } = useWiring(panelRef);
+
+    // Complete a wire connection (domain-specific: midi many:many, config 1:1)
+    const completeWire = (port, type, side) => {
+        if (!wiring) return;
+        if (wiring.type !== type || wiring.side === side) {
+            cancelWire();
+            return;
+        }
+        const ctrlPort = side === 'controller' ? port : wiring.from;
+        const synthPort = side === 'synth' ? port : wiring.from;
+        if (type === 'midi') {
+            onAddRoute(ctrlPort, synthPort);
+        } else {
+            if (!routes.some(r => r.from === ctrlPort && r.to === synthPort)) {
+                onAddRoute(ctrlPort, synthPort);
+            }
+            onSetConfigPair(ctrlPort, synthPort);
+        }
+        cancelWire();
+    };
+
+    const handlePortDown = (port, type, side, e) => {
+        e.preventDefault();
+        if (wiring) { completeWire(port, type, side); return; }
+        startWire({ from: port, type, side });
+    };
+
+    const handlePortUp = (port, type, side) => {
+        if (!wiring) return;
+        completeWire(port, type, side);
+    };
+
+    const handlePortClick = (port, type, side) => {
+        if (!wiring) return;
+        completeWire(port, type, side);
+    };
+
+    const handleWireClick = (type, ctrlPort, synthPort) => {
+        if (type === 'midi') onRemoveRoute(ctrlPort, synthPort);
+        else onClearConfigPair(ctrlPort);
+    };
+
+    const handlePanelClick = (e) => {
+        if (wiring && !e.target.closest('.ap-port') && !e.target.closest('.ap-port-row')) cancelWire();
+    };
+
+    const isActive = (port, type) => wiring?.from === port && wiring?.type === type;
+    const isTarget = (port, type, side) => {
+        if (!wiring || wiring.type !== type || wiring.side === side || wiring.from === port) return false;
+        if (type === 'config') {
+            if (side === 'synth') {
+                const existingCtrl = Object.entries(configPairs).find(([_, s]) => s === port)?.[0];
+                if (existingCtrl && existingCtrl !== wiring.from) return false;
+            } else {
+                if (configPairs[port] && configPairs[port] !== wiring.from) return false;
+            }
+        }
+        return true;
+    };
+
+    const portRow = (port, type, side) => {
+        const target = isTarget(port, type, side);
+        const active = isActive(port, type);
+        return (
+            <div className={`ap-port-row${side === 'synth' ? ' right' : ' left'}${target ? ` drop-target ${type}` : ''}`}
+                 onMouseDown={(e) => { e.stopPropagation(); handlePortDown(port, type, side, e); }}
+                 onMouseUp={() => handlePortUp(port, type, side)}
+                 onClick={(e) => { e.stopPropagation(); handlePortClick(port, type, side); }}>
+                {side === 'controller' && <span className="ap-port-label">{type}</span>}
+                <div ref={setRef(`${port}:${type}`)}
+                     className={`ap-port ${type}${active ? ' active' : ''}${target ? ' target' : ''}`} />
+                {side === 'synth' && <span className="ap-port-label">{type}</span>}
+            </div>
+        );
+    };
+
+    return (
+        <div className="ap-routing-panel" ref={panelRef} onClick={handlePanelClick}>
+            <div className="ap-routing-col synths">
+                <div className="ap-routing-col-label">Synths</div>
+                {synths.map(([port]) => (
+                    <div key={port} className="ap-device-box stacked">
+                        <div className="ap-device-box-name">{getName(port)}</div>
+                        <div className="ap-device-box-ports">
+                            {portRow(port, 'midi', 'synth')}
+                            {portRow(port, 'config', 'synth')}
+                        </div>
+                    </div>
+                ))}
+            </div>
+
+            <div className="ap-routing-col controllers">
+                <div className="ap-routing-col-label">Controllers</div>
+                {controllers.map(([port]) => (
+                    <div key={port} className="ap-device-box stacked">
+                        <div className="ap-device-box-name">{getName(port)}</div>
+                        <div className="ap-device-box-ports">
+                            {portRow(port, 'midi', 'controller')}
+                            {portRow(port, 'config', 'controller')}
+                        </div>
+                    </div>
+                ))}
+            </div>
+
+            <svg className="ap-wire-layer">
+                {routes.map(({ from: ctrlPort, to: synthPort }) => {
+                    const sp = portPositions[`${synthPort}:midi`];
+                    const cp = portPositions[`${ctrlPort}:midi`];
+                    if (!sp || !cp) return null;
+                    return <APWireGroup key={`midi-${ctrlPort}-${synthPort}`}
+                        path={apBezierPath(sp.x, sp.y, cp.x, cp.y)}
+                        color="var(--ap-wire-audio)"
+                        onClick={() => handleWireClick('midi', ctrlPort, synthPort)} />;
+                })}
+
+                {Object.entries(configPairs).map(([ctrlPort, synthPort]) => {
+                    if (!controllers.some(([p]) => p === ctrlPort)) return null;
+                    if (!synths.some(([p]) => p === synthPort)) return null;
+                    const sp = portPositions[`${synthPort}:config`];
+                    const cp = portPositions[`${ctrlPort}:config`];
+                    if (!sp || !cp) return null;
+                    return <APWireGroup key={`config-${ctrlPort}`}
+                        path={apBezierPath(sp.x, sp.y, cp.x, cp.y)}
+                        color="var(--ap-wire-control)" dash="4,2"
+                        onClick={() => handleWireClick('config', ctrlPort, synthPort)} />;
+                })}
+
+                {wiring && (() => {
+                    const fp = portPositions[`${wiring.from}:${wiring.type}`];
+                    if (!fp) return null;
+                    const color = wiring.type === 'midi' ? 'var(--ap-wire-audio)' : 'var(--ap-wire-control)';
+                    return <APPreviewWire fromPos={fp} toPos={mousePos} color={color}
+                                          reverse={wiring.side === 'controller'} />;
+                })()}
+            </svg>
+        </div>
+    );
+}
+
+function RoutingWindow({ devices, routes, configPairs, onAddRoute, onRemoveRoute, onSetConfigPair, onClearConfigPair, routingLogs }) {
     const scrollRef = useRef(null);
 
     useEffect(() => {
@@ -2196,60 +2385,17 @@ function RoutingWindow({ devices, routes, configPairs, onAddRoute, onRemoveRoute
 
     return (
         <div className="ap-routing-window">
-            {/* Matrix: controllers as rows, synths as columns */}
-            <div className="ap-routing-matrix">
-                {/* Header row */}
-                <div className="ap-routing-header-row">
-                    <div className="ap-routing-corner"></div>
-                    {synths.map(([port]) => (
-                        <div key={port} className="ap-routing-col-header">{getName(port)}</div>
-                    ))}
-                    {synths.length > 0 && <div className="ap-routing-col-header ap-routing-config-header">Config</div>}
-                </div>
-
-                {/* Controller rows */}
-                {controllers.map(([ctrlPort]) => {
-                    const wiredSynths = routes.filter(r => r.from === ctrlPort).map(r => r.to);
-                    const currentPair = configPairs[ctrlPort] || null;
-
-                    return (
-                        <div key={ctrlPort} className="ap-routing-row">
-                            <div className="ap-routing-row-label">{getName(ctrlPort)}</div>
-                            {synths.map(([synthPort]) => {
-                                const isWired = wiredSynths.includes(synthPort);
-                                return (
-                                    <div key={synthPort} className="ap-routing-cell">
-                                        <button
-                                            className={`ap-routing-toggle ${isWired ? 'on' : ''}`}
-                                            onClick={() => isWired ? onRemoveRoute(ctrlPort, synthPort) : onAddRoute(ctrlPort, synthPort)}
-                                            title={isWired ? 'Remove MIDI route' : 'Add MIDI route'}
-                                        >
-                                            {isWired ? '\u25CF' : '\u25CB'}
-                                        </button>
-                                    </div>
-                                );
-                            })}
-                            {synths.length > 0 && (
-                                <div className="ap-routing-cell ap-routing-config-cell">
-                                    <select
-                                        className="ap-routing-config-select"
-                                        value={currentPair || ''}
-                                        onChange={(e) => {
-                                            const val = e.target.value;
-                                            if (val) onSetConfigPair(ctrlPort, val);
-                                        }}
-                                    >
-                                        <option value="">—</option>
-                                        {wiredSynths.map(sp => (
-                                            <option key={sp} value={sp}>{getName(sp)}</option>
-                                        ))}
-                                    </select>
-                                </div>
-                            )}
-                        </div>
-                    );
-                })}
-            </div>
+            <RoutingPanel
+                controllers={controllers}
+                synths={synths}
+                routes={routes}
+                configPairs={configPairs}
+                onAddRoute={onAddRoute}
+                onRemoveRoute={onRemoveRoute}
+                onSetConfigPair={onSetConfigPair}
+                onClearConfigPair={onClearConfigPair}
+                getName={getName}
+            />
 
             {/* Routing log */}
             <div className="ap-routing-log" ref={scrollRef}>

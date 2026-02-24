@@ -10,7 +10,7 @@
  * Hover switches between open menus (Mac behavior).
  */
 
-function MenuBar({ focusedWindow, onOpenConfigWindow, onLogClick, onSyncClick, onExpressionPadClick, onPreferencesClick, onOpenDeviceTool }) {
+function MenuBar({ focusedWindow, onOpenConfigWindow, onLogClick, onSyncClick, onExpressionPadClick, onPreferencesClick, onOpenDeviceTool, onToolOpen }) {
     const [openMenu, setOpenMenu] = React.useState(null);
 
     const appType = focusedWindow?.type || 'apconsole';
@@ -52,6 +52,9 @@ function MenuBar({ focusedWindow, onOpenConfigWindow, onLogClick, onSyncClick, o
             </button>
             <button className="ap-menubar-dropdown-item" onMouseDown={(e) => handleItemClick(onExpressionPadClick, e)}>
                 Expression Pad
+            </button>
+            <button className="ap-menubar-dropdown-item" onMouseDown={(e) => handleItemClick(() => onToolOpen && onToolOpen('style-guide'), e)}>
+                Style Guide
             </button>
             <div className="ap-menubar-dropdown-separator"></div>
             <button className="ap-menubar-dropdown-item" onMouseDown={(e) => handleItemClick(onPreferencesClick, e)}>

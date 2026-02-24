@@ -16,7 +16,8 @@ const CAPABILITIES = {
     PATCHES: 'PATCHES',         // Patch storage and management
     CONFIG: 'CONFIG',           // Device configuration
     FIRMWARE: 'FIRMWARE',       // OTA firmware updates
-    PARAMS: 'PARAMS'           // Real-time parameter control
+    PARAMS: 'PARAMS',          // Real-time parameter control
+    PARTS: 'PARTS'             // Multi-part (channel → patch mapping)
 };
 
 //======================================================================
@@ -59,7 +60,11 @@ const COMMAND_CAPABILITIES = {
     'toggle-modulation': CAPABILITIES.PARAMS,
     'update-modulation-amount': CAPABILITIES.PARAMS,
     'toggle-cc': CAPABILITIES.PARAMS,
-    'move-module': CAPABILITIES.PARAMS
+    'move-module': CAPABILITIES.PARAMS,
+
+    // PARTS (multi-part channel mapping)
+    'get-parts': CAPABILITIES.PARTS,
+    'set-parts': CAPABILITIES.PARTS
 };
 
 //======================================================================
@@ -71,14 +76,14 @@ const KNOWN_PORTS = [
     'Bartleby MPE',
     'Candide MPE',
     'Dagon MPE',           // Future hardware
-    'AP Aach',             // Software FM synth (lives in APC)
-    'AP Abbott'             // Software step sequencer controller (lives in APC)
+    'AP Estragon',             // Software FM synth (lives in APC)
+    'AP Ahab'             // Software step sequencer controller (lives in APC)
 ];
 
 // Port → capability set (virtual devices declare capabilities here)
 const PORT_CAPABILITIES = {
-    'AP Aach': [CAPABILITIES.IDENTITY, CAPABILITIES.SYNTH, CAPABILITIES.PATCHES, CAPABILITIES.PARAMS, CAPABILITIES.CONFIG],
-    'AP Abbott': [CAPABILITIES.IDENTITY, CAPABILITIES.CONTROLLER, CAPABILITIES.CONFIG]
+    'AP Estragon': [CAPABILITIES.IDENTITY, CAPABILITIES.SYNTH, CAPABILITIES.PATCHES, CAPABILITIES.PARAMS, CAPABILITIES.CONFIG, CAPABILITIES.PARTS],
+    'AP Ahab': [CAPABILITIES.IDENTITY, CAPABILITIES.CONTROLLER, CAPABILITIES.CONFIG]
 };
 
 //======================================================================

@@ -66,6 +66,14 @@ class VirtualDevice {
         const json = decodeSysExToJson(bytes);
         if (!json) return;
 
+        // Responses (no cmd field) — dispatch to subclass exchange handler
+        // During exchange relay, some responses (like control-surface) need
+        // to reach the device. Subclass overrides handleExchangeResponse().
+        if (!json.cmd) {
+            this.handleExchangeResponse(json);
+            return;
+        }
+
         this._logMidi('in', `cmd: ${json.cmd}`);
         console.log(`[${this._portName}] RX: ${json.cmd}`);
 
@@ -111,6 +119,15 @@ class VirtualDevice {
      */
     handleMidi(data) {
         // Default: ignore
+    }
+
+    /**
+     * Handle a JSON response during exchange relay — subclass may override.
+     * Called for SysEx messages without a cmd field (responses/ACKs).
+     * @param {Object} json - Decoded response
+     */
+    handleExchangeResponse(json) {
+        // Default: ignore (responses are for the API layer, not the device)
     }
 
     //------------------------------------------------------------------

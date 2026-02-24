@@ -1,5 +1,5 @@
 /**
- * Aach - 2-operator FM synth (virtual device)
+ * Estragon - 2-operator FM synth (virtual device)
  *
  * Capabilities: IDENTITY, SYNTH, PATCHES, PARAMS, CONFIG
  *
@@ -17,9 +17,9 @@
  * - Note On/Off -> FM synthesis via Web Audio
  */
 
-class Aach extends VirtualDevice {
+class Estragon extends VirtualDevice {
     constructor(portManager, portName) {
-        super(portManager, portName || 'AP Aach');
+        super(portManager, portName || 'AP Estragon');
 
         // Audio
         this._audioCtx = null;
@@ -33,6 +33,12 @@ class Aach extends VirtualDevice {
             this._makePreset('Pad',     1.0, 2.0, 100, 0, 0, 0.8, 0.5, 0.8, 1.5)
         ];
         this._currentPatchIndex = 0;
+
+        // Parts: channel → patch mapping (multi-timbral support)
+        this._parts = [
+            { index: 0, patchIndex: 0, channels: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15] }
+        ];
+        this._channelPatchMap = new Array(16).fill(0); // channel → patchIndex
 
         // Exchange state
         this._exchangeState = 'IDLE';
@@ -122,8 +128,8 @@ class Aach extends VirtualDevice {
                 this._sendResponse({
                     status: 'ok',
                     op: 'device-info',
-                    name: 'Aach',
-                    project: 'Aach',
+                    name: 'Estragon',
+                    project: 'Estragon',
                     version: '1.0.0',
                     capabilities: PORT_CAPABILITIES[this._portName]
                 });
@@ -150,7 +156,26 @@ class Aach extends VirtualDevice {
 
             case 'select-patch':
                 this._currentPatchIndex = json.index;
+                // Update Part 0 to match (backward compat for single-part controllers)
+                if (this._parts.length > 0) {
+                    this._parts[0].patchIndex = json.index;
+                }
+                this._rebuildChannelPatchMap();
                 this._sendResponse({ status: 'ok', op: 'select-patch', current_index: json.index });
+                break;
+
+            case 'get-parts':
+                this._sendResponse({
+                    status: 'ok', op: 'parts',
+                    parts: this._parts,
+                    patches: this._patches.map(p => p.name)
+                });
+                break;
+
+            case 'set-parts':
+                this._parts = json.parts;
+                this._rebuildChannelPatchMap();
+                this._sendResponse({ status: 'ok', op: 'set-parts' });
                 break;
 
             case 'create-patch': {
@@ -209,15 +234,8 @@ class Aach extends VirtualDevice {
                 this._sendResponse({ status: 'saved' });
                 break;
 
-            // Exchange protocol (from controller via relay)
-            case 'control-surface':
-                this._handleControlSurface(json);
-                break;
-
-            case 'thanks':
-                this._exchangeState = 'IDLE';
-                console.log(`[${this._portName}] Exchange complete`);
-                break;
+            // Exchange protocol: 'thanks' removed — exchange completes
+            // after sending set-patch (matches Candide behavior)
 
             default:
                 console.log(`[${this._portName}] Unhandled: ${json.cmd}`);
@@ -249,6 +267,13 @@ class Aach extends VirtualDevice {
     // Exchange protocol
     //--------------------------------------------------------------
 
+    // Receive exchange responses (no cmd field) relayed from controller
+    handleExchangeResponse(json) {
+        if (json.op === 'control-surface' && this._exchangeState === 'EXCHANGE') {
+            this._handleControlSurface(json);
+        }
+    }
+
     _handleControllerAvailable(json) {
         this._exchangeState = 'EXCHANGE';
         this._controllerPort = json.port;
@@ -260,7 +285,7 @@ class Aach extends VirtualDevice {
             this._sendResponse({
                 cmd: 'get-control-surface',
                 mfg: 'AttachPart',
-                device: 'Aach',
+                device: 'Estragon',
                 version: '1.0.0'
             });
         }, 50);
@@ -268,6 +293,24 @@ class Aach extends VirtualDevice {
 
     _handleControlSurface(json) {
         console.log(`[${this._portName}] Got control surface: ${json.device}`);
+
+        // Configure parts from controller's advertised part count
+        const numParts = json.parts || 1;
+        if (numParts > 1) {
+            const channelsPerPart = Math.floor(16 / numParts);
+            this._parts = [];
+            for (let i = 0; i < numParts; i++) {
+                const startCh = i * channelsPerPart;
+                const endCh = (i === numParts - 1) ? 16 : startCh + channelsPerPart;
+                this._parts.push({
+                    index: i,
+                    patchIndex: i % this._patches.length,
+                    channels: Array.from({ length: endCh - startCh }, (_, j) => startCh + j)
+                });
+            }
+            this._rebuildChannelPatchMap();
+            console.log(`[${this._portName}] Configured ${numParts} parts (${channelsPerPart} ch each)`);
+        }
 
         // Build controls list from current patch params with cc > 0
         const patch = this._patches[this._currentPatchIndex];
@@ -292,8 +335,12 @@ class Aach extends VirtualDevice {
             this._sendResponse({
                 cmd: 'set-patch',
                 name: patch.name,
+                patches: this._patches.map(p => p.name),
                 controls
             });
+            // Exchange complete — matches Candide behavior (completes after sending set-patch)
+            this._exchangeState = 'IDLE';
+            console.log(`[${this._portName}] Exchange complete`);
         }, 50);
     }
 
@@ -469,6 +516,19 @@ class Aach extends VirtualDevice {
     }
 
     //--------------------------------------------------------------
+    // Parts (multi-timbral channel → patch mapping)
+    //--------------------------------------------------------------
+
+    _rebuildChannelPatchMap() {
+        this._channelPatchMap.fill(this._currentPatchIndex);
+        for (const part of this._parts) {
+            for (const ch of part.channels) {
+                this._channelPatchMap[ch] = part.patchIndex;
+            }
+        }
+    }
+
+    //--------------------------------------------------------------
     // Web Audio — 2-op FM engine
     //--------------------------------------------------------------
 
@@ -502,7 +562,8 @@ class Aach extends VirtualDevice {
     _noteOn(channel, note, velocity) {
         const ctx = this._ensureAudioCtx();
         const now = ctx.currentTime;
-        const patch = this._patches[this._currentPatchIndex];
+        const patchIdx = this._channelPatchMap[channel];
+        const patch = this._patches[patchIdx];
 
         // Read base params from current patch
         const baseCarrierRatio = patch.CARRIER.CARRIER_RATIO.initial;
@@ -579,7 +640,7 @@ class Aach extends VirtualDevice {
 
         this._voices.set(channel, {
             modOsc, modGain, carrierOsc, envGain, masterGain,
-            release, note, noteFreq,
+            release, note, noteFreq, patchIndex: patchIdx,
             // Velocity-adjusted base values (for pressure/bend to modulate from)
             carrierRatio, carrierLevel, modRatio, modDepth, sustain,
             // Modulation amounts for continuous control (read once at note-on)
@@ -619,7 +680,7 @@ class Aach extends VirtualDevice {
         const voice = this._voices.get(channel);
         if (!voice) return;
 
-        const patch = this._patches[this._currentPatchIndex];
+        const patch = this._patches[voice.patchIndex];
         const pressureAmounts = this._getModAmounts(patch, 'PRESSURE');
         const bendAmounts = this._getModAmounts(patch, 'BEND');
         const hasPressure = Object.keys(pressureAmounts).length > 0;
@@ -686,4 +747,4 @@ class Aach extends VirtualDevice {
     }
 }
 
-window.Aach = Aach;
+window.Estragon = Estragon;

@@ -5,8 +5,14 @@
  * - Title bar with window name (draggable)
  * - Close button: upper LEFT corner
  * - Resize handle: lower RIGHT corner
- * - Scrollbars when content overflows
+ * - Columns with constraint-driven scrolling
  * - NO: minimize, maximize, fullscreen
+ *
+ * Column model:
+ * Every window has one or more columns. Each column is a scroll container.
+ * Scroll behavior emerges from constraints — never declared separately.
+ * - Fixed column (width/height set, no flex): overflow hidden, no scroll
+ * - Flexible column (flex): resizes with window, scroll when content overflows
  */
 
 const WindowManager = {
@@ -24,20 +30,18 @@ const WindowManager = {
      * @param {Object} options
      *   id: string - unique identifier
      *   title: string - window title
-     *   x: number - initial x position
-     *   y: number - initial y position
-     *   width: number - initial width
-     *   height: number - initial height
-     *   content: HTMLElement | string - window content
-     *   onClose: () => void - called when window closes
-     *   hScroll: boolean - horizontal scrollbar (default false)
-     *   vScroll: boolean - vertical scrollbar (default false)
+     *   x/y/width/height: number - geometry
+     *   content: HTMLElement | string - window content (single-column shorthand)
+     *   columns: Array<{ id?, width?, flex?, fixed?, scroll? }> - column definitions
+     *     - width: fixed pixel width
+     *     - flex: flex-grow value (default 1 if no width)
+     *     - fixed: true = no scroll at all (overflow hidden)
+     *     - scroll: 'v' | 'h' | 'both' | 'none' (default: 'both' for flex columns)
      *   resizable: boolean|string - resize handle: true/'both', 'vertical', 'horizontal', false
-     *                               (default: derived from hScroll/vScroll for backward compat)
      *   padding: boolean - content area has 16px padding (default true)
-     *   infoBar: { left, center, right } | null - optional info bar below title
-     *   onInfoBarClick: (slot) => void - called when info bar slot is clicked
-     * @returns {HTMLElement} The window element
+     *   infoBar: { left, center, right } | null
+     *   onInfoBarClick: (slot) => void
+     * @returns {{ element: HTMLElement, columns: Object<string, HTMLElement> }}
      */
     create(options) {
         const {
@@ -47,11 +51,10 @@ const WindowManager = {
             y = 100,
             width = 400,
             height = 300,
-            content = '',
+            content = null,
             onClose = null,
             theme = null,
-            hScroll = false,
-            vScroll = false,
+            columns: columnsOpt,
             resizable: resizableOpt,
             padding = true,
             minWidth = 250,
@@ -65,34 +68,46 @@ const WindowManager = {
         // Don't create duplicate windows
         if (this.windows.has(id)) {
             this.focus(id);
-            return this.windows.get(id).element;
+            const existing = this.windows.get(id);
+            return { element: existing.element, columns: existing.columnEls };
         }
 
-        // Derive resize behavior: explicit resizable property takes priority,
-        // otherwise fall back to scroll properties for backward compat
-        const resizable = resizableOpt !== undefined ? resizableOpt : (hScroll || vScroll);
+        // Normalize resizable
+        const resizable = resizableOpt !== undefined ? resizableOpt : false;
+
+        // Build column definitions
+        // Default: single flex column, scroll both (unless no resizable → no scroll)
+        let colDefs;
+        if (columnsOpt) {
+            colDefs = columnsOpt;
+        } else {
+            // Single implicit column — scroll based on resizable direction
+            const dir = typeof resizable === 'string' ? resizable : resizable ? 'both' : null;
+            const scroll = dir === 'both' ? 'both'
+                : dir === 'vertical' ? 'v'
+                : dir === 'horizontal' ? 'h'
+                : 'none';
+            colDefs = [{ id: '_default', flex: 1, scroll }];
+        }
+
+        // Determine which scroll directions exist across all columns
+        const hasAnyVScroll = colDefs.some(c => !c.fixed && (c.scroll || 'both') !== 'h' && (c.scroll || 'both') !== 'none');
+        const hasAnyHScroll = colDefs.some(c => !c.fixed && (c.scroll || 'both') !== 'v' && (c.scroll || 'both') !== 'none');
 
         // Create window structure
         const win = document.createElement('div');
         let cls = 'ap-window';
-        if (hScroll && vScroll) cls += ' ap-scroll-both';
-        else if (hScroll) cls += ' ap-scroll-h';
-        else if (vScroll) cls += ' ap-scroll-v';
-        // Resizable class for resize handle visibility + cursor (independent of scroll)
+        // Resizable class for resize handle visibility + cursor
         if (resizable) {
-            let dir;
-            if (typeof resizable === 'string') {
-                dir = resizable;
-            } else if (resizableOpt === true) {
-                dir = 'both';
-            } else {
-                // Backward compat: derive from scroll
-                dir = (hScroll && vScroll) ? 'both' : hScroll ? 'horizontal' : 'vertical';
-            }
+            const dir = typeof resizable === 'string' ? resizable
+                : resizable === true ? 'both' : 'both';
             if (dir === 'both') cls += ' ap-resizable-both';
             else if (dir === 'horizontal') cls += ' ap-resizable-h';
             else cls += ' ap-resizable-v';
         }
+        // Flush scrollbar classes — remove window border where scrollable columns touch edge
+        if (hasAnyVScroll) cls += ' ap-flush-right';
+        if (hasAnyHScroll) cls += ' ap-flush-bottom';
         if (!padding) cls += ' ap-no-padding';
         win.className = cls;
         win.id = `window-${id}`;
@@ -148,20 +163,94 @@ const WindowManager = {
             infoBarEl.appendChild(rightSlot);
 
             if (onInfoBarClick) {
-                // Don't add 'clickable' class here — toggled dynamically via setInfoBarClickable
                 leftSlot.addEventListener('click', () => onInfoBarClick('left'));
                 centerSlot.addEventListener('click', () => onInfoBarClick('center'));
                 rightSlot.addEventListener('click', () => onInfoBarClick('right'));
             }
         }
 
-        // Content area
-        const contentArea = document.createElement('div');
-        contentArea.className = 'ap-window-content';
-        if (typeof content === 'string') {
-            contentArea.innerHTML = content;
-        } else if (content instanceof HTMLElement) {
-            contentArea.appendChild(content);
+        // Columns container
+        const columnsContainer = document.createElement('div');
+        columnsContainer.className = 'ap-window-columns';
+
+        const columnEls = {};
+        const observers = [];
+
+        colDefs.forEach((colDef, i) => {
+            const colId = colDef.id || `col-${i}`;
+            const col = document.createElement('div');
+            col.className = 'ap-window-col';
+
+            // Fixed vs flexible
+            if (colDef.width !== undefined && !colDef.flex) {
+                col.style.width = `${colDef.width}px`;
+                col.style.flexShrink = '0';
+                col.style.flexGrow = '0';
+            } else {
+                col.style.flex = `${colDef.flex || 1}`;
+                col.style.minWidth = '0';
+            }
+
+            // Scroll behavior
+            const scroll = colDef.fixed ? 'none' : (colDef.scroll || (colDef.width && !colDef.flex ? 'v' : 'both'));
+            if (scroll === 'none' || colDef.fixed) {
+                col.classList.add('ap-col-fixed');
+            } else if (scroll === 'v') {
+                col.classList.add('ap-col-scroll-v');
+            } else if (scroll === 'h') {
+                col.classList.add('ap-col-scroll-h');
+            } else {
+                col.classList.add('ap-col-scroll-both');
+            }
+
+            // Mark last scrollable column for flush border
+            // (will refine after loop)
+
+            // Column separator (between columns, not on first)
+            if (i > 0) {
+                col.classList.add('ap-col-border-left');
+            }
+
+            columnsContainer.appendChild(col);
+            columnEls[colId] = col;
+
+            // Per-column overflow detection
+            if (scroll !== 'none' && !colDef.fixed) {
+                let pending = false;
+                const checkOverflow = () => {
+                    if (pending) return;
+                    pending = true;
+                    requestAnimationFrame(() => {
+                        pending = false;
+                        const TOLERANCE = 2;
+                        if (scroll === 'v' || scroll === 'both') {
+                            col.classList.toggle('ap-overflows-v',
+                                col.scrollHeight - col.clientHeight > TOLERANCE);
+                        }
+                        if (scroll === 'h' || scroll === 'both') {
+                            col.classList.toggle('ap-overflows-h',
+                                col.scrollWidth - col.clientWidth > TOLERANCE);
+                        }
+                    });
+                };
+                const resizeObs = new ResizeObserver(checkOverflow);
+                resizeObs.observe(col);
+                observers.push(resizeObs);
+                const mutationObs = new MutationObserver(checkOverflow);
+                mutationObs.observe(col, { childList: true, subtree: true, characterData: true });
+                observers.push(mutationObs);
+                checkOverflow();
+            }
+        });
+
+        // If single column with content provided, populate it
+        if (content) {
+            const firstCol = Object.values(columnEls)[0];
+            if (typeof content === 'string') {
+                firstCol.innerHTML = content;
+            } else if (content instanceof HTMLElement) {
+                firstCol.appendChild(content);
+            }
         }
 
         // Resize handle
@@ -170,7 +259,7 @@ const WindowManager = {
 
         win.appendChild(titleBar);
         if (infoBarEl) win.appendChild(infoBarEl);
-        win.appendChild(contentArea);
+        win.appendChild(columnsContainer);
         win.appendChild(resizeHandle);
 
         // Add to workspace
@@ -188,12 +277,14 @@ const WindowManager = {
             });
         }
 
-        // Store window info
-        const observers = [];
+        // Store window info — contentArea points to first column for backward compat
+        const firstColEl = Object.values(columnEls)[0];
         this.windows.set(id, {
             element: win,
             titleBar,
-            contentArea,
+            contentArea: firstColEl,
+            columnEls,
+            columnsContainer,
             infoBarEl,
             onInfoBarClick,
             onClose,
@@ -204,53 +295,18 @@ const WindowManager = {
         // Setup interactions
         this._setupDrag(id, win, titleBar);
         if (resizable) {
-            // Determine resize direction from explicit resizable value,
-            // or derive from scroll properties for backward compat
             let resizeDir;
             if (typeof resizable === 'string') {
-                resizeDir = resizable; // 'vertical', 'horizontal', 'both'
-            } else if (resizableOpt === true) {
-                resizeDir = 'both';
+                resizeDir = resizable;
             } else {
-                resizeDir = (hScroll && vScroll) ? 'both' : hScroll ? 'horizontal' : 'vertical';
+                resizeDir = 'both';
             }
             this._setupResize(id, win, resizeHandle, resizeDir);
         }
         this._setupFocus(id, win);
 
-        // Overflow detection: toggle ap-overflows-v / ap-overflows-h classes
-        // so CSS can hide scrollbar thumbs when content fits
-        if (hScroll || vScroll) {
-            let pending = false;
-            const checkOverflow = () => {
-                if (pending) return;
-                pending = true;
-                requestAnimationFrame(() => {
-                    pending = false;
-                    // Tolerance for subpixel rounding (getBoundingClientRect
-                    // returns fractional values but scrollHeight/clientHeight are integers)
-                    const TOLERANCE = 2;
-                    if (vScroll) {
-                        win.classList.toggle('ap-overflows-v',
-                            contentArea.scrollHeight - contentArea.clientHeight > TOLERANCE);
-                    }
-                    if (hScroll) {
-                        win.classList.toggle('ap-overflows-h',
-                            contentArea.scrollWidth - contentArea.clientWidth > TOLERANCE);
-                    }
-                });
-            };
-            const resizeObs = new ResizeObserver(checkOverflow);
-            resizeObs.observe(contentArea);
-            observers.push(resizeObs);
-            const mutationObs = new MutationObserver(checkOverflow);
-            mutationObs.observe(contentArea, { childList: true, subtree: true, characterData: true });
-            observers.push(mutationObs);
-            checkOverflow();
-        }
-
         this.focus(id);
-        return win;
+        return { element: win, columns: columnEls };
     },
 
     /**
