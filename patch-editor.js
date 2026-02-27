@@ -226,6 +226,7 @@ function PatchEditorWindow({
     onMovePatch,
     onToggleModule,
     onUpdateParam,
+    onLiveChange,
     onToggleModulation,
     onUpdateModAmount,
     isConnected = true,
@@ -728,6 +729,7 @@ function PatchEditorWindow({
                 log={log}
                 midiState={midiState}
                 controllerConfig={controllerConfig}
+                deviceKey={deviceKey}
             />
             <LoadingOverlay isLoading={isLoading} isVisible={isLoading} />
             {confirmDialog && (
@@ -1084,10 +1086,12 @@ function NodeWorkspace({
     wiringMousePos,
     modConnections,
     onUpdateParam,
+    onLiveChange,
     onUpdateModAmount,
     log = () => {},  // Default to no-op if not provided
     midiState,
-    controllerConfig
+    controllerConfig,
+    deviceKey
 }) {
     const workspaceRef = useRef(null);
     const [draggingNode, setDraggingNode] = useState(null);
@@ -1608,11 +1612,13 @@ function NodeWorkspace({
                         onPortPositionChange={handlePortPositionChange}
                         selectedWireTarget={selectedWireTarget}
                         onUpdateParam={onUpdateParam}
+                        onLiveChange={onLiveChange}
                         onUpdateModAmount={onUpdateModAmount}
                         otherEnvelopeParams={otherEnvelopeParams}
                         otherEnvelopeColor={otherEnvelopeColor}
-                        midiState={module.id === 'VELOCITY' ? midiState : undefined}
-                        controllerConfig={module.id === 'VELOCITY' ? controllerConfig : undefined}
+                        midiState={midiState}
+                        controllerConfig={controllerConfig}
+                        deviceKey={deviceKey}
                     />
                 );
             }))}
@@ -1641,6 +1647,7 @@ function NodeWorkspace({
                         onPortPositionChange={handlePortPositionChange}
                         selectedWireTarget={selectedWireTarget}
                         onUpdateParam={onUpdateParam}
+                        onLiveChange={onLiveChange}
                         onUpdateModAmount={onUpdateModAmount}
                     />
                 );
@@ -2078,11 +2085,13 @@ function Node({
     onPortPositionChange,
     selectedWireTarget,
     onUpdateParam,
+    onLiveChange,
     onUpdateModAmount,
     otherEnvelopeParams,  // For envelope overlay
     otherEnvelopeColor,   // Color for the other envelope curve
-    midiState,            // For velocity preview (VELOCITY node only)
-    controllerConfig      // For velocity curve data (VELOCITY node only)
+    midiState,
+    controllerConfig,
+    deviceKey
 }) {
     const moduleData = patch?.[module.id];
 
@@ -2112,14 +2121,15 @@ function Node({
                         min: value.range?.[0] ?? 0,
                         max: value.range?.[1] ?? 1,
                         priority: value.priority ?? 999,  // For sorting
-                        cc: value.cc  // MIDI CC for future display
+                        cc: value.cc,
+                        uid: value.uid  // Parameter UID for value feedback
                     });
                 }
             }
         });
 
-        // Sort by priority, then take top 6
-        return params.sort((a, b) => a.priority - b.priority).slice(0, 6);
+        // Sort by priority
+        return params.sort((a, b) => a.priority - b.priority);
     }, [moduleData]);
 
     // Collect all existing priorities from the entire patch for duplicate checking
@@ -2386,6 +2396,9 @@ function Node({
                                     <NodeParamSlider
                                         param={param}
                                         onUpdateParam={onUpdateParam}
+                                        onLiveChange={onLiveChange}
+                                        midiState={midiState}
+                                        deviceKey={deviceKey}
                                     />
                                 )}
                             </div>
@@ -2428,13 +2441,31 @@ function Node({
 // NODE PARAM SLIDER - Inline slider with local state
 //======================================================================
 
-function NodeParamSlider({ param, onUpdateParam }) {
+function NodeParamSlider({ param, onUpdateParam, onLiveChange, midiState, deviceKey }) {
     const [localValue, setLocalValue] = useState(param.value);
+    const [displayText, setDisplayText] = useState(null);
+    const lastLiveSendRef = useRef(0);
 
     // Sync with external value changes
     useEffect(() => {
         setLocalValue(param.value);
     }, [param.value]);
+
+    // Subscribe to value feedback for this param's UID (scoped by device)
+    useEffect(() => {
+        if (!midiState || param.uid === undefined || !deviceKey) return;
+
+        // Seed from current state
+        const existing = midiState.getValueFeedback(deviceKey, param.uid);
+        if (existing) setDisplayText(existing.displayText);
+
+        const unsubscribe = midiState.subscribe((eventType, data) => {
+            if (eventType === 'valueFeedback' && data.uid === param.uid && data.portName === deviceKey) {
+                setDisplayText(data.displayText);
+            }
+        });
+        return unsubscribe;
+    }, [midiState, param.uid, deviceKey]);
 
     // Determine step size based on parameter type
     const getStep = () => {
@@ -2454,8 +2485,9 @@ function NodeParamSlider({ param, onUpdateParam }) {
         return 1;
     };
 
-    // Format display value based on step size
+    // Format display value — prefer synth-formatted display text
     const formatValue = (val) => {
+        if (displayText) return displayText;
         const step = getStep();
         if (step >= 1) {
             return Math.round(val);
@@ -2467,7 +2499,18 @@ function NodeParamSlider({ param, onUpdateParam }) {
     };
 
     const handleChange = (e) => {
-        setLocalValue(parseFloat(e.target.value));
+        const newValue = parseFloat(e.target.value);
+        setLocalValue(newValue);
+
+        // Live CC send for params with CC assignment, throttled ~60Hz
+        if (onLiveChange && param.cc >= 0) {
+            const now = performance.now();
+            if (now - lastLiveSendRef.current >= 16) {
+                const normalized = (newValue - param.min) / (param.max - param.min);
+                onLiveChange(param.cc, normalized);
+                lastLiveSendRef.current = now;
+            }
+        }
     };
 
     const handleCommit = () => {

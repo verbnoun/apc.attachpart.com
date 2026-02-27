@@ -117,33 +117,51 @@ class MidiState {
     }
 
     /**
-     * Handle decoded value feedback from synth → controller relay
-     * Stores latest values per CC and notifies subscribers.
-     * @param {Object} feedback - { cc, displayText, adsr? }
+     * Handle decoded value feedback from synth
+     * Stores latest values per portName:UID and notifies subscribers.
+     * @param {Object} feedback - { uid, displayText, portName, adsr? }
      */
     handleValueFeedback(feedback) {
         if (!this._valueFeedback) {
-            this._valueFeedback = new Map(); // cc → { displayText, adsr? }
+            this._valueFeedback = new Map();
         }
-        this._valueFeedback.set(feedback.cc, feedback);
+        const key = `${feedback.portName || ''}:${feedback.uid}`;
+        this._valueFeedback.set(key, feedback);
         this._notify('valueFeedback', feedback);
     }
 
     /**
-     * Get latest value feedback for a CC number
-     * @param {number} cc - MIDI CC number
-     * @returns {Object|null} - { cc, displayText, adsr? } or null
+     * Get latest value feedback for a port + UID
+     * @param {string} portName - Device port name
+     * @param {number} uid - Parameter UID
+     * @returns {Object|null} - { uid, displayText, adsr? } or null
      */
-    getValueFeedback(cc) {
-        return this._valueFeedback?.get(cc) || null;
+    getValueFeedback(portName, uid) {
+        return this._valueFeedback?.get(`${portName}:${uid}`) || null;
     }
 
     /**
      * Get all value feedback entries
-     * @returns {Map} cc → { cc, displayText, adsr? }
+     * @returns {Map} uid → { uid, displayText, adsr? }
      */
     getAllValueFeedback() {
         return this._valueFeedback || new Map();
+    }
+
+    /**
+     * Clear all value feedback (call on patch switch/disconnect)
+     */
+    clearValueFeedback(portName) {
+        if (!this._valueFeedback) return;
+        if (portName) {
+            // Clear only entries for this port
+            const prefix = `${portName}:`;
+            for (const key of [...this._valueFeedback.keys()]) {
+                if (key.startsWith(prefix)) this._valueFeedback.delete(key);
+            }
+        } else {
+            this._valueFeedback.clear();
+        }
     }
 
     /**

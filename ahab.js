@@ -218,7 +218,9 @@ class Ahab extends VirtualDevice {
                     this._config.pots[ctrl.priority] = {
                         active: true,
                         cc: ctrl.cc,
-                        label: ctrl.label
+                        label: ctrl.label,
+                        uid: ctrl.uid,
+                        display: ctrl.display
                     };
                 }
                 if (ctrl.priority >= 8 && ctrl.priority < 10) {
@@ -227,7 +229,9 @@ class Ahab extends VirtualDevice {
                         this._config.linears[linearIdx] = {
                             active: true,
                             cc: ctrl.cc,
-                            label: ctrl.label
+                            label: ctrl.label,
+                            uid: ctrl.uid,
+                            display: ctrl.display
                         };
                     }
                 }

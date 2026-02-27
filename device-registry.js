@@ -525,7 +525,7 @@ class DeviceRegistry {
 
                     // Passive sniffing of exchange traffic
                     if (this._onValueFeedback) {
-                        this._decodeValueFeedback(data);
+                        this._decodeValueFeedback(data, portName);
                     }
                     this._relaySniffer.receive(data);
                 } else if (portName === this._exchangeControllerPort && this._exchangeSynthPort) {
@@ -571,30 +571,31 @@ class DeviceRegistry {
 
     /**
      * Decode 0x7D value feedback SysEx and fire callback
-     * Format: F0 7D 00 10 CC text... 00 F7 (value)
-     *         F0 7D 00 11 CC env seg A D S R text... 00 F7 (ADSR)
+     * Format: F0 7D 00 10 UID text... 00 F7 (value)
+     *         F0 7D 00 11 UID env seg A D S R text... 00 F7 (ADSR)
+     * UID = param_idx (0-based index in patch parameters[])
      * @private
      */
-    _decodeValueFeedback(data) {
-        // Minimum: F0 7D 00 10 CC 00 F7 = 7 bytes
+    _decodeValueFeedback(data, portName) {
+        // Minimum: F0 7D 00 10 UID 00 F7 = 7 bytes
         if (data.length < 7) return;
         if (data[1] !== 0x7D || data[2] !== 0x00) return;
 
         const msgType = data[3];
 
         if (msgType === 0x10) {
-            // Value feedback: [F0][7D][00][10][CC][text...][00][F7]
-            const cc = data[4];
+            // Value feedback: [F0][7D][00][10][UID][text...][00][F7]
+            const uid = data[4];
             // Extract null-terminated text (bytes 5 to second-to-last before F7)
             const textBytes = data.slice(5, data.length - 1); // strip F7
             const nullIdx = textBytes.indexOf(0x00);
             const text = new TextDecoder().decode(textBytes.slice(0, nullIdx >= 0 ? nullIdx : textBytes.length));
-            this._onValueFeedback({ cc, displayText: text });
+            this._onValueFeedback({ uid, displayText: text, portName });
 
         } else if (msgType === 0x11) {
-            // ADSR feedback: [F0][7D][00][11][CC][env][seg][A][D][S][R][text...][00][F7]
+            // ADSR feedback: [F0][7D][00][11][UID][env][seg][A][D][S][R][text...][00][F7]
             if (data.length < 13) return;
-            const cc = data[4];
+            const uid = data[4];
             const env = data[5];   // 0=MOD_ENV, 1=VAMP_ENV
             const segment = data[6]; // 0=A, 1=D, 2=S, 3=R
             const adsr = [data[7], data[8], data[9], data[10]]; // 0-127 each
@@ -602,9 +603,10 @@ class DeviceRegistry {
             const nullIdx = textBytes.indexOf(0x00);
             const text = new TextDecoder().decode(textBytes.slice(0, nullIdx >= 0 ? nullIdx : textBytes.length));
             this._onValueFeedback({
-                cc,
+                uid,
                 displayText: text,
-                adsr: { env, segment, values: adsr }
+                adsr: { env, segment, values: adsr },
+                portName
             });
         }
     }

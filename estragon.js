@@ -99,23 +99,23 @@ class Estragon extends VirtualDevice {
             version: '1.0',
             CARRIER: {
                 name: 'Carrier',
-                CARRIER_RATIO: { name: 'Ratio', priority: 1, initial: cRatio, range: [0.5, 16], cc: 20 },
-                CARRIER_LEVEL: { name: 'Level', priority: 7, initial: 0.7, range: [0, 1], cc: -1 },
-                CARRIER_WAVE:  { name: 'Wave',  priority: -1, initial: cWave, range: [0, 3], cc: -1 }
+                CARRIER_RATIO: { name: 'Ratio', priority: 1, initial: cRatio, range: [0.5, 16], cc: 20, unit: 'none' },
+                CARRIER_LEVEL: { name: 'Level', priority: 7, initial: 0.7, range: [0, 1], cc: -1, unit: 'percent' },
+                CARRIER_WAVE:  { name: 'Wave',  priority: -1, initial: cWave, range: [0, 3], cc: -1, unit: 'wave_osc' }
             },
             MODULATOR: {
                 name: 'Modulator',
-                MOD_RATIO: { name: 'Ratio', priority: 2, initial: mRatio, range: [0.5, 16], cc: 21 },
-                MOD_DEPTH: { name: 'Depth', priority: 0, initial: mDepth, range: [0, 5000], cc: 22 },
-                MOD_WAVE:  { name: 'Wave',  priority: -1, initial: mWave, range: [0, 3], cc: -1 }
+                MOD_RATIO: { name: 'Ratio', priority: 2, initial: mRatio, range: [0.5, 16], cc: 21, unit: 'none' },
+                MOD_DEPTH: { name: 'Depth', priority: 0, initial: mDepth, range: [0, 5000], cc: 22, unit: 'hz' },
+                MOD_WAVE:  { name: 'Wave',  priority: -1, initial: mWave, range: [0, 3], cc: -1, unit: 'wave_osc' }
             },
             AMP_ENV: {
                 name: 'Amp Env',
                 targets: ['CARRIER_LEVEL'],
-                AMP_ENV_ATTACK:  { name: 'Attack',  priority: 3, initial: atk, range: [0.001, 2], cc: 23 },
-                AMP_ENV_DECAY:   { name: 'Decay',   priority: 4, initial: dec, range: [0.001, 2], cc: 24 },
-                AMP_ENV_SUSTAIN: { name: 'Sustain', priority: 5, initial: sus, range: [0, 1],     cc: 25 },
-                AMP_ENV_RELEASE: { name: 'Release', priority: 6, initial: rel, range: [0.001, 3], cc: 26 }
+                AMP_ENV_ATTACK:  { name: 'Attack',  priority: 3, initial: atk, range: [0.001, 2], cc: 23, unit: 'seconds' },
+                AMP_ENV_DECAY:   { name: 'Decay',   priority: 4, initial: dec, range: [0.001, 2], cc: 24, unit: 'seconds' },
+                AMP_ENV_SUSTAIN: { name: 'Sustain', priority: 5, initial: sus, range: [0, 1],     cc: 25, unit: 'percent' },
+                AMP_ENV_RELEASE: { name: 'Release', priority: 6, initial: rel, range: [0.001, 3], cc: 26, unit: 'seconds' }
             },
             VELOCITY: { name: 'Velocity' },
             PRESSURE: { name: 'Pressure' },
@@ -261,6 +261,9 @@ class Estragon extends VirtualDevice {
             const raw = data[1] | (data[2] << 7);
             const bend = (raw - 8192) / 8192; // -1 to +1
             this._applyBend(channel, bend);
+        } else if (status === 0xB0) {
+            // CC — update param value and send value feedback
+            this._applyCC(data[1], data[2] / 127);
         } else if (status === 0xD0) {
             // Channel pressure (aftertouch)
             const pressure = data[1] / 127;
@@ -318,19 +321,25 @@ class Estragon extends VirtualDevice {
         }
 
         // Build controls list from current patch params with cc > 0
+        // Also assign sequential UIDs for value feedback
         const patch = this._patches[this._currentPatchIndex];
         const controls = [];
+        let uid = 0;
         for (const modKey of ['CARRIER', 'MODULATOR', 'AMP_ENV']) {
             const mod = patch[modKey];
             if (!mod) continue;
             for (const [paramKey, param] of Object.entries(mod)) {
-                if (paramKey === 'name') continue;
+                if (paramKey === 'name' || typeof param !== 'object' || param === null) continue;
+                if (param.initial === undefined) continue;
+                const paramUid = uid++;
                 if (param.cc > 0) {
                     controls.push({
                         input: paramKey,
                         label: param.name,
                         cc: param.cc,
-                        priority: param.priority
+                        priority: param.priority,
+                        uid: paramUid,
+                        display: this._formatValue(param.initial, param)
                     });
                 }
             }
@@ -365,6 +374,23 @@ class Estragon extends VirtualDevice {
         const response = JSON.parse(JSON.stringify(patch));
         delete response._disabled;
         response.index = idx;
+
+        // Add uid and display to each param (uid = sequential param_idx across modules)
+        let uid = 0;
+        for (const modKey of Object.keys(response)) {
+            if (modKey === 'name' || modKey === 'index' || modKey === 'version') continue;
+            const mod = response[modKey];
+            if (!mod || typeof mod !== 'object') continue;
+            for (const [paramKey, param] of Object.entries(mod)) {
+                if (paramKey === 'name' || paramKey === 'targets' || typeof param !== 'object' || param === null) continue;
+                if (param.initial !== undefined) {
+                    param.uid = uid;
+                    param.display = this._formatValue(param.initial, param);
+                    uid++;
+                }
+            }
+        }
+
         this._sendResponse(response);
     }
 
@@ -375,23 +401,28 @@ class Estragon extends VirtualDevice {
             return;
         }
 
-        // Find param across modules
+        // Find param across modules, track UID (sequential param_idx)
+        let uid = 0;
         for (const modKey of ['CARRIER', 'MODULATOR', 'AMP_ENV']) {
             const mod = patch[modKey];
-            if (!mod || !mod[json.param]) continue;
-
-            if (json.value !== undefined) {
-                mod[json.param].initial = json.value;
-
-                // Send value feedback SysEx if param has a CC
-                if (mod[json.param].cc > 0) {
-                    this._sendValueFeedback(mod[json.param].cc, `${json.value}`);
+            if (!mod) continue;
+            for (const [paramKey, param] of Object.entries(mod)) {
+                if (paramKey === 'name' || typeof param !== 'object' || param === null) continue;
+                if (param.initial === undefined) continue;
+                if (paramKey === json.param) {
+                    if (json.value !== undefined) {
+                        param.initial = json.value;
+                        // Send UID-addressed value feedback with formatted display
+                        this._sendValueFeedback(uid, this._formatValue(json.value, param));
+                    }
+                    if (json.priority !== undefined) {
+                        param.priority = json.priority;
+                    }
+                    this._sendResponse({ status: 'ok', op: 'update-param' });
+                    return;
                 }
+                uid++;
             }
-            if (json.priority !== undefined) {
-                mod[json.param].priority = json.priority;
-            }
-            break;
         }
 
         this._sendResponse({ status: 'ok', op: 'update-param' });
@@ -502,18 +533,74 @@ class Estragon extends VirtualDevice {
     }
 
     //--------------------------------------------------------------
+    // Value formatting (mirrors Candide's format_value)
+    //--------------------------------------------------------------
+
+    _formatValue(value, param) {
+        const unit = param.unit || 'none';
+        const min = param.range?.[0] ?? 0;
+
+        switch (unit) {
+            case 'hz': {
+                if (value < 1000) return `${Math.round(value)}Hz`;
+                const khz = value / 1000;
+                return khz < 10 ? `${khz.toFixed(1)}kHz` : `${Math.round(khz)}kHz`;
+            }
+            case 'seconds': {
+                if (value >= 1) return `${value.toFixed(1)}s`;
+                // Trim trailing zeros: 0.010s → 0.01s
+                let s = value.toFixed(3) + 's';
+                s = s.replace(/0+s$/, 's').replace(/\.s$/, '.0s');
+                return s;
+            }
+            case 'percent': {
+                const pct = value * 100;
+                if (min < 0) {
+                    return pct >= 0 ? `+${Math.round(pct)}%` : `${Math.round(pct)}%`;
+                }
+                return `${Math.round(pct)}%`;
+            }
+            case 'semitones': {
+                const st = Math.round(value);
+                return st >= 0 ? `+${st}st` : `${st}st`;
+            }
+            case 'cents': {
+                const ct = Math.round(value);
+                return ct >= 0 ? `+${ct}ct` : `${ct}ct`;
+            }
+            case 'db': {
+                return value >= 0 ? `+${value.toFixed(1)}dB` : `${value.toFixed(1)}dB`;
+            }
+            case 'filter_q': {
+                return value < 10 ? `Q${value.toFixed(1)}` : `Q${Math.round(value)}`;
+            }
+            case 'wave_osc': {
+                const names = ['Sine', 'Triangle', 'Saw', 'Square'];
+                return names[Math.round(value)] || `Wave ${Math.round(value)}`;
+            }
+            case 'wave_lfo': {
+                const names = ['Sine', 'Triangle', 'Saw', 'Square'];
+                return names[Math.round(value)] || `LFO ${Math.round(value)}`;
+            }
+            case 'none':
+            default:
+                return Number.isInteger(value) ? `${value}` : value.toFixed(2);
+        }
+    }
+
+    //--------------------------------------------------------------
     // Value feedback (binary SysEx, same format as Candide)
     //--------------------------------------------------------------
 
-    _sendValueFeedback(cc, text) {
-        // F0 7D 00 10 CC text... 00 F7
+    _sendValueFeedback(uid, text) {
+        // F0 7D 00 10 UID text... 00 F7
         const textBytes = new TextEncoder().encode(text);
         const msg = new Uint8Array(5 + textBytes.length + 2);
         msg[0] = 0xF0;
         msg[1] = 0x7D;
         msg[2] = 0x00;
         msg[3] = 0x10;
-        msg[4] = cc & 0x7F;
+        msg[4] = uid & 0xFF;
         msg.set(textBytes, 5);
         msg[5 + textBytes.length] = 0x00;
         msg[5 + textBytes.length + 1] = 0xF7;
@@ -749,6 +836,31 @@ class Estragon extends VirtualDevice {
         if (!voice) return;
         voice.currentPressure = pressure;
         this._updateContinuousMod(channel);
+    }
+
+    _applyCC(cc, normalized) {
+        // Find param with matching CC in current patch, update value, send feedback
+        const patch = this._patches[this._currentPatchIndex];
+        if (!patch) return;
+
+        let uid = 0;
+        for (const modKey of ['CARRIER', 'MODULATOR', 'AMP_ENV']) {
+            const mod = patch[modKey];
+            if (!mod) continue;
+            for (const [paramKey, param] of Object.entries(mod)) {
+                if (paramKey === 'name' || typeof param !== 'object' || param === null) continue;
+                if (param.initial === undefined) continue;
+                if (param.cc === cc) {
+                    // Denormalize: normalized 0-1 → param range
+                    const range = param.range || [0, 1];
+                    const value = range[0] + normalized * (range[1] - range[0]);
+                    param.initial = value;
+                    this._sendValueFeedback(uid, this._formatValue(value, param));
+                    return;
+                }
+                uid++;
+            }
+        }
     }
 }
 

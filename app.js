@@ -403,6 +403,10 @@ function App() {
             delete windowContainersRef.current[ahabWid];
         }
 
+        // Clear value feedback (synth may have been providing it)
+        const ms = midiStateRef.current;
+        if (ms) ms.clearValueFeedback(portName);
+
         // Clear per-synth state
         setSynthState(prev => {
             const next = { ...prev };
@@ -436,6 +440,23 @@ function App() {
         try {
             const patch = await api.getPatch(index);
             updateSynthState(portName, { currentPatch: patch, currentPatchIndex: index });
+
+            // Seed MidiState with uid/display from get-patch response
+            const ms = midiStateRef.current;
+            if (ms && patch) {
+                ms.clearValueFeedback(portName);
+                for (const modKey of Object.keys(patch)) {
+                    if (modKey === 'name' || modKey === 'index' || modKey === 'version') continue;
+                    const mod = patch[modKey];
+                    if (!mod || typeof mod !== 'object') continue;
+                    for (const param of Object.values(mod)) {
+                        if (param && typeof param === 'object' && param.uid !== undefined && param.display) {
+                            ms.handleValueFeedback({ uid: param.uid, displayText: param.display, portName });
+                        }
+                    }
+                }
+            }
+
             return patch;
         } catch (err) {
             addLog(`Failed to load patch: ${err.message}`, 'error');
@@ -586,6 +607,11 @@ function App() {
             }
             return null;
         }
+    };
+
+    const liveParamChange = (portName, cc, normalizedValue) => {
+        const api = deviceApisRef.current[portName];
+        if (api && cc >= 0) api.sendCC(0, cc, normalizedValue);
     };
 
     const updateParam = async (portName, paramKey, options) => {
@@ -923,6 +949,7 @@ function App() {
                         onMovePatch={(from, to) => movePatch(portName, from, to)}
                         onToggleModule={(mod, en) => toggleModule(portName, mod, en)}
                         onUpdateParam={(key, opts) => updateParam(portName, key, opts)}
+                        onLiveChange={(cc, normalized) => liveParamChange(portName, cc, normalized)}
                         onToggleModulation={(t, s, en) => toggleModulation(portName, t, s, en)}
                         onUpdateModAmount={(t, s, a) => updateModulationAmount(portName, t, s, a)}
                         isConnected={device?.status === 'connected'}
