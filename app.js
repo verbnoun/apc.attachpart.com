@@ -384,6 +384,7 @@ function App() {
         if (WindowManager.exists(windowId)) {
             WindowManager.close(windowId);
             delete windowContainersRef.current[windowId];
+            delete portalColumnsRef.current[windowId];
         }
 
         // Close all config section windows for this device
@@ -445,67 +446,116 @@ function App() {
     const selectPatch = async (portName, index) => {
         const api = deviceApisRef.current[portName];
         if (!api) return;
+        const wid = `device-${portName}`;
 
         try {
+            if (WindowManager.exists(wid)) WindowManager.setInfoBar(wid, { left: `Loading patch ${index}…` });
             await api.selectPatch(index);
             await loadPatch(portName, index);
+            if (WindowManager.exists(wid)) {
+                WindowManager.setInfoBar(wid, { left: '' });
+            }
         } catch (err) {
             addLog(`Failed to select patch: ${err.message}`, 'error');
+            if (WindowManager.exists(wid)) {
+                WindowManager.setInfoBar(wid, { left: err.message });
+                clearInfoBarDelayed(wid, 3000);
+            }
         }
     };
 
     const createPatch = async (portName) => {
         const api = deviceApisRef.current[portName];
         if (!api) return;
+        const wid = `device-${portName}`;
 
         const ss = synthStateRef.current[portName] || {};
         try {
+            if (WindowManager.exists(wid)) WindowManager.setInfoBar(wid, { left: 'Creating patch…', right: 'Saving…' });
             const name = `New Patch ${(ss.patchList || []).length + 1}`;
             await api.createPatch(name);
             const patches = await api.listPatches();
             updateSynthState(portName, { patchList: patches.patches || [] });
             await selectPatch(portName, patches.patches.length - 1);
+            if (WindowManager.exists(wid)) {
+                WindowManager.setInfoBar(wid, { left: '', right: 'Saved' });
+                clearInfoBarDelayed(wid, 2000);
+            }
         } catch (err) {
             addLog(`Failed to create patch: ${err.message}`, 'error');
+            if (WindowManager.exists(wid)) {
+                WindowManager.setInfoBar(wid, { left: err.message, right: 'Error' });
+                clearInfoBarFull(wid, 3000);
+            }
         }
     };
 
     const deletePatch = async (portName, index) => {
         const api = deviceApisRef.current[portName];
         if (!api) return;
+        const wid = `device-${portName}`;
 
         try {
+            if (WindowManager.exists(wid)) WindowManager.setInfoBar(wid, { left: `Deleting patch ${index}…`, right: 'Saving…' });
             await api.deletePatch(index);
             const patches = await api.listPatches();
             updateSynthState(portName, { patchList: patches.patches || [], currentPatchIndex: -1, currentPatch: null });
+            if (WindowManager.exists(wid)) {
+                WindowManager.setInfoBar(wid, { left: '', right: 'Saved' });
+                clearInfoBarDelayed(wid, 2000);
+            }
         } catch (err) {
             addLog(`Failed to delete patch: ${err.message}`, 'error');
+            if (WindowManager.exists(wid)) {
+                WindowManager.setInfoBar(wid, { left: err.message, right: 'Error' });
+                clearInfoBarFull(wid, 3000);
+            }
         }
     };
 
     const renamePatch = async (portName, index, newName) => {
         const api = deviceApisRef.current[portName];
         if (!api) return;
+        const wid = `device-${portName}`;
 
         try {
+            if (WindowManager.exists(wid)) WindowManager.setInfoBar(wid, { left: `Renaming…`, right: 'Saving…' });
             await api.renamePatch(index, newName);
             const patches = await api.listPatches();
             updateSynthState(portName, { patchList: patches.patches || [] });
+            if (WindowManager.exists(wid)) {
+                WindowManager.setInfoBar(wid, { left: '', right: 'Saved' });
+                clearInfoBarDelayed(wid, 2000);
+            }
         } catch (err) {
             addLog(`Failed to rename patch: ${err.message}`, 'error');
+            if (WindowManager.exists(wid)) {
+                WindowManager.setInfoBar(wid, { left: err.message, right: 'Error' });
+                clearInfoBarFull(wid, 3000);
+            }
         }
     };
 
     const movePatch = async (portName, from, to) => {
         const api = deviceApisRef.current[portName];
         if (!api) return;
+        const wid = `device-${portName}`;
 
         try {
+            if (WindowManager.exists(wid)) WindowManager.setInfoBar(wid, { left: 'Moving…', right: 'Saving…' });
             await api.movePatch(from, to);
             const patches = await api.listPatches();
             updateSynthState(portName, { patchList: patches.patches || [], currentPatchIndex: to });
+            if (WindowManager.exists(wid)) {
+                WindowManager.setInfoBar(wid, { left: '', right: 'Saved' });
+                clearInfoBarDelayed(wid, 2000);
+            }
         } catch (err) {
             addLog(`Failed to move patch: ${err.message}`, 'error');
+            if (WindowManager.exists(wid)) {
+                WindowManager.setInfoBar(wid, { left: err.message, right: 'Error' });
+                clearInfoBarFull(wid, 3000);
+            }
         }
     };
 
@@ -517,13 +567,23 @@ function App() {
         const api = deviceApisRef.current[portName];
         const ss = synthStateRef.current[portName] || {};
         if (!api || (ss.currentPatchIndex ?? -1) < 0) return null;
+        const wid = `device-${portName}`;
 
         try {
+            if (WindowManager.exists(wid)) WindowManager.setInfoBar(wid, { left: `${enabled ? 'Adding' : 'Removing'} ${moduleName}…` });
             const result = await api.toggleModule(ss.currentPatchIndex, moduleName, enabled);
             await loadPatch(portName, ss.currentPatchIndex);
+            if (WindowManager.exists(wid)) {
+                WindowManager.setInfoBar(wid, { left: '', right: 'Saved' });
+                clearInfoBarDelayed(wid, 2000);
+            }
             return result;
         } catch (err) {
             addLog(`Failed to toggle module: ${err.message}`, 'error');
+            if (WindowManager.exists(wid)) {
+                WindowManager.setInfoBar(wid, { left: err.message });
+                clearInfoBarDelayed(wid, 3000);
+            }
             return null;
         }
     };
@@ -532,12 +592,22 @@ function App() {
         const api = deviceApisRef.current[portName];
         const ss = synthStateRef.current[portName] || {};
         if (!api || (ss.currentPatchIndex ?? -1) < 0) return;
+        const wid = `device-${portName}`;
 
         try {
+            if (WindowManager.exists(wid)) WindowManager.setInfoBar(wid, { left: `${paramKey}…` });
             await api.updateParam(ss.currentPatchIndex, paramKey, options);
             await loadPatch(portName, ss.currentPatchIndex);
+            if (WindowManager.exists(wid)) {
+                WindowManager.setInfoBar(wid, { left: '', right: 'Saved' });
+                clearInfoBarDelayed(wid, 2000);
+            }
         } catch (err) {
             addLog(`Failed to update param: ${err.message}`, 'error');
+            if (WindowManager.exists(wid)) {
+                WindowManager.setInfoBar(wid, { left: err.message });
+                clearInfoBarDelayed(wid, 3000);
+            }
         }
     };
 
@@ -545,13 +615,23 @@ function App() {
         const api = deviceApisRef.current[portName];
         const ss = synthStateRef.current[portName] || {};
         if (!api || (ss.currentPatchIndex ?? -1) < 0) return null;
+        const wid = `device-${portName}`;
 
         try {
+            if (WindowManager.exists(wid)) WindowManager.setInfoBar(wid, { left: `${enabled ? 'Adding' : 'Removing'} ${sourceModule} → ${targetParam}…` });
             const result = await api.toggleModulation(ss.currentPatchIndex, targetParam, sourceModule, enabled);
             await loadPatch(portName, ss.currentPatchIndex);
+            if (WindowManager.exists(wid)) {
+                WindowManager.setInfoBar(wid, { left: '', right: 'Saved' });
+                clearInfoBarDelayed(wid, 2000);
+            }
             return result;
         } catch (err) {
             addLog(`Failed to toggle modulation: ${err.message}`, 'error');
+            if (WindowManager.exists(wid)) {
+                WindowManager.setInfoBar(wid, { left: err.message });
+                clearInfoBarDelayed(wid, 3000);
+            }
             return null;
         }
     };
@@ -560,13 +640,23 @@ function App() {
         const api = deviceApisRef.current[portName];
         const ss = synthStateRef.current[portName] || {};
         if (!api || (ss.currentPatchIndex ?? -1) < 0) return;
+        const wid = `device-${portName}`;
 
         const amountParam = `${targetParam}_${sourceModule}_AMOUNT`;
         try {
+            if (WindowManager.exists(wid)) WindowManager.setInfoBar(wid, { left: `${amountParam}…` });
             await api.updateModulationAmount(ss.currentPatchIndex, amountParam, amount);
             await loadPatch(portName, ss.currentPatchIndex);
+            if (WindowManager.exists(wid)) {
+                WindowManager.setInfoBar(wid, { left: '', right: 'Saved' });
+                clearInfoBarDelayed(wid, 2000);
+            }
         } catch (err) {
             addLog(`Failed to update mod amount: ${err.message}`, 'error');
+            if (WindowManager.exists(wid)) {
+                WindowManager.setInfoBar(wid, { left: err.message });
+                clearInfoBarDelayed(wid, 3000);
+            }
         }
     };
 
@@ -803,6 +893,7 @@ function App() {
     //------------------------------------------------------------------
 
     const windowContainersRef = useRef({});
+    const portalColumnsRef = useRef({}); // { windowId: { modules: el, workspace: el } }
 
     // Re-render device app windows (synth/Candide) when relevant state changes
     useEffect(() => {
@@ -815,13 +906,15 @@ function App() {
                 const pairedController = Object.entries(configPairs).find(([_, synth]) => synth === portName)?.[0];
                 const cConfig = pairedController ? configByDevice[pairedController] : null;
 
+                const portals = portalColumnsRef.current[windowId] || {};
                 ReactDOM.render(
-                    <DeviceAppWindow
-                        portName={portName}
-                        device={device}
+                    <PatchEditorWindow
+                        deviceKey={portName}
+                        modulesCol={portals.modules}
+                        workspaceCol={portals.workspace}
                         topology={ss.topology}
                         patchList={ss.patchList || []}
-                        currentPatchIndex={ss.currentPatchIndex ?? -1}
+                        currentIndex={ss.currentPatchIndex ?? -1}
                         currentPatch={ss.currentPatch}
                         onSelectPatch={(idx) => selectPatch(portName, idx)}
                         onCreatePatch={() => createPatch(portName)}
@@ -832,6 +925,7 @@ function App() {
                         onUpdateParam={(key, opts) => updateParam(portName, key, opts)}
                         onToggleModulation={(t, s, en) => toggleModulation(portName, t, s, en)}
                         onUpdateModAmount={(t, s, a) => updateModulationAmount(portName, t, s, a)}
+                        isConnected={device?.status === 'connected'}
                         addLog={addLog}
                         midiState={midiStateRef.current}
                         controllerConfig={cConfig}
@@ -1065,40 +1159,65 @@ function App() {
         const deviceName = device.deviceInfo?.name || portName;
         const hasPatch = capabilities.includes(CAPABILITIES.PATCHES);
 
-        const container = document.createElement('div');
-        windowContainersRef.current[windowId] = container;
-
         const saved = WorkspacePersistence.getWindowState(windowId);
         const ss = synthState[portName] || {};
         const pairedController = Object.entries(configPairs).find(([_, synth]) => synth === portName)?.[0];
         const cConfig = pairedController ? configByDevice[pairedController] : null;
 
-        WindowManager.create({
+        // 3 proper WindowManager columns: patches (scroll:v), modules (scroll:v), workspace (fixed)
+        const result = WindowManager.create({
             id: windowId,
             title: deviceName,
             x: saved?.x ?? 100,
             y: saved?.y ?? 30,
             width: saved?.width ?? (hasPatch ? 1280 : 500),
             height: saved?.height ?? (hasPatch ? 800 : 450),
-            content: container,
+            minWidth: 950,
+            minHeight: 400,
             theme: 'synth',
             padding: false,
             resizable: true,
-            columns: [{ flex: 1, fixed: true }],
+            columns: [
+                { id: 'patches', width: 162, scroll: 'v' },
+                { id: 'modules', width: 122, scroll: 'v' },
+                { id: 'workspace', flex: 1, fixed: true }
+            ],
+            infoBar: {
+                left: '',
+                right: 'Saved'
+            },
+            onInfoBarClick: (slot) => {
+                if (slot === 'right' && devicesRef.current[portName]?.saveStatus === 'unsaved') {
+                    saveDevice(portName, windowId);
+                }
+            },
             onClose: () => {
+                if (infoBarTimersRef.current[windowId]) {
+                    clearTimeout(infoBarTimersRef.current[windowId]);
+                    delete infoBarTimersRef.current[windowId];
+                }
                 delete windowContainersRef.current[windowId];
+                delete portalColumnsRef.current[windowId];
             }
         });
+
+        // React renders into patches column; portals send content to modules & workspace columns
+        windowContainersRef.current[windowId] = result.columns['patches'];
+        portalColumnsRef.current[windowId] = {
+            modules: result.columns['modules'],
+            workspace: result.columns['workspace']
+        };
 
         WorkspacePersistence.setWasOpen(windowId, true);
 
         ReactDOM.render(
-            <DeviceAppWindow
-                portName={portName}
-                device={device}
+            <PatchEditorWindow
+                deviceKey={portName}
+                modulesCol={result.columns['modules']}
+                workspaceCol={result.columns['workspace']}
                 topology={ss.topology}
                 patchList={ss.patchList || []}
-                currentPatchIndex={ss.currentPatchIndex ?? -1}
+                currentIndex={ss.currentPatchIndex ?? -1}
                 currentPatch={ss.currentPatch}
                 onSelectPatch={(idx) => selectPatch(portName, idx)}
                 onCreatePatch={() => createPatch(portName)}
@@ -1109,11 +1228,12 @@ function App() {
                 onUpdateParam={(key, opts) => updateParam(portName, key, opts)}
                 onToggleModulation={(t, s, en) => toggleModulation(portName, t, s, en)}
                 onUpdateModAmount={(t, s, a) => updateModulationAmount(portName, t, s, a)}
+                isConnected={device?.status === 'connected'}
                 addLog={addLog}
                 midiState={midiStateRef.current}
                 controllerConfig={cConfig}
             />,
-            container
+            result.columns['patches']
         );
 
         // Load initial patch if needed
@@ -1186,10 +1306,10 @@ function App() {
             x: saved?.x ?? 150,
             y: saved?.y ?? 80,
             width: saved?.width ?? 320,
-            height: saved?.height ?? 420,
+            height: saved?.height ?? 570,
             content: container,
             theme: 'tool',
-            columns: [{ flex: 1, fixed: true }],
+            columns: [{ flex: 1, scroll: 'v' }],
             onClose: () => {
                 delete windowContainersRef.current['expression-pad'];
             }
@@ -1197,13 +1317,10 @@ function App() {
 
         WorkspacePersistence.setWasOpen('expression-pad', true);
 
-        const defaultSynthPort = Object.entries(devices)
-            .find(([_, d]) => d.status === 'connected' && d.capabilities?.includes('SYNTH'))?.[0] || null;
         ReactDOM.render(
             <ExpressionPadWindow
                 devices={devices}
                 deviceApisRef={deviceApisRef}
-                synthPortName={defaultSynthPort}
                 deviceRegistry={deviceRegistryRef.current}
                 midiState={midiStateRef.current}
                 addLog={addLog}
@@ -1758,7 +1875,7 @@ const NOTE_COLORS = [
     '#aa44ff',
 ];
 
-function ExpressionPadWindow({ devices, deviceApisRef, synthPortName, deviceRegistry, midiState, addLog }) {
+function ExpressionPadWindow({ devices, deviceApisRef, deviceRegistry, midiState, addLog }) {
     const canvasRef = useRef(null);
     const [velocity, setVelocity] = useState(0.8);
     const [activeNotes, setActiveNotes] = useState(new Map());
@@ -1771,7 +1888,6 @@ function ExpressionPadWindow({ devices, deviceApisRef, synthPortName, deviceRegi
     const mpeAllocatorRef = useRef(new MpeChannelAllocator());
     const currentChannelRef = useRef(0);
     const mouseNoteRef = useRef(null);
-    const mpeSentRef = useRef(false);
 
     const lastSendTimeRef = useRef(0);
     const lastBendRef = useRef(0);
@@ -1779,22 +1895,18 @@ function ExpressionPadWindow({ devices, deviceApisRef, synthPortName, deviceRegi
     const THROTTLE_INTERVAL_MS = 50;
     const CHANGE_THRESHOLD = 0.02;
 
-    // Output target selection (which device receives pad output)
-    const [selectedOutput, setSelectedOutput] = useState(null);
-
     // MIDI monitor — recent incoming events from all devices
     const [midiMonitor, setMidiMonitor] = useState([]);
     const monitorScrollRef = useRef(null);
 
-    // Resolve output API — prefer selected, fallback to synth
-    const outputPort = selectedOutput || synthPortName;
-    const outputApi = outputPort ? deviceApisRef.current[outputPort] : null;
-    const isConnected = outputApi && devices[outputPort]?.status === 'connected';
-
-    // Build list of connected devices for output selector
-    const connectedDevices = Object.entries(devices)
-        .filter(([_, d]) => d.status === 'connected')
-        .map(([portName, d]) => ({ portName, name: d.deviceInfo?.name || portName }));
+    // Broadcast to all connected devices
+    const getOutputApis = useCallback(() => {
+        return Object.entries(devices)
+            .filter(([_, d]) => d.status === 'connected')
+            .map(([portName]) => deviceApisRef.current[portName])
+            .filter(api => api?.isConnected());
+    }, [devices]);
+    const isConnected = Object.values(devices).some(d => d.status === 'connected');
 
     const PAD_SIZE = 200;
     const CENTER = PAD_SIZE / 2;
@@ -1882,18 +1994,15 @@ function ExpressionPadWindow({ devices, deviceApisRef, synthPortName, deviceRegi
         drawPad(Array.from(activeNotes.values()));
     }, [activeNotes, drawPad]);
 
-    // Send MPE config when output connects
+    // Send MPE config to all connected devices
     useEffect(() => {
-        if (isConnected && outputApi?.isConnected() && mpeEnabled && !mpeSentRef.current) {
-            const msg = new Uint8Array([0xB0, 0x7F, 15]);
-            outputApi.sendRaw(msg);
-            addLog('TX: MPE Config [B0 7F 0F] - 15 member channels');
-            mpeSentRef.current = true;
-        }
-        if (!isConnected) {
-            mpeSentRef.current = false;
-        }
-    }, [isConnected, outputApi, mpeEnabled, addLog]);
+        if (!mpeEnabled || !isConnected) return;
+        const apis = getOutputApis();
+        if (apis.length === 0) return;
+        const msg = new Uint8Array([0xB0, 0x7F, 15]);
+        apis.forEach(api => api.sendRaw(msg));
+        addLog('TX: MPE Config [B0 7F 0F] - 15 member channels');
+    }, [isConnected, getOutputApis, mpeEnabled, addLog]);
 
     // Subscribe to all-input MIDI events for the monitor
     useEffect(() => {
@@ -1976,7 +2085,9 @@ function ExpressionPadWindow({ devices, deviceApisRef, synthPortName, deviceRegi
     }, [midiMonitor]);
 
     const handleMouseDown = useCallback((e) => {
-        if (!isConnected || !outputApi) return;
+        if (!isConnected) return;
+        const apis = getOutputApis();
+        if (apis.length === 0) return;
 
         const rect = canvasRef.current.getBoundingClientRect();
         const x = e.clientX - rect.left;
@@ -2002,17 +2113,19 @@ function ExpressionPadWindow({ devices, deviceApisRef, synthPortName, deviceRegi
         lastBendRef.current = bend;
         lastPressureRef.current = pressure;
 
-        outputApi.sendPitchBend(channel, bend);
-        outputApi.sendChannelPressure(channel, pressure);
-        outputApi.sendNoteOn(channel, note, velocity);
+        apis.forEach(api => {
+            api.sendPitchBend(channel, bend);
+            api.sendChannelPressure(channel, pressure);
+            api.sendNoteOn(channel, note, velocity);
+        });
 
         const vel7 = Math.round(velocity * 127);
         const mpeInfo = mpeEnabled ? ` [MPE ch${channel}]` : '';
         addLog(`TX: Note On note=${note} vel=${vel7}${mpeInfo}`);
-    }, [isConnected, outputApi, velocity, positionToValues, getNextNote, mpeEnabled, addLog]);
+    }, [isConnected, getOutputApis, velocity, positionToValues, getNextNote, mpeEnabled, addLog]);
 
     const handleMouseMove = useCallback((e) => {
-        if (!playingRef.current || !outputApi) return;
+        if (!playingRef.current) return;
 
         const rect = canvasRef.current.getBoundingClientRect();
         const x = e.clientX - rect.left;
@@ -2038,21 +2151,24 @@ function ExpressionPadWindow({ devices, deviceApisRef, synthPortName, deviceRegi
                           (bendDelta >= CHANGE_THRESHOLD || pressureDelta >= CHANGE_THRESHOLD);
 
         if (shouldSend) {
-            outputApi.sendPitchBend(channel, bend);
-            outputApi.sendChannelPressure(channel, pressure);
+            const apis = getOutputApis();
+            apis.forEach(api => {
+                api.sendPitchBend(channel, bend);
+                api.sendChannelPressure(channel, pressure);
+            });
             lastSendTimeRef.current = now;
             lastBendRef.current = bend;
             lastPressureRef.current = pressure;
         }
-    }, [outputApi, positionToValues]);
+    }, [getOutputApis, positionToValues]);
 
     const handleMouseUp = useCallback(() => {
-        if (!playingRef.current || !outputApi) return;
+        if (!playingRef.current) return;
 
         const channel = currentChannelRef.current;
         const note = mouseNoteRef.current;
 
-        outputApi.sendNoteOff(channel, note, 0);
+        getOutputApis().forEach(api => api.sendNoteOff(channel, note, 0));
 
         if (mpeEnabled) {
             mpeAllocatorRef.current.release(note);
@@ -2071,7 +2187,7 @@ function ExpressionPadWindow({ devices, deviceApisRef, synthPortName, deviceRegi
 
         playingRef.current = false;
         mouseNoteRef.current = null;
-    }, [outputApi, mpeEnabled, addLog]);
+    }, [getOutputApis, mpeEnabled, addLog]);
 
     useEffect(() => {
         const handleGlobalMouseUp = () => {
@@ -2092,25 +2208,6 @@ function ExpressionPadWindow({ devices, deviceApisRef, synthPortName, deviceRegi
 
     return (
         <div className="ap-expression-pad">
-            {/* Output target selector */}
-            {connectedDevices.length > 1 && (
-                <div className="ap-pad-output-select">
-                    <span className="ap-pad-output-label">Output:</span>
-                    {connectedDevices.map(d => (
-                        <button
-                            key={d.portName}
-                            className={`ap-pad-output-btn ${(outputPort === d.portName) ? 'active' : ''}`}
-                            onClick={() => {
-                                setSelectedOutput(d.portName);
-                                mpeSentRef.current = false;
-                            }}
-                        >
-                            {d.name}
-                        </button>
-                    ))}
-                </div>
-            )}
-
             <div className="ap-pad-controls">
                 <div className="ap-velocity-control">
                     <span>Velocity</span>
@@ -2134,10 +2231,11 @@ function ExpressionPadWindow({ devices, deviceApisRef, synthPortName, deviceRegi
                             const enabled = e.target.checked;
                             setMpeEnabled(enabled);
                             mpeAllocatorRef.current.reset();
-                            if (outputApi?.isConnected()) {
+                            const apis = getOutputApis();
+                            if (apis.length > 0) {
                                 const value = enabled ? 15 : 0;
                                 const msg = new Uint8Array([0xB0, 0x7F, value]);
-                                outputApi.sendRaw(msg);
+                                apis.forEach(api => api.sendRaw(msg));
                                 addLog(`TX: MPE Config - ${enabled ? 'enabled' : 'disabled'}`);
                             }
                         }}

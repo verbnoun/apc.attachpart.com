@@ -1007,10 +1007,7 @@ html, body {
     background: var(--ap-bg-primary);
 }
 
-/* Override negative margins when patch editor is embedded as tab */
-.ap-device-app-content .ap-patch-editor {
-    margin: 0;
-}
+/* Patch editor now renders directly into WindowManager columns (no .ap-patch-editor wrapper) */
 
 .ap-device-app-content .ap-firmware-window {
     padding: var(--ap-spacing-md);
@@ -1456,35 +1453,25 @@ html, body {
    PATCH EDITOR WINDOW
    ============================================================ */
 
-.ap-patch-editor {
-    display: flex;
-    height: 100%;
-    gap: 2px;
-    background: var(--ap-bg-tertiary);
-    margin: calc(-1 * var(--ap-spacing-md));
-}
+/* Patch Editor — content renders into 3 WindowManager columns via portals.
+   Patches col: scroll:'v', Modules col: scroll:'v', Workspace col: fixed.
+   No .ap-patch-editor flex container needed — WindowManager handles column layout. */
 
-/* Patches List */
-.ap-patches-list {
-    width: 140px;
-    background: var(--ap-bg-primary);
-    display: flex;
-    flex-direction: column;
-    flex-shrink: 0;
-}
-
+/* Patches & Modules column headers — sticky at top of scrolling column */
 .ap-patches-header,
 .ap-drawer-header {
+    position: sticky;
+    top: 0;
+    z-index: 1;
     padding: var(--ap-spacing-sm);
-    background: var(--ap-bg-tertiary);
+    background: var(--ap-bg-primary);
     font-size: var(--ap-font-size-xs);
-    color: var(--ap-accent-green);
+    color: var(--ap-text-primary);
     text-align: center;
-}
-
-.ap-patches-scroll {
-    flex: 1;
-    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--ap-spacing-xs);
 }
 
 .ap-patch-item {
@@ -1557,22 +1544,13 @@ html, body {
 }
 
 .ap-patches-new {
-    margin: var(--ap-spacing-sm);
+    margin: var(--ap-spacing-xs) var(--ap-spacing-sm);
     font-size: var(--ap-font-size-xs);
+    width: calc(100% - 2 * var(--ap-spacing-sm));
 }
 
-/* Module Drawer */
-.ap-module-drawer {
-    width: 100px;
-    background: var(--ap-bg-primary);
-    display: flex;
-    flex-direction: column;
-    flex-shrink: 0;
-}
-
-.ap-drawer-scroll {
-    flex: 1;
-    overflow-y: auto;
+/* Module Drawer — content area (column handles scrolling) */
+.ap-drawer-content {
     padding: var(--ap-spacing-xs);
 }
 
@@ -1607,14 +1585,12 @@ html, body {
     cursor: grabbing;
 }
 
-.ap-drawer-footer {
-    padding: var(--ap-spacing-xs);
-    border-top: 2px solid var(--ap-bg-tertiary);
-}
+/* .ap-drawer-footer removed — View JSON button moved to header */
 
-/* Node Workspace */
+/* Node Workspace — fills workspace column, handles its own scroll */
 .ap-node-workspace {
-    flex: 1;
+    width: 100%;
+    height: 100%;
     background: var(--ap-bg-primary);
     position: relative;
     overflow: scroll;
@@ -2814,12 +2790,11 @@ html, body {
    LOADING OVERLAY
    ============================================================ */
 
-/* Container for workspace + loading overlay */
+/* Container for workspace + loading overlay — fills workspace column */
 .ap-workspace-container {
     position: relative;
-    flex: 1;
-    display: flex;
-    min-width: 0;
+    width: 100%;
+    height: 100%;
 }
 
 /* Loading overlay - positioned over workspace */

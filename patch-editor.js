@@ -259,6 +259,9 @@ function LoadingOverlay({ isLoading, isVisible }) {
 //======================================================================
 
 function PatchEditorWindow({
+    deviceKey,
+    modulesCol,      // DOM element for modules column portal
+    workspaceCol,    // DOM element for workspace column portal
     topology,
     patchList,
     currentIndex,
@@ -294,8 +297,15 @@ function PatchEditorWindow({
         return !controlIds.has(moduleId); // Audio + mod are fixed
     }, [hasFixedModules, controlIds]);
 
-    // Node positions (stored locally, could be persisted later)
-    const [nodePositions, setNodePositions] = useState({});
+    // Node positions — persisted per device + patch in localStorage
+    const [nodePositions, setNodePositions] = useState(() => {
+        if (deviceKey && currentIndex >= 0) {
+            return WorkspacePersistence.loadNodePositions(deviceKey, currentIndex) || {};
+        }
+        return {};
+    });
+    const nodePositionsRef = useRef(nodePositions);
+    nodePositionsRef.current = nodePositions;
 
     // Selection state - persistent selection for modules and wires
     const [selection, setSelection] = useState({
@@ -347,6 +357,16 @@ function PatchEditorWindow({
         setOptimisticWireDeletes(new Set());
         setOptimisticWireAdds(new Set());
     }, [currentPatch]);
+
+    // Reload persisted node positions when switching patches
+    useEffect(() => {
+        if (deviceKey && currentIndex >= 0) {
+            const saved = WorkspacePersistence.loadNodePositions(deviceKey, currentIndex);
+            setNodePositions(saved || {});
+        } else {
+            setNodePositions({});
+        }
+    }, [deviceKey, currentIndex]);
 
     // Handle patch selection with loading state
     const handleSelectPatch = useCallback((index) => {
@@ -763,9 +783,58 @@ function PatchEditorWindow({
         return () => document.removeEventListener('keydown', handleKeyDown);
     }, [selection, confirmDialog, wiringFrom, isFixedModule, modConnections]);
 
+    // Render: Patches list into this column (the React root), portals for modules & workspace
+    const workspaceContent = (
+        <div className="ap-workspace-container" onMouseUp={handleCancelWiring}>
+            <NodeWorkspace
+                topology={topology}
+                moduleDefinitions={moduleDefinitions}
+                currentPatch={currentPatch}
+                enabledModules={enabledModules}
+                hasFixedModules={hasFixedModules}
+                nodePositions={nodePositions}
+                onNodePositionChange={(id, pos) => setNodePositions(prev => ({ ...prev, [id]: pos }))}
+                onDragEnd={() => {
+                    if (deviceKey && currentIndex >= 0) {
+                        WorkspacePersistence.saveNodePositions(deviceKey, currentIndex, nodePositionsRef.current);
+                    }
+                }}
+                onSelectModule={handleSelectModule}
+                onSelectWire={handleSelectWire}
+                onClearSelection={clearSelection}
+                selection={selection}
+                deletingModules={deletingModules}
+                pendingModule={pendingModule}
+                setPendingModule={setPendingModule}
+                onAddModule={handleAddModule}
+                onToggleModule={onToggleModule}
+                onRemoveModule={handleRemoveModule}
+                wiringFrom={wiringFrom}
+                onStartWiring={handleStartWiring}
+                onWireDrop={handleWireDrop}
+                onWiringMouseMove={setWiringMousePos}
+                wiringMousePos={wiringMousePos}
+                modConnections={modConnections}
+                onUpdateParam={onUpdateParam}
+                onUpdateModAmount={onUpdateModAmount}
+                log={log}
+                midiState={midiState}
+                controllerConfig={controllerConfig}
+            />
+            <LoadingOverlay isLoading={isLoading} isVisible={isLoading} />
+            {confirmDialog && (
+                <ConfirmDialog
+                    dialog={confirmDialog}
+                    onConfirm={handleConfirmDelete}
+                    onCancel={handleCancelDelete}
+                />
+            )}
+        </div>
+    );
+
     return (
-        <div className="ap-patch-editor" onMouseUp={handleCancelWiring}>
-            {/* Patches List */}
+        <>
+            {/* Patches — renders directly into patches column (the React root) */}
             <PatchesList
                 patches={patchList}
                 currentIndex={currentIndex}
@@ -779,60 +848,22 @@ function PatchEditorWindow({
                 loadingIndex={loadingIndex}
             />
 
-            {/* Module Drawer */}
-            <ModuleDrawer
-                moduleDefinitions={moduleDefinitions}
-                enabledModules={enabledModules}
-                onAddModule={handleAddModule}
-                currentPatch={currentPatch}
-                pendingModuleId={pendingModule?.moduleId}
-                hasFixedModules={hasFixedModules}
-            />
-
-            {/* Node Workspace with Loading Overlay */}
-            <div className="ap-workspace-container">
-                <NodeWorkspace
-                    topology={topology}
+            {/* Modules — portal into modules column */}
+            {modulesCol && ReactDOM.createPortal(
+                <ModuleDrawer
                     moduleDefinitions={moduleDefinitions}
-                    currentPatch={currentPatch}
                     enabledModules={enabledModules}
-                    hasFixedModules={hasFixedModules}
-                    nodePositions={nodePositions}
-                    onNodePositionChange={(id, pos) => setNodePositions(prev => ({ ...prev, [id]: pos }))}
-                    onSelectModule={handleSelectModule}
-                    onSelectWire={handleSelectWire}
-                    onClearSelection={clearSelection}
-                    selection={selection}
-                    deletingModules={deletingModules}
-                    pendingModule={pendingModule}
-                    setPendingModule={setPendingModule}
                     onAddModule={handleAddModule}
-                    onToggleModule={onToggleModule}
-                    onRemoveModule={handleRemoveModule}
-                    wiringFrom={wiringFrom}
-                    onStartWiring={handleStartWiring}
-                    onWireDrop={handleWireDrop}
-                    onWiringMouseMove={setWiringMousePos}
-                    wiringMousePos={wiringMousePos}
-                    modConnections={modConnections}
-                    onUpdateParam={onUpdateParam}
-                    onUpdateModAmount={onUpdateModAmount}
-                    log={log}
-                    midiState={midiState}
-                    controllerConfig={controllerConfig}
-                />
-                <LoadingOverlay isLoading={isLoading} isVisible={isLoading} />
-            </div>
-
-            {/* Confirmation Dialog */}
-            {confirmDialog && (
-                <ConfirmDialog
-                    dialog={confirmDialog}
-                    onConfirm={handleConfirmDelete}
-                    onCancel={handleCancelDelete}
-                />
+                    currentPatch={currentPatch}
+                    pendingModuleId={pendingModule?.moduleId}
+                    hasFixedModules={hasFixedModules}
+                />,
+                modulesCol
             )}
-        </div>
+
+            {/* Workspace — portal into workspace column */}
+            {workspaceCol && ReactDOM.createPortal(workspaceContent, workspaceCol)}
+        </>
     );
 }
 
@@ -886,78 +917,75 @@ function PatchesList({ patches, currentIndex, onSelect, onCreate, onDelete, onRe
         }
     };
 
+    // Renders directly into patches WindowManager column (sticky header + items)
     return (
-        <div className="ap-patches-list">
+        <>
             <div className="ap-patches-header">
-                <span>PATCHES</span>
+                <span>Patches</span>
+                <button className="ap-btn ap-btn-primary ap-patches-new" onClick={onCreate}>+ NEW</button>
             </div>
-            <div className="ap-patches-scroll">
-                {!isConnected && (
-                    <div className="ap-patches-empty">
-                        <p>Not connected</p>
-                    </div>
-                )}
-                {isConnected && (!patches || patches.length === 0) && (
-                    <div className="ap-patches-empty">
-                        <p>Loading...</p>
-                    </div>
-                )}
-                {patches && patches.map((patch, idx) => {
-                    // Handle both object format { index, name } and string format
-                    const patchIndex = typeof patch === 'object' ? patch.index : idx;
-                    const patchName = typeof patch === 'object' ? patch.name : patch;
+            {!isConnected && (
+                <div className="ap-patches-empty">
+                    <p>Not connected</p>
+                </div>
+            )}
+            {isConnected && (!patches || patches.length === 0) && (
+                <div className="ap-patches-empty">
+                    <p>Loading...</p>
+                </div>
+            )}
+            {patches && patches.map((patch, idx) => {
+                // Handle both object format { index, name } and string format
+                const patchIndex = typeof patch === 'object' ? patch.index : idx;
+                const patchName = typeof patch === 'object' ? patch.name : patch;
 
-                    const isHighlighted = patchIndex === highlightIndex;
-                    const isDragging = patchIndex === dragIndex;
+                const isHighlighted = patchIndex === highlightIndex;
+                const isDragging = patchIndex === dragIndex;
 
-                    return (
-                        <div
-                            key={patchIndex}
-                            className={`ap-patch-item ${isHighlighted ? 'selected' : ''} ${isDragging ? 'dragging' : ''} ${isLoading ? 'loading-disabled' : ''}`}
-                            draggable={!isLoading}
-                            onDragStart={() => !isLoading && handleDragStart(patchIndex)}
-                            onDragOver={(e) => !isLoading && handleDragOver(patchIndex, e)}
-                            onDrop={() => !isLoading && handleDrop(patchIndex)}
-                            onClick={() => !isLoading && onSelect && onSelect(patchIndex)}
-                        >
-                            {editingIndex === patchIndex ? (
-                                <input
-                                    className="ap-input ap-patch-name-input"
-                                    value={editingName}
-                                    onChange={(e) => setEditingName(e.target.value)}
-                                    onBlur={handleRenameSubmit}
-                                    onKeyDown={handleKeyDown}
-                                    autoFocus
-                                />
-                            ) : (
-                                <>
-                                    <span className="ap-patch-name">{patchName}</span>
-                                    <div className="ap-patch-actions">
-                                        <button
-                                            className="ap-patch-action"
-                                            onClick={(e) => { e.stopPropagation(); handleRename(patchIndex); }}
-                                            title="Rename"
-                                        >
-                                            E
-                                        </button>
-                                        <button
-                                            className="ap-patch-action ap-patch-delete"
-                                            onClick={(e) => { e.stopPropagation(); onDelete && onDelete(patchIndex); }}
-                                            title="Delete"
-                                        >
-                                            X
-                                        </button>
-                                    </div>
-                            </>
-                        )}
-                    </div>
-                    );
-                })}
-            </div>
-            <button className="ap-btn ap-btn-primary ap-patches-new" onClick={onCreate}>
-                + NEW
-            </button>
-        </div>
+                return (
+                    <div
+                        key={patchIndex}
+                        className={`ap-patch-item ${isHighlighted ? 'selected' : ''} ${isDragging ? 'dragging' : ''} ${isLoading ? 'loading-disabled' : ''}`}
+                        draggable={!isLoading}
+                        onDragStart={() => !isLoading && handleDragStart(patchIndex)}
+                        onDragOver={(e) => !isLoading && handleDragOver(patchIndex, e)}
+                        onDrop={() => !isLoading && handleDrop(patchIndex)}
+                        onClick={() => !isLoading && onSelect && onSelect(patchIndex)}
+                    >
+                        {editingIndex === patchIndex ? (
+                            <input
+                                className="ap-input ap-patch-name-input"
+                                value={editingName}
+                                onChange={(e) => setEditingName(e.target.value)}
+                                onBlur={handleRenameSubmit}
+                                onKeyDown={handleKeyDown}
+                                autoFocus
+                            />
+                        ) : (
+                            <>
+                                <span className="ap-patch-name">{patchName}</span>
+                                <div className="ap-patch-actions">
+                                    <button
+                                        className="ap-patch-action"
+                                        onClick={(e) => { e.stopPropagation(); handleRename(patchIndex); }}
+                                        title="Rename"
+                                    >
+                                        E
+                                    </button>
+                                    <button
+                                        className="ap-patch-action ap-patch-delete"
+                                        onClick={(e) => { e.stopPropagation(); onDelete && onDelete(patchIndex); }}
+                                        title="Delete"
+                                    >
+                                        X
+                                    </button>
+                                </div>
+                        </>
+                    )}
+                </div>
+                );
+            })}
+        </>
     );
 }
 
@@ -968,12 +996,20 @@ function PatchesList({ patches, currentIndex, onSelect, onCreate, onDelete, onRe
 function ModuleDrawer({ moduleDefinitions, enabledModules, onAddModule, currentPatch, pendingModuleId, hasFixedModules }) {
     const [showJson, setShowJson] = useState(false);
 
+    // Renders directly into modules WindowManager column (sticky header + sections)
     return (
-        <div className="ap-module-drawer">
+        <>
             <div className="ap-drawer-header">
-                <span>MODULES</span>
+                <span>Modules</span>
+                <button
+                    className="ap-btn ap-btn-small ap-btn-secondary"
+                    onClick={() => setShowJson(true)}
+                    disabled={!currentPatch}
+                >
+                    View JSON
+                </button>
             </div>
-            <div className="ap-drawer-scroll">
+            <div className="ap-drawer-content">
                 {!hasFixedModules && (
                     <DrawerSection
                         title="AUDIO"
@@ -1000,22 +1036,13 @@ function ModuleDrawer({ moduleDefinitions, enabledModules, onAddModule, currentP
                     pendingModuleId={pendingModuleId}
                 />
             </div>
-            <div className="ap-drawer-footer">
-                <button
-                    className="ap-btn ap-btn-small ap-btn-secondary"
-                    onClick={() => setShowJson(true)}
-                    disabled={!currentPatch}
-                >
-                    View JSON
-                </button>
-            </div>
             {showJson && currentPatch && (
                 <JsonPopover
                     patch={currentPatch}
                     onClose={() => setShowJson(false)}
                 />
             )}
-        </div>
+        </>
     );
 }
 
@@ -1147,6 +1174,7 @@ function NodeWorkspace({
     hasFixedModules,
     nodePositions,
     onNodePositionChange,
+    onDragEnd,
     onSelectModule,
     onSelectWire,
     onClearSelection,
@@ -1174,6 +1202,10 @@ function NodeWorkspace({
     const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
     const [hoverTarget, setHoverTarget] = useState(null); // { module, param }
     const [isDragOver, setIsDragOver] = useState(false);
+
+    // Ref to avoid stale closure in mouseup event listener
+    const onDragEndRef = useRef(onDragEnd);
+    onDragEndRef.current = onDragEnd;
 
     // Pan state (mouse drag to scroll)
     const [isPanning, setIsPanning] = useState(false);
@@ -1393,6 +1425,9 @@ function NodeWorkspace({
     };
 
     const handleMouseUp = () => {
+        if (draggingNode && onDragEndRef.current) {
+            onDragEndRef.current();
+        }
         setDraggingNode(null);
     };
 

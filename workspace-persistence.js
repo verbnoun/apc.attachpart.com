@@ -123,6 +123,33 @@ const WorkspacePersistence = {
         } catch (e) { return {}; }
     },
 
+    // Node position persistence
+    POSITIONS_KEY: 'attachpart-node-positions',
+
+    saveNodePositions(deviceKey, patchIndex, positions) {
+        try {
+            const key = `${deviceKey}-${patchIndex}`;
+            const all = this._loadPositions();
+            all[key] = positions;
+            localStorage.setItem(this.POSITIONS_KEY, JSON.stringify(all));
+        } catch (e) { /* ignore */ }
+    },
+
+    loadNodePositions(deviceKey, patchIndex) {
+        try {
+            const key = `${deviceKey}-${patchIndex}`;
+            const all = this._loadPositions();
+            return all[key] || null;
+        } catch (e) { return null; }
+    },
+
+    _loadPositions() {
+        try {
+            const json = localStorage.getItem(this.POSITIONS_KEY);
+            return json ? JSON.parse(json) : {};
+        } catch (e) { return {}; }
+    },
+
     // Private: load state from localStorage
     _load() {
         try {

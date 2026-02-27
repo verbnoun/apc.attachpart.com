@@ -34,6 +34,7 @@ function DeviceAppWindow({
             <div className="ap-device-app-content">
                 {hasPatch && (
                     <PatchEditorWindow
+                        deviceKey={portName}
                         topology={topology}
                         patchList={patchList}
                         currentIndex={currentPatchIndex}
