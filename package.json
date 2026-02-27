@@ -1,0 +1,12 @@
+{
+  "private": true,
+  "name": "attachpart-console-tests",
+  "description": "Test-only toolchain for AttachPart Console (runtime uses CDN)",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "vitest": "^3.0.0"
+  }
+}
