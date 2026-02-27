@@ -1885,6 +1885,7 @@ function ExpressionPadWindow({ devices, deviceApisRef, deviceRegistry, midiState
     const playingRef = useRef(false);
 
     const [mpeEnabled, setMpeEnabled] = useState(true);
+    const [loggingEnabled, setLoggingEnabled] = useState(false);
     const mpeAllocatorRef = useRef(new MpeChannelAllocator());
     const currentChannelRef = useRef(0);
     const mouseNoteRef = useRef(null);
@@ -2001,8 +2002,8 @@ function ExpressionPadWindow({ devices, deviceApisRef, deviceRegistry, midiState
         if (apis.length === 0) return;
         const msg = new Uint8Array([0xB0, 0x7F, 15]);
         apis.forEach(api => api.sendRaw(msg));
-        addLog('TX: MPE Config [B0 7F 0F] - 15 member channels');
-    }, [isConnected, getOutputApis, mpeEnabled, addLog]);
+        if (loggingEnabled) addLog('TX: MPE Config [B0 7F 0F] - 15 member channels');
+    }, [isConnected, getOutputApis, mpeEnabled, loggingEnabled, addLog]);
 
     // Subscribe to all-input MIDI events for the monitor
     useEffect(() => {
@@ -2049,8 +2050,8 @@ function ExpressionPadWindow({ devices, deviceApisRef, deviceRegistry, midiState
                 setActiveNotes(new Map());
             }
 
-            // All-input events for MIDI monitor
-            if (eventType.startsWith('all')) {
+            // All-input events for MIDI monitor (only when logging enabled)
+            if (loggingEnabled && eventType.startsWith('all')) {
                 const time = new Date().toLocaleTimeString([], { hour12: false });
                 let desc = '';
                 if (eventType === 'allNoteOn') {
@@ -2075,7 +2076,7 @@ function ExpressionPadWindow({ devices, deviceApisRef, deviceRegistry, midiState
         });
 
         return unsubscribe;
-    }, [midiState]);
+    }, [midiState, loggingEnabled]);
 
     // Auto-scroll monitor
     useEffect(() => {
@@ -2119,10 +2120,12 @@ function ExpressionPadWindow({ devices, deviceApisRef, deviceRegistry, midiState
             api.sendNoteOn(channel, note, velocity);
         });
 
-        const vel7 = Math.round(velocity * 127);
-        const mpeInfo = mpeEnabled ? ` [MPE ch${channel}]` : '';
-        addLog(`TX: Note On note=${note} vel=${vel7}${mpeInfo}`);
-    }, [isConnected, getOutputApis, velocity, positionToValues, getNextNote, mpeEnabled, addLog]);
+        if (loggingEnabled) {
+            const vel7 = Math.round(velocity * 127);
+            const mpeInfo = mpeEnabled ? ` [MPE ch${channel}]` : '';
+            addLog(`TX: Note On note=${note} vel=${vel7}${mpeInfo}`);
+        }
+    }, [isConnected, getOutputApis, velocity, positionToValues, getNextNote, mpeEnabled, loggingEnabled, addLog]);
 
     const handleMouseMove = useCallback((e) => {
         if (!playingRef.current) return;
@@ -2182,12 +2185,14 @@ function ExpressionPadWindow({ devices, deviceApisRef, deviceRegistry, midiState
 
         setHideCursor(false);
 
-        const mpeInfo = mpeEnabled ? ` [MPE ch${channel}]` : '';
-        addLog(`TX: Note Off note=${note}${mpeInfo}`);
+        if (loggingEnabled) {
+            const mpeInfo = mpeEnabled ? ` [MPE ch${channel}]` : '';
+            addLog(`TX: Note Off note=${note}${mpeInfo}`);
+        }
 
         playingRef.current = false;
         mouseNoteRef.current = null;
-    }, [getOutputApis, mpeEnabled, addLog]);
+    }, [getOutputApis, mpeEnabled, loggingEnabled, addLog]);
 
     useEffect(() => {
         const handleGlobalMouseUp = () => {
@@ -2208,7 +2213,7 @@ function ExpressionPadWindow({ devices, deviceApisRef, deviceRegistry, midiState
 
     return (
         <div className="ap-expression-pad">
-            <div className="ap-pad-controls">
+            <div className="ap-pad-controls" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
                 <div className="ap-velocity-control">
                     <span>Velocity</span>
                     <input
@@ -2223,9 +2228,10 @@ function ExpressionPadWindow({ devices, deviceApisRef, deviceRegistry, midiState
                     />
                     <span className="ap-velocity-value">{Math.round(velocity * 127)}</span>
                 </div>
-                <label className="ap-mpe-toggle">
+                <div className="ap-mpe-toggle">
                     <input
                         type="checkbox"
+                        id="ap-mpe-checkbox"
                         checked={mpeEnabled}
                         onChange={(e) => {
                             const enabled = e.target.checked;
@@ -2236,13 +2242,13 @@ function ExpressionPadWindow({ devices, deviceApisRef, deviceRegistry, midiState
                                 const value = enabled ? 15 : 0;
                                 const msg = new Uint8Array([0xB0, 0x7F, value]);
                                 apis.forEach(api => api.sendRaw(msg));
-                                addLog(`TX: MPE Config - ${enabled ? 'enabled' : 'disabled'}`);
+                                if (loggingEnabled) addLog(`TX: MPE Config - ${enabled ? 'enabled' : 'disabled'}`);
                             }
                         }}
                         disabled={!isConnected}
                     />
-                    <span>MPE</span>
-                </label>
+                    <label htmlFor="ap-mpe-checkbox">MPE</label>
+                </div>
             </div>
 
             <div className="ap-pad-canvas-container">
@@ -2273,7 +2279,19 @@ function ExpressionPadWindow({ devices, deviceApisRef, deviceRegistry, midiState
                 )}
             </div>
 
-            {/* MIDI Monitor */}
+            {/* Log toggle + MIDI Monitor */}
+            <div className="ap-mpe-toggle" style={{ padding: '4px 8px' }}>
+                <input
+                    type="checkbox"
+                    id="ap-log-checkbox"
+                    checked={loggingEnabled}
+                    onChange={(e) => {
+                        setLoggingEnabled(e.target.checked);
+                        if (!e.target.checked) setMidiMonitor([]);
+                    }}
+                />
+                <label htmlFor="ap-log-checkbox">Log</label>
+            </div>
             <div className="ap-pad-monitor" ref={monitorScrollRef}>
                 {midiMonitor.length === 0 ? (
                     <span className="ap-text-muted">MIDI monitor</span>
