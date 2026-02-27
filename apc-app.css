@@ -1824,7 +1824,8 @@ html, body {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    background: var(--ap-accent-green);
+    /* background set via inline style from module.groupColor */
+    background: var(--ap-bg-tertiary);
     color: var(--ap-text-primary);
     padding: var(--ap-spacing-xs) 0;
     font-size: var(--ap-font-size-xs);
@@ -1862,21 +1863,7 @@ html, body {
     border-color: var(--ap-accent-red);
 }
 
-.ap-node-audio .ap-node-header {
-    background: var(--ap-accent-green);
-}
-
-.ap-node-mod .ap-node-header {
-    background: var(--ap-accent-yellow);
-}
-
-.ap-node-control .ap-node-header {
-    background: var(--ap-accent-purple);
-}
-
-.ap-node-out .ap-node-header {
-    background: var(--ap-text-secondary);
-}
+/* Node header background comes from inline style (module.groupColor) */
 
 .ap-node-body {
     padding: var(--ap-spacing-xs);
@@ -2087,23 +2074,20 @@ html, body {
     box-shadow: 0 0 6px var(--ap-accent-green);
 }
 
-/* Output port for mod/control nodes */
-.ap-node-mod .ap-node-port-header-out,
-.ap-node-control .ap-node-port-header-out {
+/* Output port for mod source nodes */
+.ap-node-modsource .ap-node-port-header-out {
     cursor: crosshair;
     transition: transform 0.1s, background 0.1s;
 }
 
-.ap-node-mod .ap-node-port-header-out:hover,
-.ap-node-control .ap-node-port-header-out:hover {
+.ap-node-modsource .ap-node-port-header-out:hover {
     transform: scale(1.3);
-    background: var(--ap-accent-yellow);
+    background: var(--ap-text-primary);
 }
 
-.ap-node-mod .ap-node-port-header-out.active,
-.ap-node-control .ap-node-port-header-out.active {
-    background: var(--ap-accent-yellow);
-    box-shadow: 0 0 8px var(--ap-accent-yellow);
+.ap-node-modsource .ap-node-port-header-out.active {
+    background: var(--ap-text-primary);
+    box-shadow: 0 0 8px var(--ap-text-primary);
 }
 
 /* Modulation wire — state variants (base behavior from .ap-wire-group) */

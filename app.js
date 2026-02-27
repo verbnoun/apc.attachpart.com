@@ -301,7 +301,7 @@ function App() {
             if (capabilities.includes(CAPABILITIES.CONFIG)) {
                 const config = await api.getConfig();
                 // Synth config has modules/mod_targets (used by patch editor)
-                if (config.modules && config.mod_targets) {
+                if (config.groups && config.mod_targets) {
                     updateSynthState(portName, { topology: config });
                     addLog(`Loaded config: ${Object.keys(config.mod_targets || {}).length} mod sources`, 'info');
                 }
@@ -319,7 +319,7 @@ function App() {
                 const patchNames = patches.patches || [];
                 const deviceCurrentIndex = patches.current_index ?? 0;
                 addLog(`Loaded ${patchNames.length} patches (device on patch ${deviceCurrentIndex})`, 'info');
-                updateSynthState(portName, { patchList: patchNames, currentPatchIndex: deviceCurrentIndex });
+                updateSynthState(portName, { patchList: patchNames, initialPatchIndex: deviceCurrentIndex });
             }
 
             // Update device state
@@ -1236,10 +1236,10 @@ function App() {
             result.columns['patches']
         );
 
-        // Load initial patch if needed
+        // Select initial patch — same path as click selection
         if (hasPatch && ss.currentPatch == null && (ss.patchList || []).length > 0) {
-            const initialIndex = (ss.currentPatchIndex ?? -1) >= 0 ? ss.currentPatchIndex : 0;
-            loadPatch(portName, initialIndex);
+            const initialIndex = (ss.initialPatchIndex ?? -1) >= 0 ? ss.initialPatchIndex : 0;
+            selectPatch(portName, initialIndex);
         }
     };
 

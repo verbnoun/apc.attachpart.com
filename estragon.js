@@ -10,7 +10,7 @@
  * Handles:
  * - get-device-info -> identity response
  * - controller-available -> triggers exchange (get-control-surface -> set-patch)
- * - config-get -> topology (modules, mod_targets, audio_chain, waves)
+ * - config-get -> topology (groups, chains, mod_targets, waves)
  * - list-patches / get-patch / select-patch / create-patch / delete-patch
  * - update-param -> applies param + sends value feedback
  * - save -> ACK
@@ -46,21 +46,27 @@ class Estragon extends VirtualDevice {
 
         // Topology (returned by config-get for patch editor)
         this._topology = {
-            status: 'ok', op: 'config', readonly: true, fixed_modules: true,
-            modules: {
-                audio: [
-                    { id: 'CARRIER', name: 'Carrier' },
-                    { id: 'MODULATOR', name: 'Modulator' }
-                ],
-                mod: [
+            status: 'ok', op: 'config',
+            groups: [
+                { id: 'operators', name: 'Operators', color: '#FF7043', fixed: true,
+                  modules: [
+                    { id: 'MODULATOR', name: 'Modulator' },
+                    { id: 'CARRIER', name: 'Carrier' }
+                  ] },
+                { id: 'envelope', name: 'Envelope', color: '#FFC107', fixed: true,
+                  modules: [
                     { id: 'AMP_ENV', name: 'Amp Env' }
-                ],
-                control: [
+                  ] },
+                { id: 'expression', name: 'Expression', color: '#9C27B0',
+                  modules: [
                     { id: 'VELOCITY', name: 'Velocity' },
                     { id: 'PRESSURE', name: 'Pressure' },
                     { id: 'BEND', name: 'Bend' }
-                ]
-            },
+                  ] }
+            ],
+            chains: [
+                { color: '#FF7043', stages: [['MODULATOR'], ['CARRIER']] }
+            ],
             mod_targets: {
                 VELOCITY: ['CARRIER_LEVEL', 'MOD_DEPTH', 'CARRIER_RATIO', 'MOD_RATIO',
                            'AMP_ENV_ATTACK', 'AMP_ENV_DECAY', 'AMP_ENV_SUSTAIN', 'AMP_ENV_RELEASE'],
@@ -68,7 +74,6 @@ class Estragon extends VirtualDevice {
                 BEND:     ['CARRIER_RATIO', 'MOD_RATIO', 'CARRIER_LEVEL', 'MOD_DEPTH'],
                 AMP_ENV:  ['CARRIER_LEVEL']
             },
-            audio_chain: ['MODULATOR', 'CARRIER'],
             waves: {
                 osc: [
                     { id: 0, name: 'Sine' },
