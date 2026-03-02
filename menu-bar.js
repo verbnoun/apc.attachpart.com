@@ -186,6 +186,9 @@ function MenuBar({ focusedWindow, openApps, onSurfaceApp, onOpenConfigWindow, on
                 ))}
             </div>
             <div className="ap-menubar-right">
+                <a className="ap-research-preview" href="mailto:help@attachpart.com?subject=HELP!">
+                    Research Preview : help@attachpart.com
+                </a>
             </div>
         </div>
     );

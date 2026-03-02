@@ -4,9 +4,11 @@
  * Window chrome:
  * - Title bar with window name (draggable)
  * - Close button: upper LEFT corner
+ * - Zoom button: upper RIGHT (maximize/restore) — resizable windows only
+ * - Collapse button: upper RIGHT (window shade) — resizable windows only
  * - Resize handle: lower RIGHT corner
  * - Columns with constraint-driven scrolling
- * - NO: minimize, maximize, fullscreen
+ * - Double-click title bar toggles window shade
  *
  * Column model:
  * Every window has one or more columns. Each column is a scroll container.
@@ -143,6 +145,28 @@ const WindowManager = {
         titleBar.appendChild(stripesLeft);
         titleBar.appendChild(titleText);
         titleBar.appendChild(stripesRight);
+
+        // Zoom and collapse buttons (resizable windows only)
+        let zoomBtn = null;
+        let collapseBtn = null;
+        if (resizable) {
+            zoomBtn = document.createElement('button');
+            zoomBtn.className = 'ap-window-zoom';
+            zoomBtn.onclick = (e) => {
+                e.stopPropagation();
+                this._toggleMaximize(id);
+            };
+
+            collapseBtn = document.createElement('button');
+            collapseBtn.className = 'ap-window-collapse';
+            collapseBtn.onclick = (e) => {
+                e.stopPropagation();
+                this._toggleShade(id);
+            };
+
+            titleBar.appendChild(zoomBtn);
+            titleBar.appendChild(collapseBtn);
+        }
 
         // Info bar (optional — System 7 info pane between title bar and content)
         let infoBarEl = null;
@@ -289,7 +313,11 @@ const WindowManager = {
             onInfoBarClick,
             onClose,
             constraints: { minWidth, minHeight, maxWidth, maxHeight },
-            observers
+            observers,
+            isMaximized: false,
+            preMaximizeGeometry: null,
+            isShaded: false,
+            preShadeHeight: null
         });
 
         // Setup interactions
@@ -302,6 +330,14 @@ const WindowManager = {
                 resizeDir = 'both';
             }
             this._setupResize(id, win, resizeHandle, resizeDir);
+
+            // Double-click title bar toggles window shade
+            titleBar.addEventListener('dblclick', (e) => {
+                if (e.target.closest('.ap-window-close') ||
+                    e.target.closest('.ap-window-zoom') ||
+                    e.target.closest('.ap-window-collapse')) return;
+                this._toggleShade(id);
+            });
         }
         this._setupFocus(id, win);
 
@@ -454,13 +490,103 @@ const WindowManager = {
         windowInfo.infoBarEl.classList.toggle('clickable', clickable);
     },
 
+    /**
+     * Toggle maximize — fill APC viewport (minus menubar) or restore
+     */
+    _toggleMaximize(id) {
+        const windowInfo = this.windows.get(id);
+        if (!windowInfo) return;
+        const win = windowInfo.element;
+
+        // If shaded, unshade first
+        if (windowInfo.isShaded) {
+            this._toggleShade(id);
+        }
+
+        const workspace = document.getElementById('workspace');
+        const maxW = workspace ? workspace.clientWidth : window.innerWidth;
+        const maxH = workspace ? workspace.clientHeight : (window.innerHeight - 28);
+
+        if (windowInfo.isMaximized) {
+            // Restore from saved geometry
+            const g = windowInfo.preMaximizeGeometry;
+            if (g) {
+                // If previous size was also max-sized, shrink 20% and center
+                const TOLERANCE = 10;
+                if (Math.abs(g.width - maxW) < TOLERANCE && Math.abs(g.height - maxH) < TOLERANCE) {
+                    const newW = Math.round(maxW * 0.8);
+                    const newH = Math.round(maxH * 0.8);
+                    win.style.left = `${Math.round((maxW - newW) / 2)}px`;
+                    win.style.top = `${Math.round((maxH - newH) / 2)}px`;
+                    win.style.width = `${newW}px`;
+                    win.style.height = `${newH}px`;
+                } else {
+                    win.style.left = `${g.x}px`;
+                    win.style.top = `${g.y}px`;
+                    win.style.width = `${g.width}px`;
+                    win.style.height = `${g.height}px`;
+                }
+            }
+            windowInfo.isMaximized = false;
+        } else {
+            // Save current geometry, then maximize
+            windowInfo.preMaximizeGeometry = {
+                x: win.offsetLeft,
+                y: win.offsetTop,
+                width: win.offsetWidth,
+                height: win.offsetHeight
+            };
+            win.style.left = '0px';
+            win.style.top = '0px';
+            win.style.width = `${maxW}px`;
+            win.style.height = `${maxH}px`;
+            windowInfo.isMaximized = true;
+        }
+
+        if (this.onGeometryChange) {
+            this.onGeometryChange(id, {
+                x: win.offsetLeft,
+                y: win.offsetTop,
+                width: win.offsetWidth,
+                height: win.offsetHeight
+            });
+        }
+    },
+
+    /**
+     * Toggle window shade — collapse to title bar or restore
+     */
+    _toggleShade(id) {
+        const windowInfo = this.windows.get(id);
+        if (!windowInfo) return;
+        const win = windowInfo.element;
+
+        if (windowInfo.isShaded) {
+            // Unshade — restore height
+            win.classList.remove('ap-window-shaded');
+            if (windowInfo.preShadeHeight) {
+                win.style.height = `${windowInfo.preShadeHeight}px`;
+            }
+            windowInfo.isShaded = false;
+        } else {
+            // Shade — save height, collapse
+            windowInfo.preShadeHeight = win.offsetHeight;
+            win.classList.add('ap-window-shaded');
+            // Height will be controlled by CSS (just title bar)
+            win.style.height = 'auto';
+            windowInfo.isShaded = true;
+        }
+    },
+
     // Private: setup drag behavior
     _setupDrag(id, win, titleBar) {
         let isDragging = false;
         let startX, startY, startLeft, startTop;
 
         titleBar.addEventListener('mousedown', (e) => {
-            if (e.target.classList.contains('ap-window-close')) return;
+            if (e.target.closest('.ap-window-close') ||
+                e.target.closest('.ap-window-zoom') ||
+                e.target.closest('.ap-window-collapse')) return;
             isDragging = true;
             startX = e.clientX;
             startY = e.clientY;
@@ -481,6 +607,9 @@ const WindowManager = {
         document.addEventListener('mouseup', () => {
             if (isDragging) {
                 isDragging = false;
+                // Clear maximized flag — user moved the window
+                const info = this.windows.get(id);
+                if (info) info.isMaximized = false;
                 // Notify persistence of geometry change
                 if (this.onGeometryChange) {
                     this.onGeometryChange(id, {
@@ -528,6 +657,9 @@ const WindowManager = {
         document.addEventListener('mouseup', () => {
             if (isResizing) {
                 isResizing = false;
+                // Clear maximized flag — user resized the window
+                const info = this.windows.get(id);
+                if (info) info.isMaximized = false;
                 // Notify persistence of geometry change
                 if (this.onGeometryChange) {
                     this.onGeometryChange(id, {

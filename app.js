@@ -17,10 +17,88 @@
 const { useState, useEffect, useCallback, useRef } = React;
 
 //======================================================================
+// SPLASH SCREEN
+//======================================================================
+
+const SPLASH_LINES = [
+    'Initializing flux capacitors...',
+    'Loading 4 8 15 16 23 42...',
+    'Reticulating splines...',
+    'Calibrating temporal field...',
+    'Engaging MIDI wormhole...',
+    'Aligning oscillator crystals...',
+    'Parsing the numbers...',
+    'Buffering pixel dust...',
+    'Indexing harmonic series...',
+    'Compiling patch matrices...',
+    'Warming up the tubes...',
+    'Tuning subharmonic resonators...',
+    'Mapping velocity curves...',
+    'Bartleby says hello...',
+    'Candide is warming up...',
+    'Synchronizing clock domains...',
+    'Polishing the chrome...',
+];
+
+function SplashScreen({ onDone }) {
+    const [lines, setLines] = useState([]);
+    const [progress, setProgress] = useState(0);
+    const [done, setDone] = useState(false);
+    const logRef = useRef(null);
+
+    useEffect(() => {
+        let i = 0;
+        const total = SPLASH_LINES.length;
+        const interval = setInterval(() => {
+            if (i < total) {
+                setLines(prev => [...prev, SPLASH_LINES[i]]);
+                setProgress(Math.round(((i + 1) / total) * 100));
+                i++;
+            } else {
+                clearInterval(interval);
+                setDone(true);
+            }
+        }, 120);
+        return () => clearInterval(interval);
+    }, []);
+
+    useEffect(() => {
+        if (logRef.current) {
+            logRef.current.scrollTop = logRef.current.scrollHeight;
+        }
+    }, [lines]);
+
+    return (
+        <div className="ap-splash">
+            <div className="ap-splash-box">
+                <div className="ap-splash-title">ATTACH PART CONSOLE</div>
+                <div className="ap-splash-subtitle">
+                    Research Preview : <a href="mailto:help@attachpart.com?subject=HELP!">help@attachpart.com</a>
+                </div>
+                <div className="ap-splash-log" ref={logRef}>
+                    {lines.map((line, i) => <div key={i}>{line}</div>)}
+                </div>
+                <div className="ap-splash-progress">
+                    <div className="ap-splash-progress-fill" style={{ width: `${progress}%` }} />
+                </div>
+                {done && (
+                    <button className="ap-btn ap-splash-start" onClick={onDone}>
+                        Start
+                    </button>
+                )}
+            </div>
+        </div>
+    );
+}
+
+//======================================================================
 // MAIN APP COMPONENT
 //======================================================================
 
 function App() {
+    // Splash screen
+    const [showSplash, setShowSplash] = useState(true);
+
     // Device state - indexed by port name
     // { 'Candide MPE': { status, deviceInfo, api, ... }, ... }
     const [devices, setDevices] = useState({});
@@ -1704,28 +1782,31 @@ function App() {
     }
 
     return (
-        <div className="ap-container">
-            <MenuBar
-                focusedWindow={focusedWindow}
-                openApps={openApps}
-                onSurfaceApp={surfaceApp}
-                onOpenConfigWindow={(section) => {
-                    const portName = focusedWindow.portName;
-                    if (portName) openConfigWindow(portName, section);
-                }}
-                onLogClick={() => openLogWindow()}
-                onSyncClick={() => openRoutingWindow()}
-                onExpressionPadClick={() => openExpressionPad()}
-                onPreferencesClick={() => openPreferencesWindow()}
-                onOpenDeviceTool={openDeviceToolWindow}
-                onToolOpen={handleToolOpen}
-            />
-            <Desktop
-                devices={devices}
-                onDeviceOpen={handleDeviceOpen}
-                onToolOpen={handleToolOpen}
-            />
-        </div>
+        <React.Fragment>
+            {showSplash && <SplashScreen onDone={() => setShowSplash(false)} />}
+            <div className="ap-container">
+                <MenuBar
+                    focusedWindow={focusedWindow}
+                    openApps={openApps}
+                    onSurfaceApp={surfaceApp}
+                    onOpenConfigWindow={(section) => {
+                        const portName = focusedWindow.portName;
+                        if (portName) openConfigWindow(portName, section);
+                    }}
+                    onLogClick={() => openLogWindow()}
+                    onSyncClick={() => openRoutingWindow()}
+                    onExpressionPadClick={() => openExpressionPad()}
+                    onPreferencesClick={() => openPreferencesWindow()}
+                    onOpenDeviceTool={openDeviceToolWindow}
+                    onToolOpen={handleToolOpen}
+                />
+                <Desktop
+                    devices={devices}
+                    onDeviceOpen={handleDeviceOpen}
+                    onToolOpen={handleToolOpen}
+                />
+            </div>
+        </React.Fragment>
     );
 }
 

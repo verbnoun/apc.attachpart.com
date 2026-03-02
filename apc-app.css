@@ -249,6 +249,99 @@ html, body {
     opacity: 1;
 }
 
+/* Zoom box — upper right, small-box-in-big-box icon (maximize/restore) */
+/* Both boxes have double-thick top borders (title bars) */
+.ap-window-zoom {
+    position: relative;
+    display: block;
+    width: 40px;
+    height: 40px;
+    background: var(--ap-bg-primary);
+    border: 4px solid var(--ap-window-border);
+    border-top-width: 8px;
+    cursor: pointer;
+    flex-shrink: 0;
+    padding: 0;
+    margin: 0 0.1rem;
+    transform: scale(0.5);
+    transform-origin: center;
+}
+
+/* Inner small box — always visible */
+.ap-window-zoom::before {
+    content: "";
+    position: absolute;
+    top: 3px;
+    left: 5px;
+    right: 5px;
+    bottom: 5px;
+    border: 3px solid var(--ap-window-border);
+    border-top-width: 6px;
+    background: var(--ap-bg-primary);
+}
+
+/* Active: invert */
+.ap-window-zoom:active {
+    background: var(--ap-window-border);
+}
+
+.ap-window-zoom:active::before {
+    border-color: var(--ap-bg-primary);
+    background: var(--ap-window-border);
+}
+
+/* Collapse box — upper right, horizontal line icon (window shade) */
+.ap-window-collapse {
+    position: relative;
+    display: block;
+    width: 40px;
+    height: 40px;
+    background: var(--ap-bg-primary);
+    border: 4px solid var(--ap-window-border);
+    cursor: pointer;
+    flex-shrink: 0;
+    padding: 0;
+    margin: 0 0.2rem 0 0.1rem;
+    transform: scale(0.5);
+    transform-origin: center;
+}
+
+/* Horizontal line — always visible */
+.ap-window-collapse::before {
+    content: "";
+    position: absolute;
+    left: 6px;
+    right: 6px;
+    bottom: 10px;
+    height: 3px;
+    background: var(--ap-window-border);
+}
+
+/* Active: invert — black fill, white line */
+.ap-window-collapse:active {
+    background: var(--ap-window-border);
+}
+
+.ap-window-collapse:active::before {
+    background: var(--ap-bg-primary);
+}
+
+/* Window shade state — collapsed to title bar only */
+.ap-window-shaded .ap-window-columns,
+.ap-window-shaded .ap-window-infobar {
+    display: none;
+}
+
+/* Hide resize handle when shaded — needs to beat .ap-resizable-* specificity */
+.ap-window-shaded .ap-window-resize {
+    display: none !important;
+}
+
+.ap-window-shaded {
+    height: auto !important;
+    min-height: 0;
+}
+
 /* Stripes container — hidden, stripes come from titlebar background */
 .ap-window-stripes {
     flex: 1;
@@ -998,6 +1091,112 @@ html, body {
     right: 0;
     bottom: 0;
     overflow: hidden;
+}
+
+/* ============================================================
+   SPLASH SCREEN
+   ============================================================ */
+
+.ap-splash {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 99999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    /* Checkerboard desktop pattern — same as .ap-desktop */
+    background: repeating-conic-gradient(
+        var(--ap-text-primary) 0% 25%,
+        var(--ap-bg-primary) 25% 50%
+    ) 0 0 / 2px 2px;
+}
+
+.ap-splash-box {
+    background: var(--ap-bg-primary);
+    border: 2px solid var(--ap-window-border);
+    box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.25);
+    padding: var(--ap-spacing-lg) var(--ap-spacing-lg) var(--ap-spacing-md);
+    width: 420px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--ap-spacing-sm);
+}
+
+.ap-splash-title {
+    font-family: var(--ap-font-family);
+    font-size: 32px;
+    font-weight: bold;
+    color: var(--ap-text-primary);
+    text-align: center;
+    letter-spacing: 2px;
+    margin-bottom: var(--ap-spacing-xs);
+}
+
+.ap-splash-subtitle {
+    font-family: var(--ap-font-family);
+    font-size: var(--ap-font-size-xs);
+    color: var(--ap-text-muted);
+    text-align: center;
+    margin-bottom: var(--ap-spacing-sm);
+}
+
+.ap-splash-subtitle a {
+    color: var(--ap-text-muted);
+    text-decoration: none;
+}
+
+.ap-splash-subtitle a:hover {
+    text-decoration: underline;
+}
+
+.ap-splash-log {
+    width: 100%;
+    height: 100px;
+    overflow-y: auto;
+    font-family: var(--ap-font-mono);
+    font-size: 12px;
+    color: var(--ap-text-secondary);
+    line-height: 1.5;
+    border: 1px solid var(--ap-window-border);
+    padding: var(--ap-spacing-xs);
+    background: var(--ap-bg-primary);
+}
+
+.ap-splash-progress {
+    width: 100%;
+    height: 16px;
+    border: 2px solid var(--ap-window-border);
+    background: var(--ap-bg-primary);
+    position: relative;
+}
+
+.ap-splash-progress-fill {
+    height: 100%;
+    background: var(--ap-text-primary);
+    transition: width 0.1s linear;
+}
+
+.ap-splash-start {
+    margin-top: var(--ap-spacing-sm);
+}
+
+/* ============================================================
+   RESEARCH PREVIEW BADGE
+   ============================================================ */
+
+.ap-research-preview {
+    font-family: var(--ap-font-family);
+    font-size: var(--ap-chrome-font-size);
+    color: var(--ap-text-muted);
+    text-decoration: none;
+}
+
+.ap-research-preview:hover {
+    text-decoration: underline;
 }
 
 /* ============================================================
