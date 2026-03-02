@@ -229,6 +229,47 @@ function CurveEditor({ label, curve, onChange, midiState }) {
         onChange(axis, value);
     };
 
+    // Drag on canvas — click/drag the control point directly
+    const dragRef = useRef({ x: editX, y: editY });
+
+    const handleCanvasMouseDown = (e) => {
+        e.preventDefault();
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+
+        const toValue = (clientX, clientY) => {
+            const x = Math.max(0.01, Math.min(0.99, ((clientX - rect.left) * scaleX) / canvas.width));
+            const y = Math.max(0.01, Math.min(0.99, 1 - ((clientY - rect.top) * scaleY) / canvas.height));
+            return { x, y };
+        };
+
+        const v = toValue(e.clientX, e.clientY);
+        dragRef.current = { x: v.x, y: v.y };
+        setEditX(v.x);
+        setEditY(v.y);
+
+        const handleMove = (me) => {
+            const mv = toValue(me.clientX, me.clientY);
+            dragRef.current = { x: mv.x, y: mv.y };
+            setEditX(mv.x);
+            setEditY(mv.y);
+        };
+
+        const handleUp = () => {
+            window.removeEventListener('mousemove', handleMove);
+            window.removeEventListener('mouseup', handleUp);
+            onChange('x', dragRef.current.x);
+            onChange('y', dragRef.current.y);
+        };
+
+        window.addEventListener('mousemove', handleMove);
+        window.addEventListener('mouseup', handleUp);
+    };
+
     return (
         <div className="ap-curve-editor">
             <div className="ap-curve-label">{label}</div>
@@ -263,7 +304,8 @@ function CurveEditor({ label, curve, onChange, midiState }) {
                         <span className="ap-curve-value">{editY.toFixed(2)}</span>
                     </div>
                 </div>
-                <canvas ref={canvasRef} width="180" height="150" className="ap-curve-canvas" />
+                <canvas ref={canvasRef} width="180" height="150" className="ap-curve-canvas"
+                    onMouseDown={handleCanvasMouseDown} />
             </div>
         </div>
     );
@@ -414,7 +456,6 @@ function PotKnob({ pot, ccValue }) {
             <div className="ap-pot-knob-circle">
                 <div className="ap-pot-knob-tick" style={{ transform: `rotate(${angle}deg)` }} />
             </div>
-            <span className="ap-pot-knob-label">{label}</span>
         </div>
     );
 }

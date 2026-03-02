@@ -94,11 +94,44 @@ function findAmountParamsForTarget(moduleData, targetParamKey, modSourceIds) {
                 key: amountKey,
                 value: typeof amountData === 'object' ? amountData.initial : amountData,
                 min: amountData.range?.[0] ?? -1,
-                max: amountData.range?.[1] ?? 1
+                max: amountData.range?.[1] ?? 1,
+                uid: amountData.uid,
+                cc: amountData.cc ?? -1,
+                name: amountData.name || source.replace(/_/g, ' '),
+                priority: amountData.priority ?? 999
             });
         }
     });
     return amounts;
+}
+
+/**
+ * Get absolute range for a parameter from topology params
+ * Topology params use module type keys (e.g., "OSC", "FILTER") with param suffix keys.
+ * OSC0/1/2 share ranges under "OSC" key.
+ * @param {Object} topology - Topology object with params section
+ * @param {string} paramKey - Full param key (e.g., "FILTER_FREQUENCY", "OSC0_LEVEL")
+ * @returns {{ absMin: number, absMax: number }|null}
+ */
+function getAbsoluteRange(topology, paramKey) {
+    if (!topology?.params) return null;
+
+    // OSC params: "OSC0_LEVEL" → type "OSC", suffix "LEVEL"
+    const oscMatch = paramKey.match(/^OSC(\d)_(.+)$/);
+    if (oscMatch) {
+        const r = topology.params.OSC?.[oscMatch[2]];
+        return r ? { absMin: r[0], absMax: r[1] } : null;
+    }
+
+    // Others: "FILTER_FREQUENCY" → type "FILTER", suffix "FREQUENCY"
+    for (const [type, params] of Object.entries(topology.params)) {
+        if (paramKey.startsWith(type + '_')) {
+            const suffix = paramKey.substring(type.length + 1);
+            if (params[suffix]) return { absMin: params[suffix][0], absMax: params[suffix][1] };
+        }
+    }
+
+    return null;
 }
 
 /**

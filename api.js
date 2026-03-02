@@ -392,6 +392,7 @@ class UnifiedDeviceAPI {
         const cmd = { cmd: 'update-param', index, param };
         if (opts.value !== undefined) cmd.value = opts.value;
         if (opts.priority !== undefined) cmd.priority = opts.priority;
+        if (opts.storeOnly) cmd.store_only = true;
         return this._sendCommand(cmd);
     }
 
@@ -605,6 +606,11 @@ class UnifiedDeviceAPI {
     _processSysEx(data) {
         try {
             if (!isCandideSysEx(data)) {
+                return;
+            }
+
+            // Value feedback (0x10, 0x11) is binary, not mcoded7 — handled by DeviceRegistry
+            if (data[3] === 0x10 || data[3] === 0x11) {
                 return;
             }
 

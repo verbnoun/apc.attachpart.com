@@ -310,20 +310,23 @@ html, body {
     white-space: nowrap;
 }
 
-.ap-infobar-center {
-    flex: 1;
-}
-
 .ap-infobar-left {
+    flex: 1;
     text-align: left;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .ap-infobar-center {
+    flex: 0 0 auto;
     text-align: center;
 }
 
 .ap-infobar-right {
+    flex: 1;
     text-align: right;
+    min-width: 0;
 }
 
 /* Clickable info bar slot (save status on right) */
@@ -855,6 +858,12 @@ html, body {
     color: var(--ap-text-primary);
     padding: 6px 10px;
     margin-right: var(--ap-spacing-xs);
+    cursor: pointer;
+}
+
+.ap-menubar-app-name.active {
+    background: var(--ap-text-primary);
+    color: var(--ap-bg-primary);
 }
 
 .ap-menubar-right {
@@ -1179,6 +1188,7 @@ html, body {
 .ap-curve-canvas {
     display: block;
     flex-shrink: 0;
+    cursor: pointer;
 }
 
 .ap-curve-sliders {
@@ -1197,16 +1207,16 @@ html, body {
 
 .ap-curve-slider-label {
     font-family: var(--ap-font-family);
-    font-size: var(--ap-font-size-lg);
+    font-size: var(--ap-font-size-md);
     color: var(--ap-text-primary);
-    width: 70px;
+    width: 85px;
     flex-shrink: 0;
 }
 
 .ap-curve-value {
     font-family: var(--ap-font-mono);
-    font-size: var(--ap-font-size-lg);
-    width: 36px;
+    font-size: var(--ap-font-size-md);
+    width: 32px;
     text-align: right;
     color: var(--ap-text-primary);
     flex-shrink: 0;
@@ -1294,18 +1304,16 @@ html, body {
     background: var(--ap-display-bg);
     border: 2px solid var(--ap-display-bg);
     flex-shrink: 0;
-    font-family: monospace;
+    font-family: var(--ap-font-mono);
     color: var(--ap-display-text);
-    font-size: 9px;
+    font-size: var(--ap-font-size-xs);
     line-height: 1.2;
     image-rendering: pixelated;
-    transform: scale(1.15);
-    transform-origin: top left;
 }
 
 .ap-oled-status {
-    width: 80px;
-    height: 80px;
+    width: 110px;
+    height: 100px;
     display: flex;
     flex-direction: column;
     justify-content: center;
@@ -1315,7 +1323,7 @@ html, body {
 }
 
 .ap-oled-title {
-    font-size: var(--ap-font-size-sm);
+    font-size: var(--ap-font-size-xs);
     font-weight: bold;
     letter-spacing: 1px;
 }
@@ -1326,9 +1334,9 @@ html, body {
 }
 
 .ap-oled-control {
-    width: 120px;
-    height: 80px;
-    padding: 2px;
+    width: 150px;
+    height: 100px;
+    padding: 4px;
 }
 
 .ap-oled-grid {
@@ -1386,16 +1394,18 @@ html, body {
 .ap-pot-group {
     display: flex;
     align-items: flex-start;
-    gap: 20px;
+    gap: var(--ap-spacing-sm);
     flex-shrink: 0;
 }
 
-/* Pot Cluster — 2x2 grid of knobs */
+/* Pot Cluster — 2x2 grid of knobs, matches OLED height */
 .ap-pot-cluster {
     display: grid;
     grid-template-columns: 1fr 1fr;
     grid-template-rows: 1fr 1fr;
-    gap: var(--ap-spacing-sm);
+    width: 100px;
+    height: 100px;
+    place-items: center;
 }
 
 /* Pot Knob — circle placeholder */
@@ -1438,7 +1448,7 @@ html, body {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: clip;
-    max-width: 42px;
+    max-width: 64px;
 }
 
 /* Pedal Tab */
@@ -1815,7 +1825,7 @@ html, body {
     position: absolute;
     background: var(--ap-bg-primary);
     border: 2px solid var(--ap-window-border);
-    min-width: 140px;
+    min-width: 300px;
     cursor: move;
     user-select: none;
 }
@@ -1866,56 +1876,121 @@ html, body {
 /* Node header background comes from inline style (module.groupColor) */
 
 .ap-node-body {
+    display: grid;
+    grid-template-columns: 6px 30px auto 1fr;
+    gap: 0 var(--ap-spacing-xs);
     padding: var(--ap-spacing-xs);
     font-size: var(--ap-font-size-xs);
 }
 
 .ap-node-param-container {
-    display: flex;
-    flex-direction: column;
+    display: contents;
 }
 
 .ap-node-param {
-    display: flex;
+    display: grid;
+    grid-column: 1 / -1;
+    grid-template-columns: subgrid;
     align-items: center;
-    gap: var(--ap-spacing-xs);
-    padding: 1px 0;
+    padding: 3px 0;
 }
 
 .ap-node-param-key {
-    flex: 1;
     color: var(--ap-text-muted);
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
-.ap-node-param-slider {
+/* Custom multi-value param slider */
+.ap-param-slider-wrapper {
     flex: 1;
-    height: 8px;
-    max-width: 50px;
-    -webkit-appearance: none;
-    appearance: none;
-    background: var(--ap-bg-primary);
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+}
+
+.ap-param-slider {
+    width: 100%;
+    height: 14px;
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+}
+
+.ap-param-slider-track {
+    position: relative;
+    width: 100%;
+    height: 9px;
+    background: var(--ap-bg-secondary);
     border: 1px solid var(--ap-window-border);
-    cursor: pointer;
 }
 
-.ap-node-param-slider::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 8px;
-    height: 12px;
-    background: var(--ap-accent-blue);
-    cursor: pointer;
+.ap-param-slider-range {
+    position: absolute;
+    top: 0;
+    height: 100%;
+    background: var(--ap-bg-primary);
+    pointer-events: none;
 }
 
-.ap-node-param-slider::-moz-range-thumb {
-    width: 8px;
-    height: 12px;
+.ap-param-slider-rh {
+    position: absolute;
+    top: -3px;
+    width: 3px;
+    height: calc(100% + 6px);
+    background: var(--ap-text-muted);
+    cursor: ew-resize;
+    z-index: 2;
+}
+
+.ap-param-slider-rh-l {
+    transform: translateX(-100%);
+}
+
+.ap-param-slider-thumb {
+    position: absolute;
+    top: -4px;
+    width: 6px;
+    height: calc(100% + 8px);
     background: var(--ap-accent-blue);
-    cursor: pointer;
-    border: none;
+    cursor: ew-resize;
+    z-index: 3;
+    transform: translateX(-50%);
+}
+
+.ap-param-slider-play {
+    position: absolute;
+    top: -4px;
+    width: 2px;
+    height: calc(100% + 8px);
+    background: var(--ap-accent-green);
+    pointer-events: none;
+    z-index: 4;
+    transform: translateX(-50%);
+}
+
+/* Value info row beneath slider */
+.ap-param-slider-info {
+    display: flex;
+    align-items: baseline;
+    gap: 2px;
+    font-size: 11px;
+    line-height: 1;
+    color: var(--ap-text-muted);
+}
+
+.ap-param-slider-info-range {
+    opacity: 0.6;
+}
+
+.ap-param-slider-info-default {
+    flex: 1;
+    text-align: center;
+    color: var(--ap-accent-blue);
+}
+
+.ap-param-slider-info-play {
+    color: var(--ap-accent-green);
 }
 
 .ap-node-param-value {
@@ -1924,55 +1999,17 @@ html, body {
     min-width: 24px;
 }
 
-/* Modulation amount sliders on target nodes */
+/* Modulation amount sliders on target nodes (uses NodeParamSlider) */
 .ap-node-mod-amount {
-    display: flex;
+    display: grid;
+    grid-column: 1 / -1;
+    grid-template-columns: subgrid;
     align-items: center;
-    gap: 4px;
-    padding: 2px 0 2px 16px;
-    font-size: var(--ap-font-size-xs);
-    opacity: 0.85;
+    padding: 1px 0;
 }
 
-.ap-mod-source-label {
-    min-width: 40px;
-    font-size: var(--ap-font-size-xs);
-    text-transform: uppercase;
-}
-
-.ap-mod-amount-mini {
-    flex: 1;
-    height: 8px;
-    max-width: 60px;
-    -webkit-appearance: none;
-    appearance: none;
-    background: var(--ap-bg-primary);
-    border: 1px solid var(--ap-window-border);
-    cursor: pointer;
-}
-
-.ap-mod-amount-mini::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 8px;
-    height: 12px;
-    background: var(--ap-accent-yellow);
-    cursor: pointer;
-}
-
-.ap-mod-amount-mini::-moz-range-thumb {
-    width: 8px;
-    height: 12px;
-    background: var(--ap-accent-yellow);
-    cursor: pointer;
-    border: none;
-}
-
-.ap-mod-amount-value {
-    min-width: 24px;
-    text-align: right;
-    font-size: var(--ap-font-size-xs);
-    color: var(--ap-text-secondary);
+.ap-node-mod-amount > .ap-priority-badge-wrapper {
+    grid-column: 2;
 }
 
 /* Node ports — appearance override on .ap-port base (filled black, white border) */
@@ -2908,6 +2945,7 @@ html, body {
    ============================================================ */
 
 .ap-node-velocity-viz {
+    grid-column: 1 / -1;
     margin: 2px 4px 4px 4px;
 }
 
@@ -2972,10 +3010,20 @@ html, body {
     color: var(--ap-text-primary);
 }
 
+.ap-wave-btn.playing {
+    border-color: var(--ap-accent-green);
+    box-shadow: 0 0 0 1px var(--ap-accent-green);
+}
+
 .ap-wave-btn.active {
     background: var(--ap-accent-blue);
     border-color: var(--ap-accent-blue);
     color: var(--ap-bg-primary);
+}
+
+.ap-wave-btn.active.playing {
+    border-color: var(--ap-accent-green);
+    box-shadow: 0 0 0 1px var(--ap-accent-green);
 }
 
 .ap-wave-icon {
@@ -3041,6 +3089,12 @@ html, body {
     border-color: var(--ap-window-border);
 }
 
+.ap-priority-badge.unmapped {
+    color: var(--ap-text-muted);
+    border-color: var(--ap-text-muted);
+    background: transparent;
+}
+
 .ap-priority-edit {
     width: 24px;
     height: 14px;
@@ -3066,46 +3120,141 @@ html, body {
     background: rgba(231, 110, 85, 0.15);
 }
 
-/* ============================================================
-   NODE LAYOUT VARIANTS
-   ============================================================ */
+/* -- Priority Badge Wrapper (for popover positioning) -- */
 
-/* Envelope module layout */
-.ap-node-envelope {
-    min-width: 160px;
+.ap-priority-badge-wrapper {
+    position: relative;
+    display: inline-flex;
+    flex-shrink: 0;
 }
 
-.ap-node-envelope .ap-node-body {
-    padding: var(--ap-spacing-xs);
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 2px 4px;
+.ap-priority-badge-wrapper > .ap-priority-badge {
+    margin-right: 0;
 }
 
-/* Envelope curve spans both columns */
-.ap-node-envelope .ap-node-envelope-viz {
-    grid-column: 1 / -1;
+/* -- Priority Popover -- */
+
+.ap-priority-popover {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    z-index: 1000;
+    margin-top: 2px;
+    min-width: 180px;
+    max-height: 260px;
+    overflow-y: auto;
+    background: var(--ap-bg-primary);
+    border: 1px solid var(--ap-window-border);
+    box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.25);
+    font-family: var(--ap-font-family);
+    font-size: var(--ap-font-size-xs);
 }
 
-/* Param containers fit in grid cells */
-.ap-node-envelope .ap-node-param-container {
+.ap-priority-dial-list {
     display: flex;
     flex-direction: column;
 }
 
-/* Mod amount rows span both columns */
-.ap-node-envelope .ap-node-mod-amount {
+.ap-priority-dial-row {
+    display: flex;
+    align-items: center;
+    gap: var(--ap-spacing-xs);
+    padding: 2px var(--ap-spacing-xs);
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.ap-priority-dial-row:hover {
+    background: var(--ap-bg-secondary);
+}
+
+.ap-priority-dial-row.current {
+    background: var(--ap-accent-blue);
+    color: #fff;
+}
+
+.ap-priority-dial-row.current:hover {
+    background: var(--ap-accent-blue);
+}
+
+.ap-priority-dial-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 16px;
+    font-weight: 600;
+    color: inherit;
+}
+
+.ap-priority-dial-label {
+    flex-shrink: 0;
+    color: inherit;
+}
+
+.ap-priority-dial-occupant {
+    flex: 1;
+    text-align: right;
+    color: var(--ap-text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ap-priority-dial-row.current .ap-priority-dial-occupant {
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.ap-priority-divider {
+    height: 1px;
+    background: var(--ap-window-border);
+    margin: 2px 0;
+}
+
+.ap-priority-number-row {
+    display: flex;
+    align-items: center;
+    gap: var(--ap-spacing-xs);
+    padding: var(--ap-spacing-xs);
+}
+
+.ap-priority-number-row .ap-priority-edit {
+    flex: 1;
+    margin-right: 0;
+}
+
+.ap-priority-set-btn {
+    padding: 0 var(--ap-spacing-xs);
+    height: 14px;
+    font-family: var(--ap-font-family);
+    font-size: var(--ap-font-size-xs);
+    font-weight: 600;
+    background: var(--ap-bg-tertiary);
+    border: 1px solid var(--ap-window-border);
+    cursor: pointer;
+    color: var(--ap-text-primary);
+    line-height: 1;
+}
+
+.ap-priority-set-btn:hover {
+    background: var(--ap-bg-secondary);
+}
+
+/* ============================================================
+   NODE LAYOUT VARIANTS
+   ============================================================ */
+
+/* Envelope module layout — uses same subgrid as other nodes */
+.ap-node-envelope .ap-node-envelope-viz {
     grid-column: 1 / -1;
 }
 
 /* Oscillator module layout */
 .ap-node-oscillator {
-    min-width: 150px;
+    min-width: 300px;
 }
 
 /* LFO module layout */
 .ap-node-lfo {
-    min-width: 150px;
+    min-width: 300px;
 }
 
 /* ============================================================

@@ -46,6 +46,8 @@ class DeviceRegistry {
         // Relay sniffer — passive transport decoder for exchange traffic
         this._relaySniffer = new RelaySniffer((json) => this._handleSniffedJson(json));
         this._onControlSurface = null;
+        this._onControlSurfaceInfo = null;
+        this._controlSurfaceInfo = null;
     }
 
     //==================================================================
@@ -181,6 +183,23 @@ class DeviceRegistry {
         this._onControlSurface = callback;
     }
 
+    /**
+     * Set callback for control-surface info (intercepted from controller → synth)
+     * Fired when sniffer decodes a control-surface response (dial counts, etc).
+     * @param {Function} callback - Called with ({ op, controls })
+     */
+    onControlSurfaceInfo(callback) {
+        this._onControlSurfaceInfo = callback;
+    }
+
+    /**
+     * Get the last captured control-surface info
+     * @returns {Object|null} e.g. { op: 'control-surface', controls: { '1d.abs.rotary': 16 } }
+     */
+    getControlSurfaceInfo() {
+        return this._controlSurfaceInfo || null;
+    }
+
     //==================================================================
     // PUBLIC: Route Map (many-to-many MIDI routing)
     //==================================================================
@@ -304,6 +323,7 @@ class DeviceRegistry {
         this._exchangeSynthPort = null;
         this._exchangeControllerPort = null;
         this._relaySniffer._reset();
+        this._controlSurfaceInfo = null;
         this._log('Exchange relay disabled');
     }
 
@@ -428,22 +448,23 @@ class DeviceRegistry {
                 api.handleMidiMessage(event);
             }
 
+            // Decode value feedback from any synth (not gated on exchange relay)
+            if (this._onValueFeedback) {
+                this._decodeValueFeedback(data, portName);
+            }
+
             // Exchange relay: forward SysEx between synth and controller
             if (this._exchangeRelayActive) {
                 if (portName === this._exchangeSynthPort && this._exchangeControllerPort) {
                     // Synth → Controller
                     this._log(`RELAY: Synth → Controller (${data.length} bytes)`, 'midi');
                     this.send(this._exchangeControllerPort, data);
-
-                    // Passive sniffing of exchange traffic
-                    if (this._onValueFeedback) {
-                        this._decodeValueFeedback(data, portName);
-                    }
                     this._relaySniffer.receive(data);
                 } else if (portName === this._exchangeControllerPort && this._exchangeSynthPort) {
                     // Controller → Synth
                     this._log(`RELAY: Controller → Synth (${data.length} bytes)`, 'midi');
                     this.send(this._exchangeSynthPort, data);
+                    this._relaySniffer.receive(data);
                 }
             }
             return;
@@ -474,6 +495,12 @@ class DeviceRegistry {
         if (json.cmd === 'set-patch' && Array.isArray(json.controls)) {
             this._log(`Sniffer: intercepted set-patch "${json.name}" (${json.controls.length} controls)`);
             this._onControlSurface?.(json.controls);
+        }
+        // Capture controller's control-surface response (dial count, keyboard info)
+        if (json.op === 'control-surface' && json.controls) {
+            this._controlSurfaceInfo = json;
+            this._log(`Sniffer: intercepted control-surface (${JSON.stringify(json.controls)})`);
+            this._onControlSurfaceInfo?.(json);
         }
     }
 

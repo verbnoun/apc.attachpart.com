@@ -28,13 +28,15 @@ function Node({
     onPortPositionChange,
     selectedWireTarget,
     onUpdateParam,
+    onUpdateRange,
     onLiveChange,
     onUpdateModAmount,
     otherEnvelopeParams,  // For envelope overlay
     otherEnvelopeColor,   // Color for the other envelope curve
     midiState,
     controllerConfig,
-    deviceKey
+    deviceKey,
+    hasController = false
 }) {
     const moduleData = patch?.[module.id];
 
@@ -57,12 +59,15 @@ function Node({
             if (typeof value === 'object' && value !== null) {
                 // It's a parameter with range/initial/etc
                 if (value.initial !== undefined) {
+                    const absRange = getAbsoluteRange(topology, key);
                     params.push({
                         key,
                         name: value.name || key,  // Human-readable name
                         value: value.initial,
-                        min: value.range?.[0] ?? 0,
-                        max: value.range?.[1] ?? 1,
+                        min: value.range?.[0] ?? 0,        // patch range min
+                        max: value.range?.[1] ?? 1,        // patch range max
+                        absMin: absRange?.absMin ?? (value.range?.[0] ?? 0),  // absolute min
+                        absMax: absRange?.absMax ?? (value.range?.[1] ?? 1),  // absolute max
                         priority: value.priority ?? 999,  // For sorting
                         cc: value.cc,
                         uid: value.uid  // Parameter UID for value feedback
@@ -71,25 +76,33 @@ function Node({
             }
         });
 
-        // Sort by priority
-        return params.sort((a, b) => a.priority - b.priority);
-    }, [moduleData]);
+        // Keep JSON key order (priority badge shows dial assignment, not display order)
+        return params;
+    }, [moduleData, topology]);
 
-    // Collect all existing priorities from the entire patch for duplicate checking
-    const existingPriorities = React.useMemo(() => {
-        const priorities = new Set();
-        if (!patch) return priorities;
+    // Collect all existing priorities from the entire patch as Map<priority, {key, name}>
+    const priorityMap = React.useMemo(() => {
+        const map = new Map();
+        if (!patch) return map;
 
         Object.entries(patch).forEach(([moduleId, modData]) => {
             if (typeof modData !== 'object' || modData === null) return;
             Object.entries(modData).forEach(([key, value]) => {
-                if (typeof value === 'object' && value !== null && value.priority) {
-                    priorities.add(value.priority);
+                if (typeof value === 'object' && value !== null && value.priority != null) {
+                    map.set(value.priority, { key, name: value.name || key });
                 }
             });
         });
-        return priorities;
+        return map;
     }, [patch]);
+
+    // Dial count from controller config pots array (0 if no controller paired)
+    const dialCount = (hasController && controllerConfig?.pots?.length) || 0;
+
+    // Priority update — firmware auto-swaps on conflict
+    const handleUpdatePriority = (paramKey, newPri) => {
+        onUpdateParam(paramKey, { priority: newPri });
+    };
 
     // Check if this is an envelope module
     const isEnvelopeModule = module.category === 'envelope' ||
@@ -325,8 +338,10 @@ function Node({
                                 <PriorityBadge
                                     priority={param.priority}
                                     paramKey={param.key}
-                                    existingPriorities={existingPriorities}
-                                    onUpdatePriority={(key, pri) => onUpdateParam(key, { priority: pri })}
+                                    priorityMap={priorityMap}
+                                    onUpdatePriority={handleUpdatePriority}
+                                    hasController={hasController}
+                                    dialCount={dialCount}
                                 />
                                 <span className="ap-node-param-key">{param.name}</span>
                                 {isWaveControl ? (
@@ -334,42 +349,59 @@ function Node({
                                         param={param}
                                         waves={waves}
                                         onUpdateParam={onUpdateParam}
+                                        hasController={hasController}
+                                        midiState={midiState}
                                     />
                                 ) : (
                                     <NodeParamSlider
                                         param={param}
                                         onUpdateParam={onUpdateParam}
+                                        onUpdateRange={onUpdateRange}
                                         onLiveChange={onLiveChange}
                                         midiState={midiState}
                                         deviceKey={deviceKey}
+                                        hasController={hasController}
                                     />
                                 )}
                             </div>
                             {/* Amount sliders under param */}
                             {amountParams.map(amt => (
                                 <div key={amt.source} className="ap-node-mod-amount">
+                                    <PriorityBadge
+                                        priority={amt.priority}
+                                        paramKey={amt.key}
+                                        priorityMap={priorityMap}
+                                        onUpdatePriority={handleUpdatePriority}
+                                        hasController={hasController}
+                                        dialCount={dialCount}
+                                    />
                                     <span
-                                        className="ap-mod-source-label"
+                                        className="ap-node-param-key"
                                         style={{ color: moduleState?.allModules?.get(amt.source)?.groupColor || 'var(--ap-wire-mod)' }}
                                     >
-                                        {amt.source.replace('_', ' ')}
+                                        {amt.name}
                                     </span>
-                                    <input
-                                        type="range"
-                                        className="ap-mod-amount-mini"
-                                        min={amt.min}
-                                        max={amt.max}
-                                        step={0.01}
-                                        value={amt.value}
-                                        onChange={(e) => onUpdateModAmount && onUpdateModAmount(
-                                            param.key,
-                                            amt.source,
-                                            parseFloat(e.target.value)
-                                        )}
-                                        onClick={(e) => e.stopPropagation()}
-                                        onMouseDown={(e) => e.stopPropagation()}
+                                    <NodeParamSlider
+                                        param={{
+                                            key: amt.key,
+                                            value: amt.value,
+                                            min: amt.min,
+                                            max: amt.max,
+                                            absMin: amt.min,
+                                            absMax: amt.max,
+                                            cc: amt.cc,
+                                            uid: amt.uid,
+                                        }}
+                                        onUpdateParam={(key, opts) => {
+                                            const val = typeof opts === 'object' ? opts.value : opts;
+                                            onUpdateModAmount?.(param.key, amt.source, val);
+                                        }}
+                                        onLiveChange={onLiveChange}
+                                        midiState={midiState}
+                                        deviceKey={deviceKey}
+                                        hasController={hasController}
+                                        noRange
                                     />
-                                    <span className="ap-mod-amount-value">{amt.value.toFixed(2)}</span>
                                 </div>
                             ))}
                         </div>

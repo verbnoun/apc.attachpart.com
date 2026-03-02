@@ -89,14 +89,33 @@ function WaveIcon({ type }) {
 // WAVE SELECTOR COMPONENT
 //======================================================================
 
-function WaveSelector({ param, waves, onUpdateParam }) {
+function WaveSelector({ param, waves, onUpdateParam, hasController, midiState }) {
     // Local state for immediate visual feedback (same pattern as NodeParamSlider)
     const [localValue, setLocalValue] = nwUseState(Math.round(param.value));
+    const [playValue, setPlayValue] = nwUseState(null);
 
     // Sync with external value changes (device round-trip)
     nwUseEffect(() => {
         setLocalValue(Math.round(param.value));
     }, [param.value]);
+
+    // Subscribe to CC traffic for play wave (only when controller connected)
+    nwUseEffect(() => {
+        if (!midiState || param.cc < 0 || !hasController) {
+            setPlayValue(null);
+            return;
+        }
+        const unsubscribe = midiState.subscribe((eventType, data) => {
+            if (eventType === 'allCC' && data.cc === param.cc) {
+                const normalized = data.value / 127;
+                const absMin = param.absMin ?? 0;
+                const absMax = param.absMax ?? (waves.length - 1);
+                const val = Math.round(absMin + normalized * (absMax - absMin));
+                setPlayValue(val);
+            }
+        });
+        return unsubscribe;
+    }, [midiState, param.cc, hasController, param.absMin, param.absMax]);
 
     // No waves from topology = don't render
     if (!waves || waves.length === 0) return null;
@@ -104,21 +123,26 @@ function WaveSelector({ param, waves, onUpdateParam }) {
     return (
         <div className="ap-wave-selector">
             <div className="ap-wave-options">
-                {waves.map(wave => (
-                    <button
-                        key={wave.id}
-                        className={`ap-wave-btn ${wave.id === localValue ? 'active' : ''}`}
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            setLocalValue(wave.id);
-                            onUpdateParam(param.key, wave.id);
-                        }}
-                        onMouseDown={(e) => e.stopPropagation()}
-                        title={wave.name}
-                    >
-                        <WaveIcon type={wave.name} />
-                    </button>
-                ))}
+                {waves.map(wave => {
+                    const isDefault = wave.id === localValue;
+                    const isPlaying = hasController && playValue !== null && wave.id === playValue;
+                    const cls = `ap-wave-btn${isDefault ? ' active' : ''}${isPlaying ? ' playing' : ''}`;
+                    return (
+                        <button
+                            key={wave.id}
+                            className={cls}
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                setLocalValue(wave.id);
+                                onUpdateParam(param.key, wave.id);
+                            }}
+                            onMouseDown={(e) => e.stopPropagation()}
+                            title={wave.name}
+                        >
+                            <WaveIcon type={wave.name} />
+                        </button>
+                    );
+                })}
             </div>
         </div>
     );
@@ -199,78 +223,149 @@ function EditableValue({ value, min, max, step, onCommit, formatValue }) {
 // PRIORITY BADGE COMPONENT
 //======================================================================
 
-function PriorityBadge({ priority, paramKey, existingPriorities, onUpdatePriority }) {
-    const [editing, setEditing] = nwUseState(false);
-    const [editValue, setEditValue] = nwUseState(priority?.toString() || '');
-    const [error, setError] = nwUseState(false);
+function PriorityBadge({ priority, paramKey, priorityMap, onUpdatePriority, hasController, dialCount }) {
+    const [open, setOpen] = nwUseState(false);
+    const [editValue, setEditValue] = nwUseState('');
+    const badgeRef = nwUseRef(null);
+    const popoverRef = nwUseRef(null);
     const inputRef = nwUseRef(null);
 
-    const handleClick = (e) => {
+    const isUnmapped = priority === -1 || priority >= 255;
+
+    const handleBadgeClick = (e) => {
         e.stopPropagation();
-        setEditing(true);
-        setError(false);
-        setEditValue(priority?.toString() || '');
+        setOpen(!open);
+        setEditValue('');
     };
 
-    const handleBlur = () => {
+    // Close on Escape or click-outside
+    nwUseEffect(() => {
+        if (!open) return;
+        const handleKey = (e) => {
+            if (e.key === 'Escape') setOpen(false);
+        };
+        const handleClickOutside = (e) => {
+            if (popoverRef.current && !popoverRef.current.contains(e.target) &&
+                badgeRef.current && !badgeRef.current.contains(e.target)) {
+                setOpen(false);
+            }
+        };
+        window.addEventListener('keydown', handleKey);
+        window.addEventListener('mousedown', handleClickOutside, true);
+        return () => {
+            window.removeEventListener('keydown', handleKey);
+            window.removeEventListener('mousedown', handleClickOutside, true);
+        };
+    }, [open]);
+
+    // Focus input when popover opens (if no controller, input is primary)
+    nwUseEffect(() => {
+        if (open && inputRef.current) {
+            inputRef.current.focus();
+            inputRef.current.select();
+        }
+    }, [open]);
+
+    const handleDialClick = (dialNum) => {
+        if (dialNum === priority) {
+            setOpen(false);
+            return;
+        }
+        onUpdatePriority(paramKey, dialNum);
+        setOpen(false);
+    };
+
+    const handleNoDial = () => {
+        if (isUnmapped) {
+            setOpen(false);
+            return;
+        }
+        onUpdatePriority(paramKey, -1);
+        setOpen(false);
+    };
+
+    const handleNumberSubmit = () => {
         const num = parseInt(editValue, 10);
-        // Validate: must be positive integer
-        if (isNaN(num) || num <= 0) {
-            setEditing(false);
-            return;
-        }
-        // Skip if unchanged
+        if (isNaN(num) || num <= 0) return;
         if (num === priority) {
-            setEditing(false);
-            return;
-        }
-        // Check for duplicate (exclude current param's own priority)
-        if (existingPriorities?.has(num)) {
-            setError(true);
-            // Brief red flash, then close
-            setTimeout(() => setEditing(false), 300);
+            setOpen(false);
             return;
         }
         onUpdatePriority(paramKey, num);
-        setEditing(false);
+        setOpen(false);
     };
 
-    const handleKeyDown = (e) => {
+    const handleInputKeyDown = (e) => {
         if (e.key === 'Enter') {
             e.preventDefault();
-            handleBlur();
+            handleNumberSubmit();
         }
         if (e.key === 'Escape') {
-            setEditing(false);
+            setOpen(false);
         }
     };
 
-    nwUseEffect(() => {
-        if (editing && inputRef.current) {
-            inputRef.current.select();
-        }
-    }, [editing]);
-
-    if (editing) {
-        return (
-            <input
-                ref={inputRef}
-                type="text"
-                className={`ap-priority-edit ${error ? 'error' : ''}`}
-                value={editValue}
-                onChange={(e) => { setEditValue(e.target.value); setError(false); }}
-                onBlur={handleBlur}
-                onKeyDown={handleKeyDown}
-                onClick={(e) => e.stopPropagation()}
-                onMouseDown={(e) => e.stopPropagation()}
-                autoFocus
-            />
-        );
-    }
+    // Build dial rows
+    const showDials = hasController && dialCount > 0;
 
     return (
-        <span className="ap-priority-badge" onClick={handleClick} title="Priority (click to edit)">
-            {priority || '?'}
+        <span className="ap-priority-badge-wrapper" ref={badgeRef}>
+            <span className={`ap-priority-badge ${isUnmapped ? 'unmapped' : ''}`} onClick={handleBadgeClick} title="Priority (click to edit)">
+                {isUnmapped ? '\u2014' : (priority || '?')}
+            </span>
+            {open && (
+                <div
+                    className="ap-priority-popover"
+                    ref={popoverRef}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={(e) => e.stopPropagation()}
+                >
+                    {showDials && (
+                        <div className="ap-priority-dial-list">
+                            {Array.from({ length: dialCount }, (_, i) => {
+                                const dialNum = i + 1;
+                                const occupant = priorityMap?.get(dialNum);
+                                const isCurrent = dialNum === priority;
+                                return (
+                                    <div
+                                        key={dialNum}
+                                        className={`ap-priority-dial-row ${isCurrent ? 'current' : ''}`}
+                                        onClick={() => handleDialClick(dialNum)}
+                                    >
+                                        <span className="ap-priority-dial-num">{dialNum}</span>
+                                        <span className="ap-priority-dial-label">Dial {dialNum}</span>
+                                        <span className="ap-priority-dial-occupant">
+                                            {occupant ? occupant.name : '\u2014'}
+                                        </span>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                    {showDials && (
+                        <div
+                            className={`ap-priority-dial-row no-dial ${isUnmapped ? 'current' : ''}`}
+                            onClick={handleNoDial}
+                        >
+                            <span className="ap-priority-dial-num">{'\u2014'}</span>
+                            <span className="ap-priority-dial-label">No dial</span>
+                        </div>
+                    )}
+                    {showDials && <div className="ap-priority-divider" />}
+                    <div className="ap-priority-number-row">
+                        <input
+                            ref={inputRef}
+                            type="text"
+                            className="ap-priority-edit"
+                            value={editValue}
+                            placeholder={isUnmapped ? '' : (priority?.toString() || '')}
+                            onChange={(e) => setEditValue(e.target.value)}
+                            onKeyDown={handleInputKeyDown}
+                        />
+                        <button className="ap-priority-set-btn" onClick={handleNumberSubmit}>Set</button>
+                    </div>
+                </div>
+            )}
         </span>
     );
 }
@@ -423,24 +518,40 @@ function VelocityCurvePreview({ curve, midiState }) {
 // NODE PARAM SLIDER - Inline slider with local state
 //======================================================================
 
-function NodeParamSlider({ param, onUpdateParam, onLiveChange, midiState, deviceKey }) {
+function NodeParamSlider({ param, onUpdateParam, onUpdateRange, onLiveChange, midiState, deviceKey, hasController, noRange }) {
     const [localValue, setLocalValue] = nwUseState(param.value);
+    const [localRangeMin, setLocalRangeMin] = nwUseState(param.min);
+    const [localRangeMax, setLocalRangeMax] = nwUseState(param.max);
+    const [playValue, setPlayValue] = nwUseState(null);
     const [displayText, setDisplayText] = nwUseState(null);
+    const [dragging, setDragging] = nwUseState(null); // 'value' | 'rangeMin' | 'rangeMax'
+    const sliderRef = nwUseRef(null);
     const lastLiveSendRef = nwUseRef(0);
+    const initialValueRef = nwUseRef(param.value);
+    const initialRangeRef = nwUseRef([param.min, param.max]);
+    // Mutable drag state to avoid stale closures in mousemove handlers
+    const dragRef = nwUseRef({ value: param.value, rangeMin: param.min, rangeMax: param.max });
 
     // Sync with external value changes
     nwUseEffect(() => {
         setLocalValue(param.value);
+        initialValueRef.current = param.value;
+        dragRef.current.value = param.value;
     }, [param.value]);
+
+    nwUseEffect(() => {
+        setLocalRangeMin(param.min);
+        setLocalRangeMax(param.max);
+        initialRangeRef.current = [param.min, param.max];
+        dragRef.current.rangeMin = param.min;
+        dragRef.current.rangeMax = param.max;
+    }, [param.min, param.max]);
 
     // Subscribe to value feedback for this param's UID (scoped by device)
     nwUseEffect(() => {
         if (!midiState || param.uid === undefined || !deviceKey) return;
-
-        // Seed from current state
         const existing = midiState.getValueFeedback(deviceKey, param.uid);
         if (existing) setDisplayText(existing.displayText);
-
         const unsubscribe = midiState.subscribe((eventType, data) => {
             if (eventType === 'valueFeedback' && data.uid === param.uid && data.portName === deviceKey) {
                 setDisplayText(data.displayText);
@@ -449,21 +560,27 @@ function NodeParamSlider({ param, onUpdateParam, onLiveChange, midiState, device
         return unsubscribe;
     }, [midiState, param.uid, deviceKey]);
 
-    // Determine step size based on parameter type
+    // Subscribe to CC traffic for play value (only when controller connected)
+    nwUseEffect(() => {
+        if (!midiState || param.cc < 0 || !hasController) {
+            setPlayValue(null);
+            return;
+        }
+        const unsubscribe = midiState.subscribe((eventType, data) => {
+            if (eventType === 'allCC' && data.cc === param.cc) {
+                const normalized = data.value / 127;
+                const val = localRangeMin + normalized * (localRangeMax - localRangeMin);
+                setPlayValue(val);
+            }
+        });
+        return unsubscribe;
+    }, [midiState, param.cc, localRangeMin, localRangeMax, hasController]);
+
+    // Step size for snapping and display
     const getStep = () => {
-        const range = param.max - param.min;
-
-        // Small ranges (like 0-1, -1 to 1) need fine control
-        if (range <= 2) {
-            return 0.01;
-        }
-
-        // Medium ranges (like 0-10) get medium step
-        if (range <= 20) {
-            return 0.1;
-        }
-
-        // Large ranges (semitones, cents, frequency) get integer step
+        const range = param.absMax - param.absMin;
+        if (range <= 2) return 0.01;
+        if (range <= 20) return 0.1;
         return 1;
     };
 
@@ -471,67 +588,186 @@ function NodeParamSlider({ param, onUpdateParam, onLiveChange, midiState, device
     const formatValue = (val) => {
         if (displayText) return displayText;
         const step = getStep();
-        if (step >= 1) {
-            return Math.round(val);
-        } else if (step >= 0.1) {
-            return val.toFixed(1);
-        } else {
-            return val.toFixed(2);
-        }
+        if (step >= 1) return Math.round(val);
+        if (step >= 0.1) return val.toFixed(1);
+        return val.toFixed(2);
     };
 
-    const handleChange = (e) => {
-        const newValue = parseFloat(e.target.value);
-        setLocalValue(newValue);
+    // Convert value to percentage of absolute range
+    const valueToPercent = (val) => {
+        if (param.absMax === param.absMin) return 0;
+        return ((val - param.absMin) / (param.absMax - param.absMin)) * 100;
+    };
 
-        // Live CC send for params with CC assignment, throttled ~60Hz
-        if (onLiveChange && param.cc >= 0) {
-            const now = performance.now();
-            if (now - lastLiveSendRef.current >= 16) {
-                const normalized = (newValue - param.min) / (param.max - param.min);
-                onLiveChange(param.cc, normalized);
-                lastLiveSendRef.current = now;
+    // Convert mouse x position to value
+    const mouseToValue = (clientX) => {
+        if (!sliderRef.current) return param.absMin;
+        const rect = sliderRef.current.getBoundingClientRect();
+        const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+        return param.absMin + pct * (param.absMax - param.absMin);
+    };
+
+    // Snap value to step
+    const snap = (val) => {
+        const step = getStep();
+        return Math.round(val / step) * step;
+    };
+
+    // Drag handlers — attach to window for smooth dragging
+    // Uses dragRef to avoid stale closures in mousemove handler
+    const justDraggedRef = nwUseRef(false);
+    const startDrag = (type, e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        setDragging(type);
+        initialValueRef.current = localValue;
+        initialRangeRef.current = [localRangeMin, localRangeMax];
+        dragRef.current = { value: localValue, rangeMin: localRangeMin, rangeMax: localRangeMax };
+
+        const handleMove = (me) => {
+            const raw = mouseToValue(me.clientX);
+            const d = dragRef.current;
+            if (type === 'value') {
+                const clamped = snap(Math.max(d.rangeMin, Math.min(d.rangeMax, raw)));
+                d.value = clamped;
+                setLocalValue(clamped);
+                // Live CC send (only when no controller paired)
+                if (!hasController && onLiveChange && param.cc >= 0) {
+                    const now = performance.now();
+                    if (now - lastLiveSendRef.current >= 16) {
+                        const rangeSpan = d.rangeMax - d.rangeMin;
+                        const normalized = rangeSpan > 0 ? (clamped - d.rangeMin) / rangeSpan : 0;
+                        onLiveChange(param.cc, normalized);
+                        lastLiveSendRef.current = now;
+                    }
+                }
+            } else if (type === 'rangeMin') {
+                const val = snap(Math.max(param.absMin, Math.min(d.rangeMax - getStep(), raw)));
+                d.rangeMin = val;
+                setLocalRangeMin(val);
+            } else if (type === 'rangeMax') {
+                const val = snap(Math.max(d.rangeMin + getStep(), Math.min(param.absMax, raw)));
+                d.rangeMax = val;
+                setLocalRangeMax(val);
+            }
+        };
+
+        const handleUp = () => {
+            window.removeEventListener('mousemove', handleMove);
+            window.removeEventListener('mouseup', handleUp);
+            justDraggedRef.current = true;
+            setDragging(null);
+        };
+
+        window.addEventListener('mousemove', handleMove);
+        window.addEventListener('mouseup', handleUp);
+    };
+
+    // Commit on drag end via effect
+    nwUseEffect(() => {
+        if (dragging !== null) return; // still dragging
+        // Check if value changed
+        if (localValue !== initialValueRef.current) {
+            // When controller is attached, store only — don't apply to running synth
+            // (controller owns live parameter values)
+            if (onUpdateParam) {
+                const opts = hasController ? { value: localValue, storeOnly: true } : localValue;
+                onUpdateParam(param.key, opts);
             }
         }
-    };
-
-    const handleCommit = () => {
-        if (onUpdateParam && localValue !== param.value) {
-            onUpdateParam(param.key, localValue);
+        // Check if range changed
+        if (localRangeMin !== initialRangeRef.current[0] || localRangeMax !== initialRangeRef.current[1]) {
+            if (onUpdateRange) onUpdateRange(param.key, localRangeMin, localRangeMax);
         }
-    };
+    }, [dragging]);
 
-    // Handle direct value edit
+    // Handle direct value edit from EditableValue
     const handleValueCommit = (newValue) => {
-        setLocalValue(newValue);
+        const clamped = Math.max(localRangeMin, Math.min(localRangeMax, newValue));
+        setLocalValue(clamped);
         if (onUpdateParam) {
-            onUpdateParam(param.key, newValue);
+            const opts = hasController ? { value: clamped, storeOnly: true } : clamped;
+            onUpdateParam(param.key, opts);
         }
+    };
+
+    // Click on track to set default value (suppressed after drag to prevent double-fire)
+    const handleTrackClick = (e) => {
+        if (dragging) return;
+        if (justDraggedRef.current) {
+            justDraggedRef.current = false;
+            return;
+        }
+        const raw = snap(mouseToValue(e.clientX));
+        const clamped = Math.max(localRangeMin, Math.min(localRangeMax, raw));
+        setLocalValue(clamped);
+        if (onUpdateParam) {
+            const opts = hasController ? { value: clamped, storeOnly: true } : clamped;
+            onUpdateParam(param.key, opts);
+        }
+    };
+
+    const rangeMinPct = valueToPercent(localRangeMin);
+    const rangeMaxPct = valueToPercent(localRangeMax);
+    const valuePct = valueToPercent(localValue);
+    const playPct = playValue !== null ? valueToPercent(playValue) : null;
+
+    // Compact value formatter (no decimal for integers, 1 decimal otherwise)
+    const fmt = (val) => {
+        const step = getStep();
+        if (step >= 1) return Math.round(val);
+        if (step >= 0.1) return val.toFixed(1);
+        return val.toFixed(2);
     };
 
     return (
-        <>
-            <input
-                type="range"
-                className="ap-node-param-slider"
-                min={param.min}
-                max={param.max}
-                step={getStep()}
-                value={localValue}
-                onChange={handleChange}
-                onMouseUp={handleCommit}
-                onTouchEnd={handleCommit}
-                onClick={(e) => e.stopPropagation()}
-                onMouseDown={(e) => e.stopPropagation()}
-            />
-            <EditableValue
-                value={localValue}
-                min={param.min}
-                max={param.max}
-                step={getStep()}
-                onCommit={handleValueCommit}
-                formatValue={formatValue}
-            />
-        </>
+        <div className="ap-param-slider-wrapper" onMouseDown={(e) => e.stopPropagation()}>
+            {/* Slider track */}
+            <div className="ap-param-slider" ref={sliderRef} onClick={handleTrackClick}>
+                <div className="ap-param-slider-track">
+                    {/* Patch range shading */}
+                    <div className="ap-param-slider-range"
+                         style={{ left: rangeMinPct + '%', width: (rangeMaxPct - rangeMinPct) + '%' }} />
+                    {/* Range handles (hidden for noRange amounts) */}
+                    {!noRange && (
+                        <div className="ap-param-slider-rh ap-param-slider-rh-l"
+                             style={{ left: rangeMinPct + '%' }}
+                             onMouseDown={(e) => startDrag('rangeMin', e)} />
+                    )}
+                    {!noRange && (
+                        <div className="ap-param-slider-rh ap-param-slider-rh-r"
+                             style={{ left: rangeMaxPct + '%' }}
+                             onMouseDown={(e) => startDrag('rangeMax', e)} />
+                    )}
+                    {/* Play value indicator (above thumb z-index, wider for visibility) */}
+                    {playPct !== null && hasController && (
+                        <div className="ap-param-slider-play"
+                             style={{ left: playPct + '%' }} />
+                    )}
+                    {/* Default value thumb */}
+                    <div className="ap-param-slider-thumb"
+                         style={{ left: valuePct + '%' }}
+                         onMouseDown={(e) => startDrag('value', e)} />
+                </div>
+            </div>
+            {/* Value info row */}
+            <div className="ap-param-slider-info">
+                {!noRange && <span className="ap-param-slider-info-range">{fmt(localRangeMin)}</span>}
+                <span className="ap-param-slider-info-default" title="Default">
+                    <EditableValue
+                        value={localValue}
+                        min={localRangeMin}
+                        max={localRangeMax}
+                        step={getStep()}
+                        onCommit={handleValueCommit}
+                        formatValue={formatValue}
+                    />
+                </span>
+                {hasController && playValue !== null && (
+                    <span className="ap-param-slider-info-play" title="Play">{fmt(playValue)}</span>
+                )}
+                {!noRange && <span className="ap-param-slider-info-range">{fmt(localRangeMax)}</span>}
+            </div>
+        </div>
     );
 }

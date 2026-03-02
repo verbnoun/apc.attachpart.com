@@ -10,7 +10,7 @@
  * Hover switches between open menus (Mac behavior).
  */
 
-function MenuBar({ focusedWindow, onOpenConfigWindow, onLogClick, onSyncClick, onExpressionPadClick, onPreferencesClick, onOpenDeviceTool, onToolOpen }) {
+function MenuBar({ focusedWindow, openApps, onSurfaceApp, onOpenConfigWindow, onLogClick, onSyncClick, onExpressionPadClick, onPreferencesClick, onOpenDeviceTool, onToolOpen }) {
     const [openMenu, setOpenMenu] = React.useState(null);
 
     const appType = focusedWindow?.type || 'apconsole';
@@ -139,16 +139,34 @@ function MenuBar({ focusedWindow, onOpenConfigWindow, onLogClick, onSyncClick, o
         if (onOpenDeviceTool) onOpenDeviceTool(tool);
     }
 
+    const currentAppId = focusedWindow?.portName || 'apconsole';
+
     return (
         <div className="ap-menubar">
             <div className="ap-menubar-left">
-                <span
-                    className="ap-menubar-app-name"
-                    onMouseDown={(e) => handleMenuClick('app', e)}
-                    onMouseEnter={() => handleMenuHover('app')}
-                >
-                    {appName}
-                </span>
+                <div className="ap-menubar-menu" onMouseDown={(e) => e.stopPropagation()}>
+                    <span
+                        className={`ap-menubar-app-name${openMenu === 'app' ? ' active' : ''}`}
+                        onMouseDown={(e) => handleMenuClick('app', e)}
+                        onMouseEnter={() => handleMenuHover('app')}
+                    >
+                        {appName}
+                    </span>
+                    {openMenu === 'app' && (
+                        <div className="ap-menubar-dropdown">
+                            {openApps.map(app => (
+                                <button
+                                    key={app.id}
+                                    className="ap-menubar-dropdown-item"
+                                    style={app.id === currentAppId ? { fontWeight: 'bold' } : undefined}
+                                    onMouseDown={(e) => handleItemClick(() => onSurfaceApp(app.id), e)}
+                                >
+                                    {app.id === currentAppId ? `\u2713 ${app.name}` : `\u2003${app.name}`}
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                </div>
 
                 {menus.map(menu => (
                     <div key={menu.id} className="ap-menubar-menu" onMouseDown={(e) => e.stopPropagation()}>

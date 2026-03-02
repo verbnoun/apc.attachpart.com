@@ -80,13 +80,15 @@ function PatchEditorWindow({
     onMovePatch,
     onToggleModule,
     onUpdateParam,
+    onUpdateRange,
     onLiveChange,
     onToggleModulation,
     onUpdateModAmount,
     isConnected = true,
     addLog = (msg, type) => console.log(`[${type}] ${msg}`),
     midiState,
-    controllerConfig
+    controllerConfig,
+    hasController = false
 }) {
     // Create logger that uses the addLog prop
     const log = useMemo(() => createPatchLogger(addLog), [addLog]);
@@ -579,11 +581,14 @@ function PatchEditorWindow({
                 wiringMousePos={wiringMousePos}
                 modConnections={modConnections}
                 onUpdateParam={onUpdateParam}
+                onUpdateRange={onUpdateRange}
+                onLiveChange={onLiveChange}
                 onUpdateModAmount={onUpdateModAmount}
                 log={log}
                 midiState={midiState}
                 controllerConfig={controllerConfig}
                 deviceKey={deviceKey}
+                hasController={hasController}
             />
             <LoadingOverlay isLoading={isLoading} isVisible={isLoading} />
             {confirmDialog && (
@@ -698,12 +703,14 @@ function NodeWorkspace({
     wiringMousePos,
     modConnections,
     onUpdateParam,
+    onUpdateRange,
     onLiveChange,
     onUpdateModAmount,
     log = () => {},  // Default to no-op if not provided
     midiState,
     controllerConfig,
-    deviceKey
+    deviceKey,
+    hasController = false
 }) {
     const workspaceRef = useRef(null);
     const [draggingNode, setDraggingNode] = useState(null);
@@ -1224,6 +1231,7 @@ function NodeWorkspace({
                         onPortPositionChange={handlePortPositionChange}
                         selectedWireTarget={selectedWireTarget}
                         onUpdateParam={onUpdateParam}
+                        onUpdateRange={onUpdateRange}
                         onLiveChange={onLiveChange}
                         onUpdateModAmount={onUpdateModAmount}
                         otherEnvelopeParams={otherEnvelopeParams}
@@ -1231,6 +1239,7 @@ function NodeWorkspace({
                         midiState={midiState}
                         controllerConfig={controllerConfig}
                         deviceKey={deviceKey}
+                        hasController={hasController}
                     />
                 );
             }))}
@@ -1259,8 +1268,10 @@ function NodeWorkspace({
                         onPortPositionChange={handlePortPositionChange}
                         selectedWireTarget={selectedWireTarget}
                         onUpdateParam={onUpdateParam}
+                        onUpdateRange={onUpdateRange}
                         onLiveChange={onLiveChange}
                         onUpdateModAmount={onUpdateModAmount}
+                        hasController={hasController}
                     />
                 );
             })()}

@@ -138,6 +138,17 @@ function App() {
             midiStateRef.current?.handleControlSurface(controls);
         });
 
+        // Control surface info observer — controller's dial/keyboard capabilities
+        registry.onControlSurfaceInfo((info) => {
+            const controllerPort = registry._exchangeControllerPort;
+            if (!controllerPort || !info.controls) return;
+            const dialCount = Object.values(info.controls).reduce((sum, n) => sum + n, 0);
+            setConfigByDevice(prev => ({
+                ...prev,
+                [controllerPort]: { ...prev[controllerPort], dialCount }
+            }));
+        });
+
         // Route map change subscription
         registry.onRoutesChanged(() => {
             setRoutes(registry.getRoutes());
@@ -283,9 +294,12 @@ function App() {
                 }));
             });
 
-            api.onExternalPatchChange((index) => {
+            api.onExternalPatchChange((data) => {
+                const index = data.current_index ?? data.index ?? data;
                 addLog(`External patch change to ${index}`, 'info');
-                loadPatch(portName, index);
+                loadPatch(portName, index).then(() => {
+                    refreshControllerConfig(portName);
+                });
             });
 
             // Discover capabilities
@@ -473,6 +487,7 @@ function App() {
             if (WindowManager.exists(wid)) WindowManager.setInfoBar(wid, { left: `Loading patch ${index}…` });
             await api.selectPatch(index);
             await loadPatch(portName, index);
+            refreshControllerConfig(portName);
             if (WindowManager.exists(wid)) {
                 WindowManager.setInfoBar(wid, { left: '' });
             }
@@ -623,13 +638,38 @@ function App() {
         try {
             if (WindowManager.exists(wid)) WindowManager.setInfoBar(wid, { left: `${paramKey}…` });
             await api.updateParam(ss.currentPatchIndex, paramKey, options);
-            await loadPatch(portName, ss.currentPatchIndex);
+            const _p = await loadPatch(portName, ss.currentPatchIndex);
+            if (_p) { const _m = _p[Object.keys(_p).find(k => _p[k]?.[paramKey])]; if (_m?.[paramKey]) addLog(`[DBG] ${paramKey} → v=${_m[paramKey].initial} d=${_m[paramKey].display} p=${_m[paramKey].priority}`, 'info'); }
+            else addLog('[DBG] loadPatch returned null', 'error');
             if (WindowManager.exists(wid)) {
                 WindowManager.setInfoBar(wid, { left: '', right: 'Saved' });
                 clearInfoBarDelayed(wid, 2000);
             }
         } catch (err) {
             addLog(`Failed to update param: ${err.message}`, 'error');
+            if (WindowManager.exists(wid)) {
+                WindowManager.setInfoBar(wid, { left: err.message });
+                clearInfoBarDelayed(wid, 3000);
+            }
+        }
+    };
+
+    const updateRange = async (portName, paramKey, min, max) => {
+        const api = deviceApisRef.current[portName];
+        const ss = synthStateRef.current[portName] || {};
+        if (!api || (ss.currentPatchIndex ?? -1) < 0) return;
+        const wid = `device-${portName}`;
+
+        try {
+            if (WindowManager.exists(wid)) WindowManager.setInfoBar(wid, { left: `${paramKey} range…` });
+            await api.updateRange(ss.currentPatchIndex, paramKey, min, max);
+            await loadPatch(portName, ss.currentPatchIndex);
+            if (WindowManager.exists(wid)) {
+                WindowManager.setInfoBar(wid, { left: '', right: 'Saved' });
+                clearInfoBarDelayed(wid, 2000);
+            }
+        } catch (err) {
+            addLog(`Failed to update range: ${err.message}`, 'error');
             if (WindowManager.exists(wid)) {
                 WindowManager.setInfoBar(wid, { left: err.message });
                 clearInfoBarDelayed(wid, 3000);
@@ -914,6 +954,31 @@ function App() {
         }
     };
 
+    /** After a patch change, find the paired controller and re-trigger exchange.
+     *  Uses only refs/registry (no React state) so it works from stale closures. */
+    const refreshControllerConfig = (synthPort) => {
+        const registry = deviceRegistryRef.current;
+        if (!registry) return;
+        const pairs = registry.getConfigPairs();
+        const entry = Object.entries(pairs).find(([_, sp]) => sp === synthPort);
+        if (!entry) return;
+
+        const [controllerPort] = entry;
+        if (!registry.isConnected(controllerPort) || !registry.isConnected(synthPort)) return;
+
+        const synthApi = deviceApisRef.current[synthPort];
+        if (!synthApi) return;
+
+        addLog(`Triggering exchange: ${synthPort} → ${controllerPort}`, 'info');
+        registry.enableExchangeRelay(synthPort, controllerPort);
+        synthApi.sendControllerAvailable({ device: 'Controller', port: controllerPort })
+            .then(() => addLog('Exchange initiated', 'success'))
+            .catch((err) => {
+                addLog(`Exchange failed: ${err.message}`, 'error');
+                registry.disableExchangeRelay();
+            });
+    };
+
     //------------------------------------------------------------------
     // WINDOW CONTAINERS (for re-rendering)
     //------------------------------------------------------------------
@@ -932,6 +997,10 @@ function App() {
                 const pairedController = Object.entries(configPairs).find(([_, synth]) => synth === portName)?.[0];
                 const cConfig = pairedController ? configByDevice[pairedController] : null;
 
+                // Update info bar center with paired controller name
+                const controllerName = pairedController ? (devices[pairedController]?.deviceInfo?.name || pairedController) : '';
+                WindowManager.setInfoBar(windowId, { center: controllerName });
+
                 const portals = portalColumnsRef.current[windowId] || {};
                 ReactDOM.render(
                     <PatchEditorWindow
@@ -949,6 +1018,7 @@ function App() {
                         onMovePatch={(from, to) => movePatch(portName, from, to)}
                         onToggleModule={(mod, en) => toggleModule(portName, mod, en)}
                         onUpdateParam={(key, opts) => updateParam(portName, key, opts)}
+                        onUpdateRange={(key, min, max) => updateRange(portName, key, min, max)}
                         onLiveChange={(cc, normalized) => liveParamChange(portName, cc, normalized)}
                         onToggleModulation={(t, s, en) => toggleModulation(portName, t, s, en)}
                         onUpdateModAmount={(t, s, a) => updateModulationAmount(portName, t, s, a)}
@@ -956,6 +1026,7 @@ function App() {
                         addLog={addLog}
                         midiState={midiStateRef.current}
                         controllerConfig={cConfig}
+                        hasController={!!pairedController}
                     />,
                     container
                 );
@@ -1078,7 +1149,7 @@ function App() {
 
     // Per-section window size constraints
     const CONFIG_SECTION_SIZES = {
-        curves:  { width: 500, height: 620, maxHeight: 700, columns: [{ flex: 1, scroll: 'v' }], resizable: 'vertical' },
+        curves:  { width: 500, height: 620, maxHeight: 720, columns: [{ flex: 1, scroll: 'v' }], resizable: 'vertical' },
         dials:   { width: 1400, height: 220, columns: [{ flex: 1, scroll: 'h' }], resizable: 'horizontal' },
         pedal:   { width: 360, height: 250 },
         screen:  { width: 360, height: 250 }
@@ -1211,6 +1282,7 @@ function App() {
             ],
             infoBar: {
                 left: '',
+                center: pairedController ? (devices[pairedController]?.deviceInfo?.name || pairedController) : '',
                 right: 'Saved'
             },
             onInfoBarClick: (slot) => {
@@ -1253,12 +1325,15 @@ function App() {
                 onMovePatch={(from, to) => movePatch(portName, from, to)}
                 onToggleModule={(mod, en) => toggleModule(portName, mod, en)}
                 onUpdateParam={(key, opts) => updateParam(portName, key, opts)}
+                onUpdateRange={(key, min, max) => updateRange(portName, key, min, max)}
+                onLiveChange={(cc, normalized) => liveParamChange(portName, cc, normalized)}
                 onToggleModulation={(t, s, en) => toggleModulation(portName, t, s, en)}
                 onUpdateModAmount={(t, s, a) => updateModulationAmount(portName, t, s, a)}
                 isConnected={device?.status === 'connected'}
                 addLog={addLog}
                 midiState={midiStateRef.current}
                 controllerConfig={cConfig}
+                hasController={!!pairedController}
             />,
             result.columns['patches']
         );
@@ -1583,13 +1658,57 @@ function App() {
     };
 
     //------------------------------------------------------------------
+    // APP SWITCHER — surface all windows for an app
+    //------------------------------------------------------------------
+
+    const surfaceApp = (appId) => {
+        if (appId === 'apconsole') {
+            const toolIds = ['log-window', 'routing-window', 'expression-pad', 'preferences', 'style-guide'];
+            for (const id of toolIds) {
+                if (WindowManager.exists(id)) WindowManager.focus(id);
+            }
+        } else {
+            const portName = appId;
+            for (const tool of ['firmware', 'language']) {
+                const wid = `${tool}-${portName}`;
+                if (WindowManager.exists(wid)) WindowManager.focus(wid);
+            }
+            for (const section of ['curves', 'dials', 'pedal', 'screen']) {
+                const wid = `config-${section}-${portName}`;
+                if (WindowManager.exists(wid)) WindowManager.focus(wid);
+            }
+            if (WindowManager.exists(`ahab-${portName}`)) WindowManager.focus(`ahab-${portName}`);
+            if (WindowManager.exists(`device-${portName}`)) WindowManager.focus(`device-${portName}`);
+        }
+    };
+
+    //------------------------------------------------------------------
     // RENDER
     //------------------------------------------------------------------
+
+    // Build list of apps that have at least one open window
+    const toolIds = ['log-window', 'routing-window', 'expression-pad', 'preferences', 'style-guide'];
+    const hasToolWindow = toolIds.some(id => WindowManager.exists(id));
+    const openApps = [];
+    if (hasToolWindow) openApps.push({ id: 'apconsole', name: 'APConsole' });
+    for (const [portName, device] of Object.entries(devices)) {
+        if (device?.status !== 'connected') continue;
+        const hasWindow =
+            WindowManager.exists(`device-${portName}`) ||
+            WindowManager.exists(`ahab-${portName}`) ||
+            ['curves', 'dials', 'pedal', 'screen'].some(s => WindowManager.exists(`config-${s}-${portName}`)) ||
+            ['firmware', 'language'].some(t => WindowManager.exists(`${t}-${portName}`));
+        if (hasWindow) {
+            openApps.push({ id: portName, name: device.deviceInfo?.name || portName });
+        }
+    }
 
     return (
         <div className="ap-container">
             <MenuBar
                 focusedWindow={focusedWindow}
+                openApps={openApps}
+                onSurfaceApp={surfaceApp}
                 onOpenConfigWindow={(section) => {
                     const portName = focusedWindow.portName;
                     if (portName) openConfigWindow(portName, section);

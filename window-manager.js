@@ -112,7 +112,7 @@ const WindowManager = {
         win.className = cls;
         win.id = `window-${id}`;
         win.style.left = `${x}px`;
-        win.style.top = `${y}px`;
+        win.style.top = `${Math.max(0, y)}px`;
         win.style.width = `${Math.min(maxWidth, Math.max(minWidth, width))}px`;
         win.style.height = `${Math.min(maxHeight, Math.max(minHeight, height))}px`;
         win.style.zIndex = this.nextZIndex++;
@@ -475,7 +475,7 @@ const WindowManager = {
             const dx = e.clientX - startX;
             const dy = e.clientY - startY;
             win.style.left = `${startLeft + dx}px`;
-            win.style.top = `${startTop + dy}px`;
+            win.style.top = `${Math.max(0, startTop + dy)}px`;
         });
 
         document.addEventListener('mouseup', () => {

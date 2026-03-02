@@ -81,6 +81,11 @@ class Estragon extends VirtualDevice {
                     { id: 2, name: 'Saw' },
                     { id: 3, name: 'Square' }
                 ]
+            },
+            params: {
+                CARRIER: { RATIO: [0.5, 16], LEVEL: [0, 1], WAVE: [0, 3] },
+                MOD: { RATIO: [0.5, 16], DEPTH: [0, 5000], WAVE: [0, 3] },
+                AMP_ENV: { ATTACK: [0.001, 2], DECAY: [0.001, 2], SUSTAIN: [0, 1], RELEASE: [0.001, 3] }
             }
         };
 
@@ -213,6 +218,10 @@ class Estragon extends VirtualDevice {
 
             case 'update-param':
                 this._handleUpdateParam(json);
+                break;
+
+            case 'update-range':
+                this._handleUpdateRange(json);
                 break;
 
             case 'toggle-module':
@@ -426,6 +435,30 @@ class Estragon extends VirtualDevice {
         }
 
         this._sendResponse({ status: 'ok', op: 'update-param' });
+    }
+
+    _handleUpdateRange(json) {
+        const patch = this._patches[json.index];
+        if (!patch) {
+            this._sendResponse({ error: 'Invalid patch index' });
+            return;
+        }
+
+        for (const modKey of ['CARRIER', 'MODULATOR', 'AMP_ENV']) {
+            const mod = patch[modKey];
+            if (!mod) continue;
+            if (mod[json.param]) {
+                mod[json.param].range = [json.min, json.max];
+                this._sendResponse({
+                    status: 'ok', op: 'update-range',
+                    index: json.index, param: json.param,
+                    min: json.min, max: json.max
+                });
+                return;
+            }
+        }
+
+        this._sendResponse({ error: 'Unknown parameter' });
     }
 
     _handleMovePatch(json) {
