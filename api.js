@@ -614,6 +614,17 @@ class UnifiedDeviceAPI {
                 return;
             }
 
+            // DM Protocol (0x20, 0x21) — binary, before mcoded7 decode
+            if (data[3] === 0x20) {
+                this._handleDmChannel(data);
+                return;
+            }
+
+            if (data[3] === 0x21) {
+                this._handleDmFeedback(data);
+                return;
+            }
+
             const payload = data.slice(3, -1);
             const decoded = mcoded7Decode(payload);
 
@@ -769,6 +780,18 @@ class UnifiedDeviceAPI {
         }
 
         this._resolve(json);
+    }
+
+    //======================================================================
+    // PRIVATE: DM Protocol Stubs (Phase 1 — log and discard)
+    //======================================================================
+
+    _handleDmChannel(data) {
+        this._log('DM: ignoring 0x20 channel message', 'info');
+    }
+
+    _handleDmFeedback(data) {
+        this._log('DM: ignoring 0x21 feedback message', 'info');
     }
 
     _log(msg, type = 'info') {
