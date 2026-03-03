@@ -127,12 +127,39 @@ function from14bit(val) {
 }
 
 //======================================================================
+// DM 0x20 Send Encoding
+//======================================================================
+
+/**
+ * Encode a JSON command as a 0x20 DM SysEx message.
+ * Format: [F0][7D][00][20][json_bytes][F7]
+ *
+ * Not wired into _sendCommand() yet (Phase 5), but available for testing
+ * and manual send.
+ *
+ * @param {Object} json - Command object (e.g., {cmd: 'list-patches'})
+ * @returns {Uint8Array} Complete SysEx message including F0/F7
+ */
+function encodeDmJsonToSysEx(json) {
+    const jsonBytes = new TextEncoder().encode(JSON.stringify(json));
+    const sysex = new Uint8Array(jsonBytes.length + 5);
+    sysex[0] = 0xF0;
+    sysex[1] = 0x7D;
+    sysex[2] = 0x00;
+    sysex[3] = 0x20;
+    sysex.set(jsonBytes, 4);  // First byte = 0x7B ('{')
+    sysex[sysex.length - 1] = 0xF7;
+    return sysex;
+}
+
+//======================================================================
 // Exports (browser global)
 //======================================================================
 
 window.classifySysEx = classifySysEx;
 window.classifyDmFormat = classifyDmFormat;
 window.parseDmFeedback = parseDmFeedback;
+window.encodeDmJsonToSysEx = encodeDmJsonToSysEx;
 window.to14bit = to14bit;
 window.from14bit = from14bit;
 window.AP_DM_FEEDBACK_NO_CC = AP_DM_FEEDBACK_NO_CC;

@@ -50,6 +50,8 @@ class UnifiedDeviceAPI {
         // Callbacks
         this._onSaveStatusChanged = null;
         this._onExternalPatchChange = null;
+        this._onDmNotification = null;
+        this._onDmFeedback = null;
     }
 
     //======================================================================
@@ -209,6 +211,14 @@ class UnifiedDeviceAPI {
 
     onExternalPatchChange(callback) {
         this._onExternalPatchChange = callback;
+    }
+
+    onDmNotification(callback) {
+        this._onDmNotification = callback;
+    }
+
+    onDmFeedback(callback) {
+        this._onDmFeedback = callback;
     }
 
     //======================================================================
@@ -787,11 +797,57 @@ class UnifiedDeviceAPI {
     //======================================================================
 
     _handleDmChannel(data) {
-        this._log('DM: ignoring 0x20 channel message', 'info');
+        // Strip F0/F7 framing: data is [F0][7D][00][20][...][F7]
+        const inner = data.slice(1, -1);  // [7D][00][20][...]
+
+        const format = classifyDmFormat(inner);
+
+        if (format === 'direct-json') {
+            // Extract JSON bytes after [7D][00][20]
+            const jsonBytes = inner.slice(3);
+            let json;
+            try {
+                const jsonStr = new TextDecoder().decode(new Uint8Array(jsonBytes));
+                json = JSON.parse(jsonStr);
+            } catch (e) {
+                this._log(`DM: malformed JSON in 0x20 message: ${e.message}`, 'error');
+                return;
+            }
+
+            // Notifications have "notification" key — fire callback, not promise
+            if (json.notification) {
+                this._log(`DM notification: ${json.notification}`);
+                if (this._onDmNotification) {
+                    this._onDmNotification(json);
+                }
+                return;
+            }
+
+            // Command response — route through existing promise mechanism
+            this._routeResponse(json);
+
+        } else if (format === 'transport') {
+            // Chunked transport wrapped in 0x20 — not implemented yet
+            this._log('DM: 0x20 transport format not yet supported', 'warn');
+        } else {
+            this._log('DM: invalid 0x20 format', 'warn');
+        }
     }
 
     _handleDmFeedback(data) {
-        this._log('DM: ignoring 0x21 feedback message', 'info');
+        // Strip F0/F7 framing: data is [F0][7D][00][21][...][F7]
+        const inner = data.slice(1, -1);  // [7D][00][21][...]
+
+        const feedback = parseDmFeedback(inner);
+        if (!feedback) {
+            this._log('DM: invalid 0x21 feedback message', 'warn');
+            return;
+        }
+
+        this._log(`DM feedback: uid=${feedback.uid} val=${feedback.value} "${feedback.display}"`);
+        if (this._onDmFeedback) {
+            this._onDmFeedback(feedback);
+        }
     }
 
     _log(msg, type = 'info') {
