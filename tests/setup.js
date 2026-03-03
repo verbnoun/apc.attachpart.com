@@ -45,3 +45,4 @@ loadSource('midi-connection.js');
 loadSource('midi-state.js');
 loadSource('relay-sniffer.js');
 loadSource('topology-utils.js');
+loadSource('protocol-dm.js');
