@@ -49,3 +49,6 @@ loadSource('protocol-dm.js');
 loadSource('firmware-uploader.js');
 loadSource('api.js');
 loadSource('device-registry.js');
+loadSource('virtual-device.js');
+loadSource('estragon.js');
+loadSource('ahab.js');
