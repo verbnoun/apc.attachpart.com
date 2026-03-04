@@ -255,6 +255,7 @@ function App() {
                 const ahab = new Ahab(pm);
                 vSynth.start();
                 ahab.start();
+                virtualDevicesRef.current[vSynth._portName] = vSynth;
                 virtualDevicesRef.current[ahab._portName] = ahab;
                 addLog('Virtual devices started', 'info');
             }
@@ -473,6 +474,12 @@ function App() {
 
             addLog(`${deviceInfo.name || portName} initialized`, 'success');
 
+            // Connect virtual device if applicable
+            const virtualDevice = virtualDevicesRef.current[portName];
+            if (virtualDevice && virtualDevice.connect) {
+                virtualDevice.connect();
+            }
+
             // Auto-reopen windows if they were previously open
             if (capabilities.includes(CAPABILITIES.CONTROLLER)) {
                 const project = deviceInfo?.project;
@@ -515,6 +522,12 @@ function App() {
     };
 
     const cleanupDevice = (portName) => {
+        // Disconnect virtual device if applicable
+        const virtualDevice = virtualDevicesRef.current[portName];
+        if (virtualDevice && virtualDevice.disconnect) {
+            virtualDevice.disconnect();
+        }
+
         const registry = deviceRegistryRef.current;
         if (registry) {
             registry.unregisterApi(portName);

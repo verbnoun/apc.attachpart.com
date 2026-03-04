@@ -18,6 +18,8 @@ class VirtualDevice {
         this._portManager = portManager;
         this._portName = portName;
         this._started = false;
+        this._connected = false;
+        this._muid = Math.floor(Math.random() * 0x0FFFFFFF) + 1;
 
         // MIDI log for app windows
         this._midiLog = [];         // { dir: 'in'|'out', desc: string, timestamp: number }
@@ -144,6 +146,53 @@ class VirtualDevice {
      */
     handleExchangeResponse(json) {
         // Default: ignore (responses are for the API layer, not the device)
+    }
+
+    //------------------------------------------------------------------
+    // DM PROTOCOL HELPERS
+    //------------------------------------------------------------------
+
+    /**
+     * Send a DM notification (0x20 JSON with notification key)
+     * @param {string} notification - Notification type
+     * @param {Object} extra - Additional fields
+     */
+    _sendDmNotification(notification, extra = {}) {
+        this._sendResponse({ notification, ...extra });
+    }
+
+    /**
+     * Send 0x21 binary feedback message
+     * @param {number} uid - Parameter UID (7-bit)
+     * @param {number} value - 14-bit value
+     * @param {string} display - Display text
+     * @param {Object} options - { priority, cc, rangeMin, rangeMax }
+     */
+    _sendDmFeedback(uid, value, display, options = {}) {
+        const { priority = 0, cc = 0x7F, rangeMin = 0, rangeMax = 16383 } = options;
+        const bytes = new Uint8Array(AP_DM_FEEDBACK_HEADER_SIZE + display.length + 3);
+        let i = 0;
+        bytes[i++] = 0xF0;
+        bytes[i++] = 0x7D;
+        bytes[i++] = 0x00;
+        bytes[i++] = 0x21;
+        bytes[i++] = uid & 0x7F;
+        const [vMsb, vLsb] = from14bit(value);
+        bytes[i++] = vMsb;
+        bytes[i++] = vLsb;
+        bytes[i++] = priority & 0x7F;
+        bytes[i++] = cc & 0x7F;
+        const [rMinMsb, rMinLsb] = from14bit(rangeMin);
+        bytes[i++] = rMinMsb;
+        bytes[i++] = rMinLsb;
+        const [rMaxMsb, rMaxLsb] = from14bit(rangeMax);
+        bytes[i++] = rMaxMsb;
+        bytes[i++] = rMaxLsb;
+        for (let c = 0; c < display.length; c++) bytes[i++] = display.charCodeAt(c) & 0x7F;
+        bytes[i++] = 0x00;
+        bytes[i++] = 0xF7;
+        this._logMidi('out', `0x21 feedback uid=${uid} val=${value} "${display}"`);
+        this._portManager.injectMessage(this._portName, bytes.slice(0, i));
     }
 
     //------------------------------------------------------------------

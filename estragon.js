@@ -94,6 +94,24 @@ class Estragon extends VirtualDevice {
     }
 
     //--------------------------------------------------------------
+    // Lifecycle
+    //--------------------------------------------------------------
+
+    connect() {
+        if (this._connected) return;
+        this._connected = true;
+        console.log(`[${this._portName}] Connected`);
+    }
+
+    disconnect() {
+        if (!this._connected) return;
+        this._connected = false;
+        this._pairedMuid = null;
+        this._exchangeState = 'IDLE';
+        console.log(`[${this._portName}] Disconnected`);
+    }
+
+    //--------------------------------------------------------------
     // Preset factory
     //--------------------------------------------------------------
 
@@ -145,8 +163,12 @@ class Estragon extends VirtualDevice {
                 });
                 break;
 
-            case 'controller-available':
-                this._handleControllerAvailable(json);
+            case 'pair':
+                this._handlePair(json);
+                break;
+
+            case 'unpair':
+                this._handleUnpair(json);
                 break;
 
             case 'config-get':
@@ -172,6 +194,7 @@ class Estragon extends VirtualDevice {
                 }
                 this._rebuildChannelPatchMap();
                 this._sendResponse({ status: 'ok', op: 'select-patch', current_index: json.index });
+                this._sendDmNotification('patch-switched', { patchIndex: json.index });
                 break;
 
             case 'get-parts':
@@ -291,13 +314,12 @@ class Estragon extends VirtualDevice {
         }
     }
 
-    _handleControllerAvailable(json) {
+    _handlePair(json) {
+        this._pairedMuid = json.muid || 0;
+        this._sendResponse({ status: 'ok', op: 'pair' });
+        this._sendDmNotification('exchange-start');
+
         this._exchangeState = 'EXCHANGE';
-        this._controllerPort = json.port;
-        console.log(`[${this._portName}] Controller available: ${json.device}`);
-
-        this._sendResponse({ status: 'ok', op: 'controller-available' });
-
         setTimeout(() => {
             this._sendResponse({
                 cmd: 'get-control-surface',
@@ -306,6 +328,12 @@ class Estragon extends VirtualDevice {
                 version: '1.0.0'
             });
         }, 50);
+    }
+
+    _handleUnpair(json) {
+        this._pairedMuid = null;
+        this._exchangeState = 'IDLE';
+        this._sendResponse({ status: 'ok', op: 'unpair' });
     }
 
     _handleControlSurface(json) {
@@ -361,8 +389,9 @@ class Estragon extends VirtualDevice {
                 patches: this._patches.map(p => p.name),
                 controls
             });
-            // Exchange complete — matches Candide behavior (completes after sending set-patch)
+            // Exchange complete — send notification with controls array (matches Candide)
             this._exchangeState = 'IDLE';
+            this._sendDmNotification('exchange-complete', { controls });
             console.log(`[${this._portName}] Exchange complete`);
         }, 50);
     }
@@ -626,18 +655,27 @@ class Estragon extends VirtualDevice {
     //--------------------------------------------------------------
 
     _sendValueFeedback(uid, text) {
-        // F0 7D 00 10 UID text... 00 F7
-        const textBytes = new TextEncoder().encode(text);
-        const msg = new Uint8Array(5 + textBytes.length + 2);
-        msg[0] = 0xF0;
-        msg[1] = 0x7D;
-        msg[2] = 0x00;
-        msg[3] = 0x10;
-        msg[4] = uid & 0xFF;
-        msg.set(textBytes, 5);
-        msg[5 + textBytes.length] = 0x00;
-        msg[5 + textBytes.length + 1] = 0xF7;
-        this._sendMidi(msg);
+        // Look up current value for the param at this UID
+        const patch = this._patches[this._currentPatchIndex];
+        let paramValue = 0;
+        let paramUid = 0;
+        if (patch) {
+            for (const modKey of ['CARRIER', 'MODULATOR', 'AMP_ENV']) {
+                const mod = patch[modKey];
+                if (!mod) continue;
+                for (const [paramKey, param] of Object.entries(mod)) {
+                    if (paramKey === 'name' || typeof param !== 'object' || param === null) continue;
+                    if (param.initial === undefined) continue;
+                    if (paramUid === uid) {
+                        paramValue = Math.round(param.initial * 128) & 0x3FFF;
+                        break;
+                    }
+                    paramUid++;
+                }
+                if (paramUid === uid) break;
+            }
+        }
+        this._sendDmFeedback(uid, paramValue, text);
     }
 
     //--------------------------------------------------------------

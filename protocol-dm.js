@@ -160,3 +160,4 @@ window.encodeDmJsonToSysEx = encodeDmJsonToSysEx;
 window.to14bit = to14bit;
 window.from14bit = from14bit;
 window.AP_DM_FEEDBACK_NO_CC = AP_DM_FEEDBACK_NO_CC;
+window.AP_DM_FEEDBACK_HEADER_SIZE = AP_DM_FEEDBACK_HEADER_SIZE;

@@ -122,6 +122,24 @@ class Ahab extends VirtualDevice {
     }
 
     //--------------------------------------------------------------
+    // LIFECYCLE
+    //--------------------------------------------------------------
+
+    connect() {
+        if (this._connected) return;
+        this._connected = true;
+        console.log(`[${this._portName}] Connected`);
+    }
+
+    disconnect() {
+        if (!this._connected) return;
+        this._connected = false;
+        this._pairedMuid = null;
+        this._patchData = null;
+        console.log(`[${this._portName}] Disconnected`);
+    }
+
+    //--------------------------------------------------------------
     // PROTOCOL HANDLERS
     //--------------------------------------------------------------
 
@@ -136,6 +154,17 @@ class Ahab extends VirtualDevice {
                     version: '0.2.0',
                     capabilities: PORT_CAPABILITIES[this._portName]
                 });
+                break;
+
+            case 'pair':
+                this._pairedMuid = json.muid || 0;
+                this._sendResponse({ status: 'ok', op: 'pair' });
+                break;
+
+            case 'unpair':
+                this._pairedMuid = null;
+                this._patchData = null;
+                this._sendResponse({ status: 'ok', op: 'unpair' });
                 break;
 
             case 'get-control-surface':
