@@ -341,7 +341,7 @@ function App() {
     // DEVICE INITIALIZATION (Generic)
     //------------------------------------------------------------------
 
-    const initDevice = async (portName) => {
+    const initDevice = async (portName, retryCount = 0) => {
         const registry = deviceRegistryRef.current;
         if (!registry) return;
 
@@ -377,6 +377,52 @@ function App() {
                 addLog(`External patch change to ${index}`, 'info');
                 loadPatch(portName, index).then(() => {
                     refreshControllerConfig(portName);
+                });
+            });
+
+            // DM notifications (0x20 with "notification" key)
+            api.onDmNotification((json) => {
+                if (json.notification === 'patch-switched') {
+                    addLog(`Patch switched to ${json.index}: ${json.name}`, 'info');
+                    // If paired, exchange auto-starts — defer loadPatch to exchange-complete
+                    // to avoid transport contention between exchange and get-patch
+                    const registry = deviceRegistryRef.current;
+                    const pairs = registry?.getConfigPairs() || {};
+                    const isPaired = Object.values(pairs).includes(portName);
+                    if (isPaired) {
+                        updateSynthState(portName, { pendingPatchIndex: json.index });
+                        refreshControllerConfig(portName);
+                    } else {
+                        loadPatch(portName, json.index);
+                    }
+                }
+                else if (json.notification === 'exchange-complete') {
+                    addLog(`Exchange complete: ${json.controls?.length || 0} controls`, 'success');
+                    deviceRegistryRef.current?.disableExchangeRelay();
+                    // Build pot-assigned param Set from controls array (#73)
+                    const potParams = new Set((json.controls || []).map(c => c.input));
+                    updateSynthState(portName, { potAssignedParams: potParams });
+                    // Load patch now that exchange is done and transport is free
+                    const ss = synthStateRef.current[portName] || {};
+                    const idx = ss.pendingPatchIndex ?? ss.currentPatchIndex ?? 0;
+                    loadPatch(portName, idx);
+                    updateSynthState(portName, { pendingPatchIndex: undefined });
+                }
+                else if (json.notification === 'exchange-start') {
+                    addLog('Exchange starting...', 'info');
+                }
+                else if (json.notification === 'exchange-failed') {
+                    addLog(`Exchange failed: ${json.reason}`, 'error');
+                    deviceRegistryRef.current?.disableExchangeRelay();
+                }
+            });
+
+            // DM feedback (0x21 binary value feedback)
+            api.onDmFeedback((feedback) => {
+                midiStateRef.current?.handleValueFeedback({
+                    uid: feedback.uid,
+                    displayText: feedback.display,
+                    portName
                 });
             });
 
@@ -455,11 +501,16 @@ function App() {
                 setTimeout(() => openDeviceApp(portName), 0);
             }
         } catch (err) {
-            addLog(`${portName} init failed: ${err.message}`, 'error');
-            setDevices(prev => ({
-                ...prev,
-                [portName]: { ...prev[portName], status: 'error' }
-            }));
+            if (retryCount < 2) {
+                addLog(`${portName} init failed, retrying... (${err.message})`, 'warning');
+                setTimeout(() => initDevice(portName, retryCount + 1), 500);
+            } else {
+                addLog(`${portName} init failed: ${err.message}`, 'error');
+                setDevices(prev => ({
+                    ...prev,
+                    [portName]: { ...prev[portName], status: 'error' }
+                }));
+            }
         }
     };
 
@@ -564,10 +615,23 @@ function App() {
         try {
             if (WindowManager.exists(wid)) WindowManager.setInfoBar(wid, { left: `Loading patch ${index}…` });
             await api.selectPatch(index);
-            await loadPatch(portName, index);
-            refreshControllerConfig(portName);
-            if (WindowManager.exists(wid)) {
-                WindowManager.setInfoBar(wid, { left: '' });
+
+            // If paired, select-patch triggers auto-exchange on synth.
+            // Defer loadPatch to exchange-complete handler — sending get-patch
+            // during exchange causes transport contention (exchange chunks
+            // get consumed by API transport instead of get-patch response).
+            const registry = deviceRegistryRef.current;
+            const pairs = registry?.getConfigPairs() || {};
+            const isPaired = Object.values(pairs).includes(portName);
+
+            if (isPaired) {
+                updateSynthState(portName, { pendingPatchIndex: index });
+                refreshControllerConfig(portName);
+            } else {
+                await loadPatch(portName, index);
+                if (WindowManager.exists(wid)) {
+                    WindowManager.setInfoBar(wid, { left: '' });
+                }
             }
         } catch (err) {
             addLog(`Failed to select patch: ${err.message}`, 'error');
@@ -983,7 +1047,8 @@ function App() {
     };
 
     /**
-     * Trigger exchange between a specific synth and controller pair
+     * Trigger pair + exchange between a specific synth and controller pair
+     * Sends pair command to both devices — synth auto-triggers exchange.
      * @param {string} controllerPort
      * @param {string} synthPort
      */
@@ -991,6 +1056,7 @@ function App() {
         const controllerDevice = devices[controllerPort];
         const synthDevice = devices[synthPort];
         const synthApi = deviceApisRef.current[synthPort];
+        const controllerApi = deviceApisRef.current[controllerPort];
 
         if (!synthDevice || synthDevice.status !== 'connected') {
             addLog('Synth not connected', 'warning');
@@ -1007,32 +1073,33 @@ function App() {
             return;
         }
 
-        addLog(`Triggering exchange: ${synthDevice.deviceInfo?.name || synthPort} → ${controllerDevice.deviceInfo?.name || controllerPort}`, 'info');
-        addRoutingLog(`Syncing: ${synthDevice.deviceInfo?.name || synthPort} → ${controllerDevice.deviceInfo?.name || controllerPort}`, 'info');
+        addLog(`Pairing: ${synthDevice.deviceInfo?.name || synthPort} ⇄ ${controllerDevice.deviceInfo?.name || controllerPort}`, 'info');
+        addRoutingLog(`Pairing: ${synthDevice.deviceInfo?.name || synthPort} ⇄ ${controllerDevice.deviceInfo?.name || controllerPort}`, 'info');
 
         const registry = deviceRegistryRef.current;
-        if (registry) {
-            registry.enableExchangeRelay(synthPort, controllerPort);
-        }
+        // Enable relay BEFORE pair (exchange may fire immediately)
+        registry.enableExchangeRelay(synthPort, controllerPort);
 
         try {
-            const controllerInfo = {
-                device: controllerDevice.deviceInfo?.name || 'Controller',
-                port: controllerPort
-            };
-            await synthApi.sendControllerAvailable(controllerInfo);
-            addLog('Exchange initiated', 'success');
-            addRoutingLog('Exchange initiated', 'success');
-        } catch (err) {
-            addLog(`Exchange failed: ${err.message}`, 'error');
-            addRoutingLog(`Exchange failed: ${err.message}`, 'error');
-            if (registry) {
-                registry.disableExchangeRelay();
+            const synthMuid = synthApi.deviceInfo?.muid || 0;
+            const controllerMuid = controllerApi?.deviceInfo?.muid || 0;
+
+            await synthApi.sendPair(controllerMuid);
+            if (controllerApi) {
+                await controllerApi.sendPair(synthMuid);
             }
+            addLog('Pair + exchange initiated', 'success');
+            addRoutingLog('Pair + exchange initiated', 'success');
+        } catch (err) {
+            addLog(`Pair failed: ${err.message}`, 'error');
+            addRoutingLog(`Pair failed: ${err.message}`, 'error');
+            registry.disableExchangeRelay();
+            registry.clearConfigPair(controllerPort);
         }
     };
 
-    /** After a patch change, find the paired controller and re-trigger exchange.
+    /** After a patch change, re-enable relay for the auto-exchange.
+     *  Synth auto-re-exchanges on patch switch (Phase 4). APC just ensures relay is active.
      *  Uses only refs/registry (no React state) so it works from stale closures. */
     const refreshControllerConfig = (synthPort) => {
         const registry = deviceRegistryRef.current;
@@ -1044,17 +1111,8 @@ function App() {
         const [controllerPort] = entry;
         if (!registry.isConnected(controllerPort) || !registry.isConnected(synthPort)) return;
 
-        const synthApi = deviceApisRef.current[synthPort];
-        if (!synthApi) return;
-
-        addLog(`Triggering exchange: ${synthPort} → ${controllerPort}`, 'info');
+        // Re-enable relay for the auto-exchange (synth handles the rest)
         registry.enableExchangeRelay(synthPort, controllerPort);
-        synthApi.sendControllerAvailable({ device: 'Controller', port: controllerPort })
-            .then(() => addLog('Exchange initiated', 'success'))
-            .catch((err) => {
-                addLog(`Exchange failed: ${err.message}`, 'error');
-                registry.disableExchangeRelay();
-            });
     };
 
     //------------------------------------------------------------------
@@ -1105,6 +1163,7 @@ function App() {
                         midiState={midiStateRef.current}
                         controllerConfig={cConfig}
                         hasController={!!pairedController}
+                        potAssignedParams={ss.potAssignedParams}
                     />,
                     container
                 );
@@ -1412,6 +1471,7 @@ function App() {
                 midiState={midiStateRef.current}
                 controllerConfig={cConfig}
                 hasController={!!pairedController}
+                potAssignedParams={ss.potAssignedParams}
             />,
             result.columns['patches']
         );

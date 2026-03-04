@@ -36,7 +36,8 @@ function Node({
     midiState,
     controllerConfig,
     deviceKey,
-    hasController = false
+    hasController = false,
+    potAssignedParams
 }) {
     const moduleData = patch?.[module.id];
 
@@ -361,6 +362,7 @@ function Node({
                                         midiState={midiState}
                                         deviceKey={deviceKey}
                                         hasController={hasController}
+                                        potAssignedParams={potAssignedParams}
                                     />
                                 )}
                             </div>
@@ -400,6 +402,7 @@ function Node({
                                         midiState={midiState}
                                         deviceKey={deviceKey}
                                         hasController={hasController}
+                                        potAssignedParams={potAssignedParams}
                                         noRange
                                     />
                                 </div>

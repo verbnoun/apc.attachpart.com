@@ -62,7 +62,23 @@ class VirtualDevice {
             return;
         }
 
-        // SysEx — decode to JSON
+        // Check for DM protocol (0x20) before falling through to mcoded7
+        if (bytes.length > 4 && bytes[1] === 0x7D && bytes[2] === 0x00 && bytes[3] === 0x20) {
+            const jsonBytes = bytes.slice(4, -1);  // after [F0][7D][00][20], before [F7]
+            try {
+                const json = JSON.parse(new TextDecoder().decode(jsonBytes));
+                if (json.cmd) {
+                    this._logMidi('in', `cmd: ${json.cmd}`);
+                    console.log(`[${this._portName}] RX: ${json.cmd}`);
+                    Promise.resolve().then(() => this.handleCommand(json));
+                } else {
+                    this.handleExchangeResponse(json);
+                }
+            } catch (e) { /* ignore parse errors */ }
+            return;
+        }
+
+        // Legacy mcoded7 SysEx — decode to JSON
         const json = decodeSysExToJson(bytes);
         if (!json) return;
 
@@ -88,7 +104,7 @@ class VirtualDevice {
      * @param {Object} json - Response object
      */
     _sendResponse(json) {
-        const sysex = encodeJsonToSysEx(json);
+        const sysex = encodeDmJsonToSysEx(json);
         const desc = json.cmd || json.status || json.op || 'response';
         this._logMidi('out', `resp: ${desc}`);
         console.log(`[${this._portName}] TX: ${desc}`);

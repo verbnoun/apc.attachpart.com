@@ -89,8 +89,8 @@ describe('classifyDmFormat', () => {
         expect(classifyDmFormat([0x7D, 0x00, 0x20, 0x07])).toBe('transport');
     });
 
-    it('classifies 0x08 as invalid (gap)', () => {
-        expect(classifyDmFormat([0x7D, 0x00, 0x20, 0x08])).toBe('invalid');
+    it('classifies 0x08 as transport (mcoded7 status byte)', () => {
+        expect(classifyDmFormat([0x7D, 0x00, 0x20, 0x08])).toBe('transport');
     });
 
     it('returns invalid for too-short data', () => {

@@ -76,6 +76,15 @@ class UnifiedDeviceAPI {
             (msg, type) => this._log(msg, type)
         );
 
+        // Initialize DM chunked transport (0x20 channel)
+        this.dmTransport = new ChunkedTransport(
+            (sysexData) => { this._registry.send(this._portName, sysexData); return true; },
+            (data, success) => this._handleDmTransportComplete(data, success),
+            () => Date.now(),
+            (msg, type) => this._log(`DM transport: ${msg}`, type),
+            { sysexPrefix: [0x7D, 0x00, 0x20] }
+        );
+
         // Initialize firmware uploader (uses transport for segment transfer)
         this._firmwareUploader = new FirmwareUploader(
             (sysexData) => { this._registry.send(this._portName, sysexData); },
@@ -190,6 +199,11 @@ class UnifiedDeviceAPI {
             this.transport = null;
         }
 
+        if (this.dmTransport) {
+            this.dmTransport.abort();
+            this.dmTransport = null;
+        }
+
         this._registry = null;
         this._portName = null;
         this.deviceInfo = null;
@@ -299,13 +313,30 @@ class UnifiedDeviceAPI {
     }
 
     /**
-     * Send controller-available notification to synth
-     * Triggers synth to initiate exchange with the specified controller
-     * @param {Object} controllerInfo - { device, port }
+     * Send pair command to device
+     * Synth: stores controller MUID, triggers exchange
+     * Controller: stores synth MUID (informational)
+     * @param {number} targetMuid - MUID of the device to pair with
      * @returns {Promise<Object>}
      */
+    async sendPair(targetMuid) {
+        return this._sendCommand({ cmd: 'pair', muid: targetMuid });
+    }
+
+    /**
+     * Send unpair command to device
+     * Clears pairing state on the device
+     * @returns {Promise<Object>}
+     */
+    async sendUnpair() {
+        return this._sendCommand({ cmd: 'unpair' });
+    }
+
+    /**
+     * @deprecated Use sendPair() instead. Kept for backward compat.
+     */
     async sendControllerAvailable(controllerInfo) {
-        this._requireCapability(CAPABILITIES.SYNTH, 'controller-available');
+        this._log('sendControllerAvailable is deprecated — use sendPair()', 'warning');
         return this._sendCommand({ cmd: 'controller-available', ...controllerInfo });
     }
 
@@ -506,6 +537,9 @@ class UnifiedDeviceAPI {
         if (this.transport) {
             this.transport.task();
         }
+        if (this.dmTransport) {
+            this.dmTransport.task();
+        }
     }
 
     //======================================================================
@@ -551,7 +585,7 @@ class UnifiedDeviceAPI {
             this._pendingReject = reject;
             this._pendingCmd = cmdObj.cmd;
 
-            const sysex = encodeJsonToSysEx(cmdObj);
+            const sysex = encodeDmJsonToSysEx(cmdObj);
             this._registry.send(this._portName, sysex);
             this._log(cmdObj.cmd, 'tx');
 
@@ -691,8 +725,25 @@ class UnifiedDeviceAPI {
         }
     }
 
+    _handleDmTransportComplete(data, success) {
+        if (!success || !data) return;
+        try {
+            const json = JSON.parse(new TextDecoder().decode(data));
+            if (json.notification) {
+                this._log(`DM notification (chunked): ${json.notification}`);
+                if (this._onDmNotification) {
+                    this._onDmNotification(json);
+                }
+            } else {
+                this._routeResponse(json);
+            }
+        } catch (e) {
+            this._log(`DM transport: malformed JSON: ${e.message}`, 'error');
+        }
+    }
+
     _classifyResponse(json) {
-        if (json.error) return 'error';
+        if (json.error || json.status === 'error') return 'error';
         if (json.status === 'editor-active') return 'editor-active';
         if (json.status === 'editor-inactive') return 'editor-inactive';
         if (json.status === 'saved') return 'save-status';
@@ -774,8 +825,9 @@ class UnifiedDeviceAPI {
         }
 
         if (responseType === 'error') {
-            this._log(`Error: ${json.error}`, 'error');
-            this._reject(new Error(json.error));
+            const msg = json.error || json.message || 'Unknown error';
+            this._log(`Error: ${msg}`, 'error');
+            this._reject(new Error(msg));
             return;
         }
 
@@ -827,8 +879,12 @@ class UnifiedDeviceAPI {
             this._routeResponse(json);
 
         } else if (format === 'transport') {
-            // Chunked transport wrapped in 0x20 — not implemented yet
-            this._log('DM: 0x20 transport format not yet supported', 'warn');
+            // Chunked transport on 0x20: strip [7D][00][20], mcoded7-decode, feed to dmTransport
+            const transportPayload = inner.slice(3);
+            const decoded = mcoded7Decode(new Uint8Array(transportPayload));
+            if (this.dmTransport) {
+                this.dmTransport.receive(decoded);
+            }
         } else {
             this._log('DM: invalid 0x20 format', 'warn');
         }

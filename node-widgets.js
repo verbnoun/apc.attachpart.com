@@ -518,7 +518,8 @@ function VelocityCurvePreview({ curve, midiState }) {
 // NODE PARAM SLIDER - Inline slider with local state
 //======================================================================
 
-function NodeParamSlider({ param, onUpdateParam, onUpdateRange, onLiveChange, midiState, deviceKey, hasController, noRange }) {
+function NodeParamSlider({ param, onUpdateParam, onUpdateRange, onLiveChange, midiState, deviceKey, hasController, potAssignedParams, noRange }) {
+    const hasPotAssignment = hasController && potAssignedParams?.has(param.key);
     const [localValue, setLocalValue] = nwUseState(param.value);
     const [localRangeMin, setLocalRangeMin] = nwUseState(param.min);
     const [localRangeMax, setLocalRangeMax] = nwUseState(param.max);
@@ -631,8 +632,8 @@ function NodeParamSlider({ param, onUpdateParam, onUpdateRange, onLiveChange, mi
                 const clamped = snap(Math.max(d.rangeMin, Math.min(d.rangeMax, raw)));
                 d.value = clamped;
                 setLocalValue(clamped);
-                // Live CC send (only when no controller paired)
-                if (!hasController && onLiveChange && param.cc >= 0) {
+                // Live CC send (when no controller, or param has no pot assignment)
+                if ((!hasController || !hasPotAssignment) && onLiveChange && param.cc >= 0) {
                     const now = performance.now();
                     if (now - lastLiveSendRef.current >= 16) {
                         const rangeSpan = d.rangeMax - d.rangeMin;
@@ -668,10 +669,9 @@ function NodeParamSlider({ param, onUpdateParam, onUpdateRange, onLiveChange, mi
         if (dragging !== null) return; // still dragging
         // Check if value changed
         if (localValue !== initialValueRef.current) {
-            // When controller is attached, store only — don't apply to running synth
-            // (controller owns live parameter values)
+            // When pot controls this param, store only — pot owns live values
             if (onUpdateParam) {
-                const opts = hasController ? { value: localValue, storeOnly: true } : localValue;
+                const opts = hasPotAssignment ? { value: localValue, storeOnly: true } : localValue;
                 onUpdateParam(param.key, opts);
             }
         }
@@ -686,7 +686,7 @@ function NodeParamSlider({ param, onUpdateParam, onUpdateRange, onLiveChange, mi
         const clamped = Math.max(localRangeMin, Math.min(localRangeMax, newValue));
         setLocalValue(clamped);
         if (onUpdateParam) {
-            const opts = hasController ? { value: clamped, storeOnly: true } : clamped;
+            const opts = hasPotAssignment ? { value: clamped, storeOnly: true } : clamped;
             onUpdateParam(param.key, opts);
         }
     };
@@ -702,7 +702,7 @@ function NodeParamSlider({ param, onUpdateParam, onUpdateRange, onLiveChange, mi
         const clamped = Math.max(localRangeMin, Math.min(localRangeMax, raw));
         setLocalValue(clamped);
         if (onUpdateParam) {
-            const opts = hasController ? { value: clamped, storeOnly: true } : clamped;
+            const opts = hasPotAssignment ? { value: clamped, storeOnly: true } : clamped;
             onUpdateParam(param.key, opts);
         }
     };

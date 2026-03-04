@@ -64,7 +64,11 @@ const COMMAND_CAPABILITIES = {
 
     // PARTS (multi-part channel mapping)
     'get-parts': CAPABILITIES.PARTS,
-    'set-parts': CAPABILITIES.PARTS
+    'set-parts': CAPABILITIES.PARTS,
+
+    // DM LIFECYCLE (no capability gate — works on any device)
+    'pair': null,
+    'unpair': null
 };
 
 //======================================================================
@@ -115,6 +119,11 @@ function commandAllowed(cmd, capabilities) {
     if (required === null && cmd === 'save') {
         return capabilities.includes(CAPABILITIES.PATCHES) ||
                capabilities.includes(CAPABILITIES.CONFIG);
+    }
+
+    // DM lifecycle commands (pair/unpair) — always allowed
+    if (required === null) {
+        return true;
     }
 
     // IDENTITY is always allowed (it's how we discover)

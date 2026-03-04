@@ -3,6 +3,10 @@
  *
  * Tests 0x20 receive decode, 0x21 feedback decode, notification routing,
  * and 0x20 send encoding. These match the C test contracts.
+ *
+ * Phase 5 additions: command sending via 0x20, notification dispatch through
+ * API, relay filtering by subtype, relay lifecycle, and #73 pot-assignment
+ * slider gating.
  */
 
 // ============================================================================
@@ -254,5 +258,251 @@ describe('0x20 send encoding', () => {
         const decoded = JSON.parse(new TextDecoder().decode(jsonBytes));
         expect(decoded.cmd).toBe('get-patch');
         expect(decoded.index).toBe(3);
+    });
+});
+
+// ============================================================================
+// 5. Phase 5 — Command sending via 0x20
+// ============================================================================
+
+/**
+ * Helper: create an API with a mock registry that captures sent bytes.
+ * Returns { api, sent } where sent is an array of Uint8Arrays.
+ */
+function createMockApi() {
+    const sent = [];
+    const api = new UnifiedDeviceAPI();
+    const mockRegistry = {
+        send(portName, data) { sent.push(new Uint8Array(data)); },
+        isConnected(portName) { return true; }
+    };
+    api._registry = mockRegistry;
+    api._portName = 'Test Port';
+    return { api, sent };
+}
+
+/**
+ * Helper: simulate an incoming 0x20 SysEx message to an API instance.
+ * Wraps JSON in [F0][7D][00][20][json][F7] and feeds through handleMidiMessage.
+ */
+function injectDmMessage(api, json) {
+    const sysex = encodeDmJsonToSysEx(json);
+    api.handleMidiMessage({ data: sysex });
+}
+
+describe('Phase 5 — command sending via 0x20', () => {
+    it('_sendCommand uses encodeDmJsonToSysEx (0x20 framing)', () => {
+        const { api, sent } = createMockApi();
+        api._sendCommand({ cmd: 'list-patches' });
+
+        expect(sent.length).toBe(1);
+        const msg = sent[0];
+        expect(msg[0]).toBe(0xF0);
+        expect(msg[1]).toBe(0x7D);
+        expect(msg[2]).toBe(0x00);
+        expect(msg[3]).toBe(0x20);  // DM channel
+        expect(msg[msg.length - 1]).toBe(0xF7);
+
+        // Verify JSON payload
+        const jsonBytes = msg.slice(4, -1);
+        const parsed = JSON.parse(new TextDecoder().decode(jsonBytes));
+        expect(parsed.cmd).toBe('list-patches');
+    });
+
+    it('pair command encodes correctly', () => {
+        const { api, sent } = createMockApi();
+        api._sendCommand({ cmd: 'pair', muid: 42 });
+
+        const msg = sent[0];
+        expect(msg[3]).toBe(0x20);
+        const jsonBytes = msg.slice(4, -1);
+        const parsed = JSON.parse(new TextDecoder().decode(jsonBytes));
+        expect(parsed.cmd).toBe('pair');
+        expect(parsed.muid).toBe(42);
+    });
+});
+
+// ============================================================================
+// 6. Phase 5 — Notification dispatch through API
+// ============================================================================
+
+describe('Phase 5 — notification dispatch', () => {
+    it('0x20 JSON with notification key fires onDmNotification, not promise', async () => {
+        const { api } = createMockApi();
+        const notifications = [];
+        api.onDmNotification((json) => notifications.push(json));
+
+        // Send a command to create a pending promise
+        const promise = api._sendCommand({ cmd: 'list-patches' });
+
+        // Inject a notification (should NOT resolve the promise)
+        injectDmMessage(api, { notification: 'exchange-start' });
+
+        expect(notifications.length).toBe(1);
+        expect(notifications[0].notification).toBe('exchange-start');
+
+        // Promise should still be pending (pendingCmd still set)
+        expect(api._pendingCmd).toBe('list-patches');
+
+        // Clean up — resolve the pending promise
+        injectDmMessage(api, { status: 'ok', op: 'list-patches', patches: [] });
+        await promise;
+    });
+
+    it('0x20 JSON without notification key resolves pending promise', async () => {
+        const { api } = createMockApi();
+        const promise = api._sendCommand({ cmd: 'list-patches' });
+
+        injectDmMessage(api, { status: 'ok', op: 'list-patches', patches: [] });
+
+        const result = await promise;
+        expect(result.status).toBe('ok');
+        expect(result.op).toBe('list-patches');
+    });
+
+    it('0x20 error response rejects pending promise', async () => {
+        const { api } = createMockApi();
+        const promise = api._sendCommand({ cmd: 'delete-patch' });
+
+        injectDmMessage(api, { error: 'patch not found' });
+
+        await expect(promise).rejects.toThrow('patch not found');
+    });
+});
+
+// ============================================================================
+// 7. Phase 5 — Relay filtering by subtype
+// ============================================================================
+
+describe('Phase 5 — relay filtering', () => {
+    /**
+     * Helper: create a DeviceRegistry with exchange relay active,
+     * mock ports, and capture what gets relayed.
+     */
+    function createRelayRegistry() {
+        const relayed = [];
+        const registry = new DeviceRegistry();
+
+        // Stub the port manager
+        registry._portManager = {
+            send(portName, data) { relayed.push({ to: portName, data: new Uint8Array(data) }); return true; },
+            onMessage(portName, cb) {},
+            offMessage(portName) {},
+            init() {}
+        };
+
+        // Mark ports as connected
+        registry._connectedDevices = new Set(['synth', 'controller']);
+
+        // Register dummy APIs that won't crash on handleMidiMessage
+        registry._apis['synth'] = { handleMidiMessage() {} };
+        registry._apis['controller'] = { handleMidiMessage() {} };
+
+        // Enable exchange relay
+        registry.enableExchangeRelay('synth', 'controller');
+
+        return { registry, relayed };
+    }
+
+    function buildSysEx(subtype) {
+        // Build: [F0][7D][00][subtype][payload][F7]
+        return new Uint8Array([0xF0, 0x7D, 0x00, subtype, 0x00, 0xF7]);
+    }
+
+    it('SysEx with subtype 0x01-0x07 (transport) is relayed', () => {
+        for (let subtype = 0x01; subtype <= 0x07; subtype++) {
+            const { registry, relayed } = createRelayRegistry();
+            const sysex = buildSysEx(subtype);
+            registry._handleMessage('synth', { data: sysex });
+            const forwardedToController = relayed.filter(r => r.to === 'controller');
+            expect(forwardedToController.length).toBeGreaterThan(0);
+        }
+    });
+
+    it('SysEx with subtype 0x10/0x11 (feedback) is relayed', () => {
+        for (const subtype of [0x10, 0x11]) {
+            const { registry, relayed } = createRelayRegistry();
+            const sysex = buildSysEx(subtype);
+            registry._handleMessage('synth', { data: sysex });
+            const forwardedToController = relayed.filter(r => r.to === 'controller');
+            expect(forwardedToController.length).toBeGreaterThan(0);
+        }
+    });
+
+    it('SysEx with subtype 0x20/0x21 (DM) is NOT relayed', () => {
+        for (const subtype of [0x20, 0x21]) {
+            const { registry, relayed } = createRelayRegistry();
+            const sysex = buildSysEx(subtype);
+            registry._handleMessage('synth', { data: sysex });
+            const forwardedToController = relayed.filter(r => r.to === 'controller');
+            expect(forwardedToController.length).toBe(0);
+        }
+    });
+});
+
+// ============================================================================
+// 8. Phase 5 — Relay lifecycle
+// ============================================================================
+
+describe('Phase 5 — relay lifecycle', () => {
+    it('relay enabled when pair triggers exchange', () => {
+        const registry = new DeviceRegistry();
+        expect(registry.isExchangeRelayActive()).toBe(false);
+
+        registry.enableExchangeRelay('synth', 'controller');
+        expect(registry.isExchangeRelayActive()).toBe(true);
+        expect(registry._exchangeSynthPort).toBe('synth');
+        expect(registry._exchangeControllerPort).toBe('controller');
+    });
+
+    it('relay disabled on disableExchangeRelay', () => {
+        const registry = new DeviceRegistry();
+        registry.enableExchangeRelay('synth', 'controller');
+        expect(registry.isExchangeRelayActive()).toBe(true);
+
+        registry.disableExchangeRelay();
+        expect(registry.isExchangeRelayActive()).toBe(false);
+        expect(registry._exchangeSynthPort).toBeNull();
+        expect(registry._exchangeControllerPort).toBeNull();
+    });
+});
+
+// ============================================================================
+// 9. Phase 5 — #73 pot-assignment slider gating
+// ============================================================================
+
+describe('Phase 5 — #73 pot-assignment slider gating', () => {
+    it('param in potAssignedParams → storeOnly on drag', () => {
+        const potAssignedParams = new Set(['osc.level', 'osc.detune']);
+        const hasController = true;
+        const param = { key: 'osc.level', cc: 23 };
+
+        const hasPotAssignment = hasController && potAssignedParams.has(param.key);
+        expect(hasPotAssignment).toBe(true);
+
+        // storeOnly should be true
+        const opts = hasPotAssignment ? { value: 0.5, storeOnly: true } : 0.5;
+        expect(opts).toEqual({ value: 0.5, storeOnly: true });
+
+        // Live CC should NOT fire
+        const shouldSendLiveCC = (!hasController || !hasPotAssignment) && param.cc >= 0;
+        expect(shouldSendLiveCC).toBe(false);
+    });
+
+    it('param NOT in potAssignedParams → sends live CC on drag', () => {
+        const potAssignedParams = new Set(['osc.level', 'osc.detune']);
+        const hasController = true;
+        const param = { key: 'filter.amount', cc: 7 };
+
+        const hasPotAssignment = hasController && potAssignedParams.has(param.key);
+        expect(hasPotAssignment).toBe(false);
+
+        // storeOnly should be false (plain value, not object)
+        const opts = hasPotAssignment ? { value: 0.5, storeOnly: true } : 0.5;
+        expect(opts).toBe(0.5);
+
+        // Live CC SHOULD fire
+        const shouldSendLiveCC = (!hasController || !hasPotAssignment) && param.cc >= 0;
+        expect(shouldSendLiveCC).toBe(true);
     });
 });

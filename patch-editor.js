@@ -88,7 +88,8 @@ function PatchEditorWindow({
     addLog = (msg, type) => console.log(`[${type}] ${msg}`),
     midiState,
     controllerConfig,
-    hasController = false
+    hasController = false,
+    potAssignedParams
 }) {
     // Create logger that uses the addLog prop
     const log = useMemo(() => createPatchLogger(addLog), [addLog]);
@@ -589,6 +590,7 @@ function PatchEditorWindow({
                 controllerConfig={controllerConfig}
                 deviceKey={deviceKey}
                 hasController={hasController}
+                potAssignedParams={potAssignedParams}
             />
             <LoadingOverlay isLoading={isLoading} isVisible={isLoading} />
             {confirmDialog && (
@@ -710,7 +712,8 @@ function NodeWorkspace({
     midiState,
     controllerConfig,
     deviceKey,
-    hasController = false
+    hasController = false,
+    potAssignedParams
 }) {
     const workspaceRef = useRef(null);
     const [draggingNode, setDraggingNode] = useState(null);
@@ -1240,6 +1243,7 @@ function NodeWorkspace({
                         controllerConfig={controllerConfig}
                         deviceKey={deviceKey}
                         hasController={hasController}
+                        potAssignedParams={potAssignedParams}
                     />
                 );
             }))}
@@ -1272,6 +1276,7 @@ function NodeWorkspace({
                         onLiveChange={onLiveChange}
                         onUpdateModAmount={onUpdateModAmount}
                         hasController={hasController}
+                        potAssignedParams={potAssignedParams}
                     />
                 );
             })()}

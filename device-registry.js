@@ -442,9 +442,20 @@ class DeviceRegistry {
 
         // SysEx handling
         if (data[0] === 0xF0) {
-            // Always route to device's own API for local handling/logging
             const api = this._apis[portName];
-            if (api?.handleMidiMessage) {
+            const isOurSysex = data.length > 3 && data[1] === 0x7D && data[2] === 0x00;
+
+            // During exchange relay, only route DM/feedback SysEx to the API.
+            // Transport chunks (mcoded7) are exchange traffic — routing them to the
+            // API corrupts its transport state (assembles exchange data instead of
+            // the API's own command responses).
+            const isExchangePort = this._exchangeRelayActive &&
+                (portName === this._exchangeSynthPort || portName === this._exchangeControllerPort);
+            const isBinaryMsg = isOurSysex &&
+                (data[3] === 0x10 || data[3] === 0x11 || data[3] === 0x20 || data[3] === 0x21);
+            const routeToApi = !isExchangePort || !isOurSysex || isBinaryMsg;
+
+            if (api?.handleMidiMessage && routeToApi) {
                 api.handleMidiMessage(event);
             }
 
@@ -454,17 +465,22 @@ class DeviceRegistry {
             }
 
             // Exchange relay: forward SysEx between synth and controller
+            // Block only DM traffic (0x20, 0x21) — relay everything else
+            // Note: transport messages are mcoded7-encoded, so data[3] is the
+            // mcoded7 status byte, NOT the subtype. Can't whitelist by data[3].
             if (this._exchangeRelayActive) {
-                if (portName === this._exchangeSynthPort && this._exchangeControllerPort) {
-                    // Synth → Controller
-                    this._log(`RELAY: Synth → Controller (${data.length} bytes)`, 'midi');
-                    this.send(this._exchangeControllerPort, data);
-                    this._relaySniffer.receive(data);
-                } else if (portName === this._exchangeControllerPort && this._exchangeSynthPort) {
-                    // Controller → Synth
-                    this._log(`RELAY: Controller → Synth (${data.length} bytes)`, 'midi');
-                    this.send(this._exchangeSynthPort, data);
-                    this._relaySniffer.receive(data);
+                const isDmTraffic = isOurSysex && (data[3] === 0x20 || data[3] === 0x21);
+
+                if (!isDmTraffic) {
+                    if (portName === this._exchangeSynthPort && this._exchangeControllerPort) {
+                        this._log(`RELAY: Synth → Controller (${data.length} bytes)`, 'midi');
+                        this.send(this._exchangeControllerPort, data);
+                        this._relaySniffer.receive(data);
+                    } else if (portName === this._exchangeControllerPort && this._exchangeSynthPort) {
+                        this._log(`RELAY: Controller → Synth (${data.length} bytes)`, 'midi');
+                        this.send(this._exchangeSynthPort, data);
+                        this._relaySniffer.receive(data);
+                    }
                 }
             }
             return;

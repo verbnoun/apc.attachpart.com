@@ -50,12 +50,15 @@ class ChunkedTransport {
      * @param {Function} completeFn - callback(data, success) when transfer completes
      * @param {Function} timeFn - callback() returns current time in milliseconds
      * @param {Function} logFn - callback(message, type) to log to UI
+     * @param {Object} [options] - Optional config
+     * @param {number[]} [options.sysexPrefix] - SysEx prefix bytes (default: [0x7D, 0x00])
      */
-    constructor(sendFn, completeFn, timeFn, logFn) {
+    constructor(sendFn, completeFn, timeFn, logFn, options = {}) {
         this.sendFn = sendFn;
         this.completeFn = completeFn;
         this.timeFn = timeFn;
         this.logFn = logFn || ((msg) => console.log(msg));
+        this.sysexPrefix = options.sysexPrefix || [0x7D, 0x00];
 
         // Current state
         this.state = TRANSPORT_CONST.STATE_IDLE;
@@ -522,15 +525,12 @@ class ChunkedTransport {
      * Encode transport message with mcoded7 and wrap in SysEx
      */
     _encodeAndSend(msg) {
-        // mcoded7 encode
         const encoded = mcoded7Encode(msg);
-
-        // Build SysEx: F0 7D 00 [encoded] F7
-        const sysex = new Uint8Array(encoded.length + 4);
+        const prefix = this.sysexPrefix;
+        const sysex = new Uint8Array(encoded.length + prefix.length + 2);
         sysex[0] = 0xF0;
-        sysex[1] = 0x7D;  // Manufacturer ID
-        sysex[2] = 0x00;  // Device ID
-        sysex.set(encoded, 3);
+        sysex.set(prefix, 1);
+        sysex.set(encoded, 1 + prefix.length);
         sysex[sysex.length - 1] = 0xF7;
 
         return this.sendFn(sysex);

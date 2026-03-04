@@ -46,3 +46,6 @@ loadSource('midi-state.js');
 loadSource('relay-sniffer.js');
 loadSource('topology-utils.js');
 loadSource('protocol-dm.js');
+loadSource('firmware-uploader.js');
+loadSource('api.js');
+loadSource('device-registry.js');

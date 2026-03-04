@@ -69,11 +69,8 @@ function classifyDmFormat(data) {
         return 'direct-json';
     }
 
-    if (formatByte >= 0x01 && formatByte <= 0x07) {
-        return 'transport';
-    }
-
-    return 'invalid';
+    // Anything else is mcoded7-encoded transport (first byte is status byte, not raw msg type)
+    return 'transport';
 }
 
 //======================================================================
