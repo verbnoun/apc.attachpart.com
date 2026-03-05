@@ -360,9 +360,17 @@ function App() {
             api.onExternalPatchChange((data) => {
                 const index = data.current_index ?? data.index ?? data;
                 addLog(`External patch change to ${index}`, 'info');
-                loadPatch(portName, index).then(() => {
-                    refreshControllerConfig(portName);
-                });
+                // If paired, exchange auto-starts — defer to exchange-complete
+                const registry = deviceRegistryRef.current;
+                const pairs = registry?.getConfigPairs() || {};
+                const isPaired = Object.values(pairs).includes(portName);
+                if (isPaired) {
+                    updateSynthState(portName, { pendingPatchIndex: index });
+                } else {
+                    loadPatch(portName, index).then(() => {
+                        refreshControllerConfig(portName);
+                    });
+                }
             });
 
             // DM notifications (0x20 with "notification" key)
@@ -1245,7 +1253,16 @@ function App() {
                             triggerExchange(ctrl, synth);
                         }
                     }}
-                    onClearConfigPair={(ctrl) => deviceRegistryRef.current?.clearConfigPair(ctrl)}
+                    onClearConfigPair={(ctrl) => {
+                        const registry = deviceRegistryRef.current;
+                        if (!registry) return;
+                        const synth = registry.getConfigPair(ctrl);
+                        registry.clearConfigPair(ctrl);
+                        const ctrlApi = deviceApisRef.current[ctrl];
+                        const synthApi = synth ? deviceApisRef.current[synth] : null;
+                        if (ctrlApi) ctrlApi.sendUnpair();
+                        if (synthApi) synthApi.sendUnpair();
+                    }}
                     routingLogs={routingLogs}
                 />,
                 container
@@ -1687,7 +1704,16 @@ function App() {
                         triggerExchange(ctrl, synth);
                     }
                 }}
-                onClearConfigPair={(ctrl) => deviceRegistryRef.current?.clearConfigPair(ctrl)}
+                onClearConfigPair={(ctrl) => {
+                    const registry = deviceRegistryRef.current;
+                    if (!registry) return;
+                    const synth = registry.getConfigPair(ctrl);
+                    registry.clearConfigPair(ctrl);
+                    const ctrlApi = deviceApisRef.current[ctrl];
+                    const synthApi = synth ? deviceApisRef.current[synth] : null;
+                    if (ctrlApi) ctrlApi.sendUnpair();
+                    if (synthApi) synthApi.sendUnpair();
+                }}
                 routingLogs={routingLogs}
             />,
             container
