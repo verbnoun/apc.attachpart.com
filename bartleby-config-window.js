@@ -17,7 +17,7 @@ function ConfigSectionWindow({ config, onConfigChange, midiState, portName, sect
         return (
             <div className="ap-bartleby-config">
                 <div className="ap-bartleby-content">
-                    <LoggingPanel api={api} />
+                    <LoggingPanel api={api} portName={portName} />
                 </div>
             </div>
         );
@@ -634,7 +634,7 @@ function ScreenTab({ config, onConfigChange }) {
 // LOGGING PANEL — Remote log tag control
 //======================================================================
 
-function LoggingPanel({ api }) {
+function LoggingPanel({ api, portName }) {
     const [tags, setTags] = useState(null);
     const [loading, setLoading] = useState(true);
 
@@ -659,6 +659,14 @@ function LoggingPanel({ api }) {
         if (result.tags) setTags(result.tags);
     };
 
+    const handleSetAll = async (enabled) => {
+        if (!api || !tags) return;
+        const allTags = {};
+        for (const tag of tags) allTags[tag.name] = enabled;
+        const result = await api.setLogTags(allTags);
+        if (result.tags) setTags(result.tags);
+    };
+
     if (loading) {
         return (
             <div className="ap-bartleby-loading">
@@ -675,22 +683,29 @@ function LoggingPanel({ api }) {
         );
     }
 
+    // Unique ID prefix per device to avoid DOM collisions (#111)
+    const idPrefix = `log-${portName || 'dev'}`;
+
     return (
         <div className="ap-logging-panel">
             <h3>Log Tags</h3>
             <p className="ap-text-muted ap-mb-md">
                 Enable or disable UART log output per tag.
             </p>
+            <div className="ap-logging-buttons ap-mb-md">
+                <button onClick={() => handleSetAll(true)}>Enable All</button>
+                <button onClick={() => handleSetAll(false)}>Disable All</button>
+            </div>
             <div className="ap-logging-tags">
                 {tags.map(tag => (
                     <div key={tag.name} className="field-row">
                         <input
                             type="checkbox"
-                            id={`log-${tag.name}`}
+                            id={`${idPrefix}-${tag.name}`}
                             checked={tag.enabled}
                             onChange={(e) => handleToggle(tag.name, e.target.checked)}
                         />
-                        <label htmlFor={`log-${tag.name}`}>{tag.name}</label>
+                        <label htmlFor={`${idPrefix}-${tag.name}`}>{tag.name}</label>
                     </div>
                 ))}
             </div>

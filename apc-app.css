@@ -1724,6 +1724,11 @@ html, body {
     color: var(--ap-accent-yellow);
 }
 
+.ap-logging-buttons {
+    display: flex;
+    gap: var(--ap-spacing-sm);
+}
+
 .ap-logging-tags {
     display: flex;
     flex-direction: column;
