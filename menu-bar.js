@@ -85,6 +85,10 @@ function MenuBar({ focusedWindow, openApps, onSurfaceApp, onOpenConfigWindow, on
                     <button className="ap-menubar-dropdown-item" onMouseDown={(e) => handleItemClick(() => openConfigWindow('screen'), e)}>
                         Screen
                     </button>
+                    <div className="ap-menubar-separator"></div>
+                    <button className="ap-menubar-dropdown-item" onMouseDown={(e) => handleItemClick(() => openConfigWindow('logging'), e)}>
+                        Logging
+                    </button>
                 </>
             )
         });
@@ -105,7 +109,18 @@ function MenuBar({ focusedWindow, openApps, onSurfaceApp, onOpenConfigWindow, on
             )
         });
     } else if (appType === 'candide') {
-        // Candide: Tools (with Firmware/Language)
+        // Candide: Config menu + Tools (with Firmware/Language)
+        menus.push({
+            id: 'config',
+            label: 'Config',
+            items: (
+                <>
+                    <button className="ap-menubar-dropdown-item" onMouseDown={(e) => handleItemClick(() => openConfigWindow('logging'), e)}>
+                        Logging
+                    </button>
+                </>
+            )
+        });
         menus.push({
             id: 'tools',
             label: 'Tools',

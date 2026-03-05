@@ -529,7 +529,7 @@ function App() {
         }
 
         // Close all config section windows for this device
-        for (const section of ['curves', 'dials', 'pedal', 'screen']) {
+        for (const section of ['curves', 'dials', 'pedal', 'screen', 'logging']) {
             const configWid = `config-${section}-${portName}`;
             if (WindowManager.exists(configWid)) {
                 WindowManager.close(configWid);
@@ -907,10 +907,10 @@ function App() {
             // Step 1: config-set (writes to RAM, returns full config)
             const result = await api.setConfig(partialConfig);
             configSent = true;
-            if (result.config) {
+            if (result.status === 'ok' && result.op === 'config') {
                 setConfigByDevice(prev => ({
                     ...prev,
-                    [portName]: result.config
+                    [portName]: result
                 }));
             }
 
@@ -1149,7 +1149,7 @@ function App() {
             const capabilities = device.capabilities || [];
             if (!capabilities.includes(CAPABILITIES.CONTROLLER)) continue;
 
-            for (const section of ['curves', 'dials', 'pedal', 'screen']) {
+            for (const section of ['curves', 'dials', 'pedal', 'screen', 'logging']) {
                 const windowId = `config-${section}-${portName}`;
                 const container = windowContainersRef.current[windowId];
                 if (container && WindowManager.exists(windowId)) {
@@ -1162,6 +1162,7 @@ function App() {
                             midiState={midiStateRef.current}
                             portName={portName}
                             section={section}
+                            api={deviceApisRef.current[portName]}
                         />,
                         container
                     );
@@ -1259,9 +1260,10 @@ function App() {
     // Per-section window size constraints
     const CONFIG_SECTION_SIZES = {
         curves:  { width: 500, height: 620, maxHeight: 720, columns: [{ flex: 1, scroll: 'v' }], resizable: 'vertical' },
-        dials:   { width: 1400, height: 220, columns: [{ flex: 1, scroll: 'h' }], resizable: 'horizontal' },
+        dials:   { width: 1400, height: 360, resizable: 'horizontal' },
         pedal:   { width: 360, height: 250 },
-        screen:  { width: 360, height: 250 }
+        screen:  { width: 360, height: 250 },
+        logging: { width: 360, height: 400, columns: [{ flex: 1, scroll: 'v' }], resizable: 'vertical' }
     };
 
     const openConfigWindow = async (portName, section) => {
@@ -1276,13 +1278,13 @@ function App() {
         const deviceName = device.deviceInfo?.name || portName;
         const sectionName = section.charAt(0).toUpperCase() + section.slice(1);
 
-        // Ensure config is loaded
+        // Ensure config is loaded (skip for logging — uses its own API)
         const api = deviceApisRef.current[portName];
-        if (!configByDevice[portName] && api) {
+        if (section !== 'logging' && !configByDevice[portName] && api) {
             try {
                 const result = await api.getConfig();
-                if (result.config) {
-                    setConfigByDevice(prev => ({ ...prev, [portName]: result.config }));
+                if (result.status === 'ok' && result.op === 'config') {
+                    setConfigByDevice(prev => ({ ...prev, [portName]: result }));
                 }
             } catch (err) {
                 addLog(`Failed to load config: ${err.message}`, 'error');
@@ -1298,10 +1300,10 @@ function App() {
         WindowManager.create({
             id: windowId,
             title: `${deviceName} / ${sectionName}`,
-            x: saved?.x ?? (100 + ['curves', 'dials', 'pedal', 'screen'].indexOf(section) * 30),
-            y: saved?.y ?? (30 + ['curves', 'dials', 'pedal', 'screen'].indexOf(section) * 30),
+            x: saved?.x ?? (100 + ['curves', 'dials', 'pedal', 'screen', 'logging'].indexOf(section) * 30),
+            y: saved?.y ?? (30 + ['curves', 'dials', 'pedal', 'screen', 'logging'].indexOf(section) * 30),
             width: saved?.width ?? sizes.width,
-            height: saved?.height ?? sizes.height,
+            height: Math.max(saved?.height ?? sizes.height, sizes.height),
             content: container,
             theme: 'controller',
             maxHeight: sizes.maxHeight,
@@ -1336,6 +1338,7 @@ function App() {
                 midiState={midiStateRef.current}
                 portName={portName}
                 section={section}
+                api={deviceApisRef.current[portName]}
             />,
             container
         );
@@ -1783,7 +1786,7 @@ function App() {
                 const wid = `${tool}-${portName}`;
                 if (WindowManager.exists(wid)) WindowManager.focus(wid);
             }
-            for (const section of ['curves', 'dials', 'pedal', 'screen']) {
+            for (const section of ['curves', 'dials', 'pedal', 'screen', 'logging']) {
                 const wid = `config-${section}-${portName}`;
                 if (WindowManager.exists(wid)) WindowManager.focus(wid);
             }
@@ -1806,7 +1809,7 @@ function App() {
         const hasWindow =
             WindowManager.exists(`device-${portName}`) ||
             WindowManager.exists(`ahab-${portName}`) ||
-            ['curves', 'dials', 'pedal', 'screen'].some(s => WindowManager.exists(`config-${s}-${portName}`)) ||
+            ['curves', 'dials', 'pedal', 'screen', 'logging'].some(s => WindowManager.exists(`config-${s}-${portName}`)) ||
             ['firmware', 'language'].some(t => WindowManager.exists(`${t}-${portName}`));
         if (hasWindow) {
             openApps.push({ id: portName, name: device.deviceInfo?.name || portName });

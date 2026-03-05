@@ -1492,10 +1492,8 @@ html, body {
 /* Dials Panel — hardware layout */
 .ap-dials-panel {
     display: flex;
-    align-items: flex-start;
-    gap: var(--ap-spacing-md);
+    flex-direction: column;
     padding: var(--ap-spacing-sm);
-    height: 100%;
 }
 
 /* OLED Panel — mimics SSD1306 128x64 display */
@@ -1648,6 +1646,104 @@ html, body {
     overflow: hidden;
     text-overflow: clip;
     max-width: 64px;
+}
+
+/* Dials displays row */
+.ap-dials-displays {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--ap-spacing-md);
+    overflow-x: auto;
+    flex-shrink: 0;
+}
+
+/* Selected pot corner highlight */
+.ap-oled-corner.selected {
+    background: var(--ap-display-text);
+    color: var(--ap-display-bg);
+}
+
+.ap-oled-corner.selected .ap-oled-label,
+.ap-oled-corner.selected .ap-oled-value-text {
+    color: var(--ap-display-bg);
+}
+
+.ap-oled-corner.selected .ap-oled-bar {
+    border-color: var(--ap-display-bg);
+}
+
+.ap-oled-corner.selected .ap-oled-bar-fill {
+    background: var(--ap-display-bg);
+}
+
+/* Pot edit row */
+.ap-pot-edit-row {
+    display: flex;
+    align-items: center;
+    gap: var(--ap-spacing-md);
+    padding: var(--ap-spacing-sm);
+    margin-top: var(--ap-spacing-sm);
+    border-top: 1px solid var(--ap-window-border);
+}
+
+.ap-pot-edit-id {
+    font-family: var(--ap-font-mono);
+    font-size: var(--ap-font-size-sm);
+    color: var(--ap-text-muted);
+    flex-shrink: 0;
+}
+
+.ap-pot-edit-field {
+    display: flex;
+    align-items: center;
+    gap: var(--ap-spacing-xs);
+    font-size: var(--ap-font-size-sm);
+}
+
+.ap-pot-edit-field span {
+    color: var(--ap-text-muted);
+    flex-shrink: 0;
+}
+
+.ap-pot-edit-field input[type="text"] {
+    width: 100px;
+}
+
+.ap-pot-edit-field input[type="number"] {
+    width: 55px;
+}
+
+/* Logging Panel */
+.ap-logging-panel {
+    padding: var(--ap-spacing-sm);
+}
+
+.ap-logging-panel h3 {
+    font-size: var(--ap-font-size-sm);
+    margin-bottom: var(--ap-spacing-sm);
+    color: var(--ap-accent-yellow);
+}
+
+.ap-logging-tags {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+/* Screen Tab — timeout dropdown */
+.ap-screen-timeout {
+    padding-left: 22px;
+}
+
+.ap-screen-timeout-label {
+    display: flex;
+    align-items: center;
+    gap: var(--ap-spacing-sm);
+    font-size: var(--ap-font-size-sm);
+}
+
+.ap-screen-timeout-label span {
+    color: var(--ap-text-muted);
 }
 
 /* Pedal Tab */

@@ -12,7 +12,17 @@ const { useState, useEffect, useCallback, useRef } = React;
 // CONFIG SECTION WINDOW (one per section)
 //======================================================================
 
-function ConfigSectionWindow({ config, onConfigChange, midiState, portName, section }) {
+function ConfigSectionWindow({ config, onConfigChange, midiState, portName, section, api }) {
+    if (section === 'logging') {
+        return (
+            <div className="ap-bartleby-config">
+                <div className="ap-bartleby-content">
+                    <LoggingPanel api={api} />
+                </div>
+            </div>
+        );
+    }
+
     if (!config) {
         return (
             <div className="ap-bartleby-loading">
@@ -48,12 +58,12 @@ function ConfigSectionWindow({ config, onConfigChange, midiState, portName, sect
 function CurvesTab({ config, onConfigChange, midiState }) {
     const keyboard = config.keyboard || {};
 
-    const handleCurveChange = (curveType, axis, value) => {
+    const handleCurveChange = (curveType, values) => {
         const newKeyboard = {
             ...keyboard,
             [curveType]: {
                 ...keyboard[curveType],
-                [axis]: parseFloat(value)
+                ...values
             }
         };
         onConfigChange({ keyboard: newKeyboard });
@@ -64,18 +74,18 @@ function CurvesTab({ config, onConfigChange, midiState }) {
             <CurveEditor
                 label="Velocity"
                 curve={keyboard.velocity || { x: 0.5, y: 0.5 }}
-                onChange={(axis, value) => handleCurveChange('velocity', axis, value)}
+                onChange={(values) => handleCurveChange('velocity', values)}
                 midiState={midiState}
             />
             <CurveEditor
                 label="Pressure"
                 curve={keyboard.pressure || { x: 0.5, y: 0.5 }}
-                onChange={(axis, value) => handleCurveChange('pressure', axis, value)}
+                onChange={(values) => handleCurveChange('pressure', values)}
             />
             <CurveEditor
                 label="Bend"
                 curve={keyboard.bend || { x: 0.5, y: 0.5 }}
-                onChange={(axis, value) => handleCurveChange('bend', axis, value)}
+                onChange={(values) => handleCurveChange('bend', values)}
             />
         </div>
     );
@@ -225,8 +235,8 @@ function CurveEditor({ label, curve, onChange, midiState }) {
         };
     }, [drawTrigger, midiState, drawCanvas]);
 
-    const handleCommit = (axis, value) => {
-        onChange(axis, value);
+    const handleCommit = () => {
+        onChange({ x: editX, y: editY });
     };
 
     // Drag on canvas — click/drag the control point directly
@@ -262,8 +272,7 @@ function CurveEditor({ label, curve, onChange, midiState }) {
         const handleUp = () => {
             window.removeEventListener('mousemove', handleMove);
             window.removeEventListener('mouseup', handleUp);
-            onChange('x', dragRef.current.x);
-            onChange('y', dragRef.current.y);
+            onChange({ x: dragRef.current.x, y: dragRef.current.y });
         };
 
         window.addEventListener('mousemove', handleMove);
@@ -284,8 +293,8 @@ function CurveEditor({ label, curve, onChange, midiState }) {
                             step="0.01"
                             value={editX}
                             onChange={(e) => setEditX(parseFloat(e.target.value))}
-                            onMouseUp={(e) => handleCommit('x', parseFloat(e.target.value))}
-                            onTouchEnd={() => handleCommit('x', editX)}
+                            onMouseUp={() => handleCommit()}
+                            onTouchEnd={() => handleCommit()}
                         />
                         <span className="ap-curve-value">{editX.toFixed(2)}</span>
                     </div>
@@ -298,8 +307,8 @@ function CurveEditor({ label, curve, onChange, midiState }) {
                             step="0.01"
                             value={editY}
                             onChange={(e) => setEditY(parseFloat(e.target.value))}
-                            onMouseUp={(e) => handleCommit('y', parseFloat(e.target.value))}
-                            onTouchEnd={() => handleCommit('y', editY)}
+                            onMouseUp={() => handleCommit()}
+                            onTouchEnd={() => handleCommit()}
                         />
                         <span className="ap-curve-value">{editY.toFixed(2)}</span>
                     </div>
@@ -330,6 +339,7 @@ function DialsPanel({ config, onConfigChange, midiState, portName }) {
     const [controllerStatus, setControllerStatus] = useState({ octave: 0, sustain: false });
     const [valueFeedbackTrigger, setValueFeedbackTrigger] = useState(0);
     const [potMap, setPotMap] = useState(null);  // from exchange, overrides config.pots
+    const [selectedPotId, setSelectedPotId] = useState(null);
 
     useEffect(() => {
         if (!midiState || !portName) return;
@@ -371,13 +381,73 @@ function DialsPanel({ config, onConfigChange, midiState, portName }) {
         return surfacePot || configPot;
     });
 
+    // Local edit state for the selected pot
+    const [editLabel, setEditLabel] = useState('');
+    const [editCc, setEditCc] = useState(0);
+    const [editActive, setEditActive] = useState(true);
+    const [editDirty, setEditDirty] = useState(false);
+
+    const handlePotSelect = (potId) => {
+        const newId = potId === selectedPotId ? null : potId;
+        setSelectedPotId(newId);
+        if (newId !== null && pots[newId]) {
+            setEditLabel(pots[newId].label || '');
+            setEditCc(pots[newId].cc);
+            setEditActive(pots[newId].active);
+            setEditDirty(false);
+        }
+    };
+
+    // Sync local state when config updates from device (after save)
+    useEffect(() => {
+        if (selectedPotId !== null && pots[selectedPotId] && !editDirty) {
+            setEditLabel(pots[selectedPotId].label || '');
+            setEditCc(pots[selectedPotId].cc);
+            setEditActive(pots[selectedPotId].active);
+        }
+    }, [pots, selectedPotId]);
+
+    const handleSavePot = () => {
+        if (selectedPotId === null) return;
+        const updatedPots = pots.map((pot, i) => {
+            if (i !== selectedPotId) return pot;
+            return { ...pot, label: editLabel, cc: editCc, active: editActive };
+        });
+        onConfigChange({ pots: updatedPots });
+        setEditDirty(false);
+    };
+
     return (
         <div className="ap-dials-panel">
-            <OledStatus status={controllerStatus} />
-            {DISPLAY_POT_MAP.map(group => (
-                <PotGroup key={group.display} group={group} pots={effectivePots}
-                    ccValues={ccValues} midiState={midiState} />
-            ))}
+            <div className="ap-dials-displays">
+                <OledStatus status={controllerStatus} />
+                {DISPLAY_POT_MAP.map(group => (
+                    <PotGroup key={group.display} group={group} pots={effectivePots}
+                        ccValues={ccValues} midiState={midiState}
+                        selectedPotId={selectedPotId} onPotSelect={handlePotSelect} />
+                ))}
+            </div>
+            {selectedPotId !== null && pots[selectedPotId] && (
+                <div className="ap-pot-edit-row">
+                    <span className="ap-pot-edit-id">Pot {selectedPotId + 1}</span>
+                    <label className="ap-pot-edit-field">
+                        <span>Label</span>
+                        <input type="text" maxLength={11} value={editLabel}
+                            onChange={(e) => { setEditLabel(e.target.value); setEditDirty(true); }} />
+                    </label>
+                    <label className="ap-pot-edit-field">
+                        <span>CC</span>
+                        <input type="number" min={0} max={127} value={editCc}
+                            onChange={(e) => { setEditCc(Math.max(0, Math.min(127, parseInt(e.target.value) || 0))); setEditDirty(true); }} />
+                    </label>
+                    <div className="field-row">
+                        <input type="checkbox" id="pot-active" checked={editActive}
+                            onChange={(e) => { setEditActive(e.target.checked); setEditDirty(true); }} />
+                        <label htmlFor="pot-active">Active</label>
+                    </div>
+                    <button className="ap-btn" disabled={!editDirty} onClick={handleSavePot}>Save</button>
+                </div>
+            )}
         </div>
     );
 }
@@ -394,7 +464,7 @@ function OledStatus({ status }) {
     );
 }
 
-function OledControl({ pots, ccValues, midiState }) {
+function OledControl({ pots, ccValues, midiState, selectedPotId, onPotSelect }) {
     return (
         <div className="ap-oled-panel ap-oled-control">
             <div className="ap-oled-grid">
@@ -405,8 +475,12 @@ function OledControl({ pots, ccValues, midiState }) {
                     const feedback = pot.active && midiState
                         ? midiState.getValueFeedback(pot.cc)
                         : null;
+                    const isSelected = pot.potId === selectedPotId;
                     return (
-                        <div key={i} className={`ap-oled-corner ${!pot.active ? 'inactive' : ''}`}>
+                        <div key={i}
+                            className={`ap-oled-corner ${!pot.active ? 'inactive' : ''} ${isSelected ? 'selected' : ''}`}
+                            onClick={() => onPotSelect?.(pot.potId)}
+                            style={{ cursor: 'pointer' }}>
                             <span className="ap-oled-label">{pot.label || `CC ${pot.cc}`}</span>
                             <div className="ap-oled-bar">
                                 <div className="ap-oled-bar-fill" style={{ width: `${fillPct}%` }} />
@@ -422,7 +496,7 @@ function OledControl({ pots, ccValues, midiState }) {
     );
 }
 
-function PotGroup({ group, pots, ccValues, midiState }) {
+function PotGroup({ group, pots, ccValues, midiState, selectedPotId, onPotSelect }) {
     const groupPots = group.pots.map(id => ({
         ...pots[id],
         potId: id
@@ -430,7 +504,8 @@ function PotGroup({ group, pots, ccValues, midiState }) {
 
     return (
         <div className="ap-pot-group">
-            <OledControl pots={groupPots} ccValues={ccValues} midiState={midiState} />
+            <OledControl pots={groupPots} ccValues={ccValues} midiState={midiState}
+                selectedPotId={selectedPotId} onPotSelect={onPotSelect} />
             <PotCluster pots={groupPots} ccValues={ccValues} />
         </div>
     );
@@ -511,21 +586,114 @@ function PedalTab({ config, onConfigChange }) {
 // SCREEN TAB
 //======================================================================
 
+const SCREENSAVER_PRESETS = [
+    { label: '30 seconds', value: 30 },
+    { label: '1 minute', value: 60 },
+    { label: '2 minutes', value: 120 },
+    { label: '5 minutes', value: 300 },
+    { label: '10 minutes', value: 600 },
+    { label: 'Never', value: 0 },
+];
+
 function ScreenTab({ config, onConfigChange }) {
     const screensaverEnabled = config.screensaver || false;
+    const timeout = config.screensaver_timeout !== undefined ? config.screensaver_timeout : 120;
 
     return (
         <div className="ap-screen-tab">
             <h3>Display Settings</h3>
 
-            <label className="ap-checkbox ap-mt-md">
+            <div className="field-row ap-mt-md">
                 <input
                     type="checkbox"
+                    id="screensaver-enabled"
                     checked={screensaverEnabled}
                     onChange={(e) => onConfigChange({ screensaver: e.target.checked })}
                 />
-                <span>Screensaver (auto-dim after idle)</span>
-            </label>
+                <label htmlFor="screensaver-enabled">Screensaver (auto-dim after idle)</label>
+            </div>
+
+            {screensaverEnabled && (
+                <div className="ap-screen-timeout ap-mt-md">
+                    <label className="ap-screen-timeout-label">
+                        <span>Timeout</span>
+                        <select value={timeout}
+                            onChange={(e) => onConfigChange({ screensaver_timeout: parseInt(e.target.value) })}>
+                            {SCREENSAVER_PRESETS.map(p => (
+                                <option key={p.value} value={p.value}>{p.label}</option>
+                            ))}
+                        </select>
+                    </label>
+                </div>
+            )}
+        </div>
+    );
+}
+
+//======================================================================
+// LOGGING PANEL — Remote log tag control
+//======================================================================
+
+function LoggingPanel({ api }) {
+    const [tags, setTags] = useState(null);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        if (!api || !api.isConnected()) return;
+        let cancelled = false;
+
+        api.getLogTags().then(result => {
+            if (cancelled) return;
+            if (result.tags) setTags(result.tags);
+            setLoading(false);
+        }).catch(() => {
+            if (!cancelled) setLoading(false);
+        });
+
+        return () => { cancelled = true; };
+    }, [api]);
+
+    const handleToggle = async (tagName, enabled) => {
+        if (!api) return;
+        const result = await api.setLogTags({ [tagName]: enabled });
+        if (result.tags) setTags(result.tags);
+    };
+
+    if (loading) {
+        return (
+            <div className="ap-bartleby-loading">
+                <p>Loading log tags...</p>
+            </div>
+        );
+    }
+
+    if (!tags) {
+        return (
+            <div className="ap-bartleby-loading">
+                <p>No log tags available</p>
+            </div>
+        );
+    }
+
+    return (
+        <div className="ap-logging-panel">
+            <h3>Log Tags</h3>
+            <p className="ap-text-muted ap-mb-md">
+                Enable or disable UART log output per tag.
+            </p>
+            <div className="ap-logging-tags">
+                {tags.map(tag => (
+                    <div key={tag.name} className="field-row">
+                        <input
+                            type="checkbox"
+                            id={`log-${tag.name}`}
+                            checked={tag.enabled}
+                            onChange={(e) => handleToggle(tag.name, e.target.checked)}
+                        />
+                        <label htmlFor={`log-${tag.name}`}>{tag.name}</label>
+                    </div>
+                ))}
+            </div>
         </div>
     );
 }

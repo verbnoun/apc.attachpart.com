@@ -92,8 +92,8 @@ function useBartlebySession(api, { addLog }) {
 
         try {
             const response = await api.setConfig(partialConfig);
-            if (response.config) {
-                setConfig(response.config);
+            if (response.status === 'ok' && response.op === 'config') {
+                setConfig(response);
                 // saveStatus is driven by device broadcasts
             } else if (response.error || response.status === 'error') {
                 addLog?.(`Bartleby config update failed: ${response.message}`, 'error');

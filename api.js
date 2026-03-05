@@ -288,6 +288,18 @@ class UnifiedDeviceAPI {
     }
 
     //======================================================================
+    // PUBLIC: LOG Commands (available on any paired device)
+    //======================================================================
+
+    getLogTags() {
+        return this.query({ cmd: 'log-get' }, 'log-tags');
+    }
+
+    setLogTags(tags) {
+        return this.query({ cmd: 'log-set', tags }, 'log-tags');
+    }
+
+    //======================================================================
     // PUBLIC: CONTROLLER Commands
     //======================================================================
 
@@ -608,8 +620,13 @@ class UnifiedDeviceAPI {
             this._log(`${cmdObj.cmd} rejected: not connected`, 'error');
             return;
         }
-        const sysex = encodeDmJsonToSysEx(cmdObj);
-        this._registry.send(this._portName, sysex);
+        const jsonBytes = new TextEncoder().encode(JSON.stringify(cmdObj));
+        if (jsonBytes.length + 5 > 300 && this.dmTransport) {
+            this.dmTransport.send(jsonBytes);
+        } else {
+            const sysex = encodeDmJsonToSysEx(cmdObj);
+            this._registry.send(this._portName, sysex);
+        }
         this._log(cmdObj.cmd, 'tx');
     }
 
@@ -646,8 +663,13 @@ class UnifiedDeviceAPI {
 
             this._responseQueues[responseType].push(entry);
 
-            const sysex = encodeDmJsonToSysEx(cmdObj);
-            this._registry.send(this._portName, sysex);
+            const jsonBytes = new TextEncoder().encode(JSON.stringify(cmdObj));
+            if (jsonBytes.length + 5 > 300 && this.dmTransport) {
+                this.dmTransport.send(jsonBytes);
+            } else {
+                const sysex = encodeDmJsonToSysEx(cmdObj);
+                this._registry.send(this._portName, sysex);
+            }
             this._log(cmdObj.cmd, 'tx');
         });
     }
@@ -835,6 +857,7 @@ class UnifiedDeviceAPI {
         if (json.status === 'restarting') return 'restarting';
         if (json.status === 'device-info' || json.status === 'ok' && json.op === 'device-info') return 'device-info';
         if (json.status === 'ok' && json.op === 'config') return 'config';
+        if (json.status === 'ok' && json.op === 'log-tags') return 'log-tags';
         if (json.status === 'ok' && json.op === 'control-surface') return 'control-surface';
         if (json.patches && Array.isArray(json.patches)) return 'list-patches';
         if (json.index !== undefined && json.name && !json.status) return 'get-patch';
