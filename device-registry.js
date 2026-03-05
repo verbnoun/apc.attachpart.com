@@ -38,11 +38,6 @@ class DeviceRegistry {
         this._logFn = null;
         this._midiLoggingEnabled = false;
 
-        // Exchange relay state
-        this._exchangeRelayActive = false;
-        this._exchangeSynthPort = null;
-        this._exchangeControllerPort = null;
-
         // Relay sniffer — passive transport decoder for exchange traffic
         this._relaySniffer = new RelaySniffer((json) => this._handleSniffedJson(json));
         this._onControlSurface = null;
@@ -287,6 +282,9 @@ class DeviceRegistry {
     clearConfigPair(controllerPort) {
         if (!(controllerPort in this._configPairs)) return;
         delete this._configPairs[controllerPort];
+        this._relaySniffer._reset();
+        this._controlSurfaceInfo = null;
+        this._log(`Config pair cleared: ${controllerPort}`);
         this._onRoutesChanged?.();
     }
 
@@ -296,43 +294,6 @@ class DeviceRegistry {
 
     getConfigPairs() {
         return { ...this._configPairs };
-    }
-
-    //==================================================================
-    // PUBLIC: Exchange Relay
-    //==================================================================
-
-    /**
-     * Enable exchange relay between synth and controller
-     * When active, exchange SysEx is routed between devices
-     * @param {string} synthPort
-     * @param {string} controllerPort
-     */
-    enableExchangeRelay(synthPort, controllerPort) {
-        this._exchangeRelayActive = true;
-        this._exchangeSynthPort = synthPort;
-        this._exchangeControllerPort = controllerPort;
-        this._log(`Exchange relay enabled: ${synthPort} ⇄ ${controllerPort}`);
-    }
-
-    /**
-     * Disable exchange relay
-     */
-    disableExchangeRelay() {
-        this._exchangeRelayActive = false;
-        this._exchangeSynthPort = null;
-        this._exchangeControllerPort = null;
-        this._relaySniffer._reset();
-        this._controlSurfaceInfo = null;
-        this._log('Exchange relay disabled');
-    }
-
-    /**
-     * Check if exchange relay is active
-     * @returns {boolean}
-     */
-    isExchangeRelayActive() {
-        return this._exchangeRelayActive;
     }
 
     //==================================================================
@@ -403,14 +364,8 @@ class DeviceRegistry {
             if (!nowConnected.has(portName)) {
                 this._log(`Disconnected: ${portName}`, 'warning');
 
-                // Clear routes involving this port
+                // Clear routes involving this port (also clears config pairs)
                 this.removeRoutesForPort(portName);
-
-                // Disable exchange relay if this port was involved
-                if (this._exchangeRelayActive &&
-                    (portName === this._exchangeSynthPort || portName === this._exchangeControllerPort)) {
-                    this.disableExchangeRelay();
-                }
 
                 // Unregister API
                 this.unregisterApi(portName);
@@ -428,12 +383,31 @@ class DeviceRegistry {
     }
 
     //==================================================================
+    // INTERNAL: Exchange Relay (derived from config pairs)
+    //==================================================================
+
+    /**
+     * Get the config-pair partner for a port, or null.
+     * Config-pairing IS the relay — no separate toggle needed.
+     * @param {string} portName
+     * @returns {string|null} Partner port name
+     * @private
+     */
+    _getExchangePartner(portName) {
+        for (const [ctrl, synth] of Object.entries(this._configPairs)) {
+            if (portName === ctrl) return synth;
+            if (portName === synth) return ctrl;
+        }
+        return null;
+    }
+
+    //==================================================================
     // INTERNAL: Message Handling
     //==================================================================
 
     /**
      * Handle incoming MIDI message
-     * Routes SysEx to registered API (and relays during exchange)
+     * Routes SysEx to registered API (and relays between config-paired devices)
      * Forwards non-SysEx for controller->synth
      * @private
      */
@@ -445,42 +419,32 @@ class DeviceRegistry {
             const api = this._apis[portName];
             const isOurSysex = data.length > 3 && data[1] === 0x7D && data[2] === 0x00;
 
-            // During exchange relay, only route DM/feedback SysEx to the API.
-            // Transport chunks (mcoded7) are exchange traffic — routing them to the
-            // API corrupts its transport state (assembles exchange data instead of
-            // the API's own command responses).
-            const isExchangePort = this._exchangeRelayActive &&
-                (portName === this._exchangeSynthPort || portName === this._exchangeControllerPort);
+            // Config-paired ports relay exchange traffic. During relay, only
+            // route DM/feedback SysEx (binary msgs) to the API — transport
+            // chunks (mcoded7) are exchange traffic and would corrupt API state.
+            const partner = this._getExchangePartner(portName);
             const isBinaryMsg = isOurSysex &&
                 (data[3] === 0x10 || data[3] === 0x11 || data[3] === 0x20 || data[3] === 0x21);
-            const routeToApi = !isExchangePort || !isOurSysex || isBinaryMsg;
+            const routeToApi = !partner || !isOurSysex || isBinaryMsg;
 
             if (api?.handleMidiMessage && routeToApi) {
                 api.handleMidiMessage(event);
             }
 
-            // Decode value feedback from any synth (not gated on exchange relay)
+            // Decode value feedback from any synth (not gated on relay)
             if (this._onValueFeedback) {
                 this._decodeValueFeedback(data, portName);
             }
 
-            // Exchange relay: forward SysEx between synth and controller
-            // Block only DM traffic (0x20, 0x21) — relay everything else
-            // Note: transport messages are mcoded7-encoded, so data[3] is the
-            // mcoded7 status byte, NOT the subtype. Can't whitelist by data[3].
-            if (this._exchangeRelayActive) {
+            // Exchange relay: forward non-DM SysEx between config-paired devices
+            if (partner) {
                 const isDmTraffic = isOurSysex && (data[3] === 0x20 || data[3] === 0x21);
-
                 if (!isDmTraffic) {
-                    if (portName === this._exchangeSynthPort && this._exchangeControllerPort) {
-                        this._log(`RELAY: Synth → Controller (${data.length} bytes)`, 'midi');
-                        this.send(this._exchangeControllerPort, data);
-                        this._relaySniffer.receive(data);
-                    } else if (portName === this._exchangeControllerPort && this._exchangeSynthPort) {
-                        this._log(`RELAY: Controller → Synth (${data.length} bytes)`, 'midi');
-                        this.send(this._exchangeSynthPort, data);
-                        this._relaySniffer.receive(data);
-                    }
+                    const isSynth = Object.values(this._configPairs).includes(portName);
+                    const direction = isSynth ? 'Synth → Controller' : 'Controller → Synth';
+                    this._log(`RELAY: ${direction} (${data.length} bytes)`, 'midi');
+                    this.send(partner, data);
+                    this._relaySniffer.receive(data);
                 }
             }
             return;

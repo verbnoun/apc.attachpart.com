@@ -415,8 +415,9 @@ describe('Phase 5 — relay filtering', () => {
         registry._apis['synth'] = { handleMidiMessage() {} };
         registry._apis['controller'] = { handleMidiMessage() {} };
 
-        // Enable exchange relay
-        registry.enableExchangeRelay('synth', 'controller');
+        // Config-pair enables exchange relay (#103)
+        registry.addRoute('controller', 'synth');
+        registry.setConfigPair('controller', 'synth');
 
         return { registry, relayed };
     }
@@ -461,26 +462,46 @@ describe('Phase 5 — relay filtering', () => {
 // 8. Phase 5 — Relay lifecycle
 // ============================================================================
 
-describe('Phase 5 — relay lifecycle', () => {
-    it('relay enabled when pair triggers exchange', () => {
+describe('Exchange relay from config-pairing (#103)', () => {
+    it('config-pair enables relay (no explicit enable needed)', () => {
+        const relayed = [];
         const registry = new DeviceRegistry();
-        expect(registry.isExchangeRelayActive()).toBe(false);
+        registry._portManager = {
+            send(portName, data) { relayed.push({ to: portName, data: new Uint8Array(data) }); return true; },
+            onMessage() {}, offMessage() {}, init() {}
+        };
+        registry._connectedDevices = new Set(['synth', 'controller']);
+        registry._apis['synth'] = { handleMidiMessage() {} };
+        registry._apis['controller'] = { handleMidiMessage() {} };
 
-        registry.enableExchangeRelay('synth', 'controller');
-        expect(registry.isExchangeRelayActive()).toBe(true);
-        expect(registry._exchangeSynthPort).toBe('synth');
-        expect(registry._exchangeControllerPort).toBe('controller');
+        // Set config pair — this alone should enable relay
+        registry.addRoute('controller', 'synth');
+        registry.setConfigPair('controller', 'synth');
+
+        // Send exchange transport from synth
+        const sysex = new Uint8Array([0xF0, 0x7D, 0x00, 0x01, 0x00, 0xF7]);
+        registry._handleMessage('synth', { data: sysex });
+        expect(relayed.some(r => r.to === 'controller')).toBe(true);
     });
 
-    it('relay disabled on disableExchangeRelay', () => {
+    it('clearing config-pair stops relay', () => {
+        const relayed = [];
         const registry = new DeviceRegistry();
-        registry.enableExchangeRelay('synth', 'controller');
-        expect(registry.isExchangeRelayActive()).toBe(true);
+        registry._portManager = {
+            send(portName, data) { relayed.push({ to: portName, data: new Uint8Array(data) }); return true; },
+            onMessage() {}, offMessage() {}, init() {}
+        };
+        registry._connectedDevices = new Set(['synth', 'controller']);
+        registry._apis['synth'] = { handleMidiMessage() {} };
+        registry._apis['controller'] = { handleMidiMessage() {} };
 
-        registry.disableExchangeRelay();
-        expect(registry.isExchangeRelayActive()).toBe(false);
-        expect(registry._exchangeSynthPort).toBeNull();
-        expect(registry._exchangeControllerPort).toBeNull();
+        registry.addRoute('controller', 'synth');
+        registry.setConfigPair('controller', 'synth');
+        registry.clearConfigPair('controller');
+
+        const sysex = new Uint8Array([0xF0, 0x7D, 0x00, 0x01, 0x00, 0xF7]);
+        registry._handleMessage('synth', { data: sysex });
+        expect(relayed.some(r => r.to === 'controller')).toBe(false);
     });
 });
 

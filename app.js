@@ -392,14 +392,12 @@ function App() {
                     const isPaired = Object.values(pairs).includes(portName);
                     if (isPaired) {
                         updateSynthState(portName, { pendingPatchIndex: json.index });
-                        refreshControllerConfig(portName);
                     } else {
                         loadPatch(portName, json.index);
                     }
                 }
                 else if (json.notification === 'exchange-complete') {
                     addLog(`Exchange complete: ${json.controls?.length || 0} controls`, 'success');
-                    deviceRegistryRef.current?.disableExchangeRelay();
                     // Build pot-assigned param Set from controls array (#73)
                     const potParams = new Set((json.controls || []).map(c => c.input));
                     updateSynthState(portName, { potAssignedParams: potParams });
@@ -414,7 +412,6 @@ function App() {
                 }
                 else if (json.notification === 'exchange-failed') {
                     addLog(`Exchange failed: ${json.reason}`, 'error');
-                    deviceRegistryRef.current?.disableExchangeRelay();
                 }
             });
 
@@ -1084,8 +1081,6 @@ function App() {
         addRoutingLog(`Pairing: ${synthDevice.deviceInfo?.name || synthPort} ⇄ ${controllerDevice.deviceInfo?.name || controllerPort}`, 'info');
 
         const registry = deviceRegistryRef.current;
-        // Enable relay BEFORE pair (exchange may fire immediately)
-        registry.enableExchangeRelay(synthPort, controllerPort);
 
         try {
             const synthMuid = synthApi.deviceInfo?.muid || 0;
@@ -1100,26 +1095,8 @@ function App() {
         } catch (err) {
             addLog(`Pair failed: ${err.message}`, 'error');
             addRoutingLog(`Pair failed: ${err.message}`, 'error');
-            registry.disableExchangeRelay();
             registry.clearConfigPair(controllerPort);
         }
-    };
-
-    /** After a patch change, re-enable relay for the auto-exchange.
-     *  Synth auto-re-exchanges on patch switch (Phase 4). APC just ensures relay is active.
-     *  Uses only refs/registry (no React state) so it works from stale closures. */
-    const refreshControllerConfig = (synthPort) => {
-        const registry = deviceRegistryRef.current;
-        if (!registry) return;
-        const pairs = registry.getConfigPairs();
-        const entry = Object.entries(pairs).find(([_, sp]) => sp === synthPort);
-        if (!entry) return;
-
-        const [controllerPort] = entry;
-        if (!registry.isConnected(controllerPort) || !registry.isConnected(synthPort)) return;
-
-        // Re-enable relay for the auto-exchange (synth handles the rest)
-        registry.enableExchangeRelay(synthPort, controllerPort);
     };
 
     //------------------------------------------------------------------
