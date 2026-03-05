@@ -43,7 +43,6 @@ loadSource('transport.js');
 loadSource('chunked-transport.js');
 loadSource('midi-connection.js');
 loadSource('midi-state.js');
-loadSource('relay-sniffer.js');
 loadSource('topology-utils.js');
 loadSource('protocol-dm.js');
 loadSource('firmware-uploader.js');

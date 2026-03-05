@@ -211,22 +211,6 @@ function App() {
             midiState.handleValueFeedback(feedback);
         });
 
-        // Control surface observer — intercepted set-patch from exchange
-        registry.onControlSurface((controls) => {
-            midiStateRef.current?.handleControlSurface(controls);
-        });
-
-        // Control surface info observer — controller's dial/keyboard capabilities
-        registry.onControlSurfaceInfo((info) => {
-            const controllerPort = registry._exchangeControllerPort;
-            if (!controllerPort || !info.controls) return;
-            const dialCount = Object.values(info.controls).reduce((sum, n) => sum + n, 0);
-            setConfigByDevice(prev => ({
-                ...prev,
-                [controllerPort]: { ...prev[controllerPort], dialCount }
-            }));
-        });
-
         // Route map change subscription
         registry.onRoutesChanged(() => {
             setRoutes(registry.getRoutes());
@@ -398,6 +382,10 @@ function App() {
                 }
                 else if (json.notification === 'exchange-complete') {
                     addLog(`Exchange complete: ${json.controls?.length || 0} controls`, 'success');
+                    // Update control surface mapping from exchange controls (#99)
+                    if (json.controls) {
+                        midiStateRef.current?.handleControlSurface(json.controls);
+                    }
                     // Build pot-assigned param Set from controls array (#73)
                     const potParams = new Set((json.controls || []).map(c => c.input));
                     updateSynthState(portName, { potAssignedParams: potParams });

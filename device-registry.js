@@ -8,8 +8,6 @@
  * - API registration and message routing
  * - Device roles (controller/synth)
  * - MIDI through routing
- *
- * RelaySniffer loaded from relay-sniffer.js
  */
 
 class DeviceRegistry {
@@ -38,11 +36,6 @@ class DeviceRegistry {
         this._logFn = null;
         this._midiLoggingEnabled = false;
 
-        // Relay sniffer — passive transport decoder for exchange traffic
-        this._relaySniffer = new RelaySniffer((json) => this._handleSniffedJson(json));
-        this._onControlSurface = null;
-        this._onControlSurfaceInfo = null;
-        this._controlSurfaceInfo = null;
     }
 
     //==================================================================
@@ -169,32 +162,6 @@ class DeviceRegistry {
         this._onValueFeedback = callback;
     }
 
-    /**
-     * Set callback for control surface data (intercepted from exchange)
-     * Fired when sniffer decodes a set-patch message from synth → controller.
-     * @param {Function} callback - Called with (controls[])
-     */
-    onControlSurface(callback) {
-        this._onControlSurface = callback;
-    }
-
-    /**
-     * Set callback for control-surface info (intercepted from controller → synth)
-     * Fired when sniffer decodes a control-surface response (dial counts, etc).
-     * @param {Function} callback - Called with ({ op, controls })
-     */
-    onControlSurfaceInfo(callback) {
-        this._onControlSurfaceInfo = callback;
-    }
-
-    /**
-     * Get the last captured control-surface info
-     * @returns {Object|null} e.g. { op: 'control-surface', controls: { '1d.abs.rotary': 16 } }
-     */
-    getControlSurfaceInfo() {
-        return this._controlSurfaceInfo || null;
-    }
-
     //==================================================================
     // PUBLIC: Route Map (many-to-many MIDI routing)
     //==================================================================
@@ -282,8 +249,6 @@ class DeviceRegistry {
     clearConfigPair(controllerPort) {
         if (!(controllerPort in this._configPairs)) return;
         delete this._configPairs[controllerPort];
-        this._relaySniffer._reset();
-        this._controlSurfaceInfo = null;
         this._log(`Config pair cleared: ${controllerPort}`);
         this._onRoutesChanged?.();
     }
@@ -444,7 +409,6 @@ class DeviceRegistry {
                     const direction = isSynth ? 'Synth → Controller' : 'Controller → Synth';
                     this._log(`RELAY: ${direction} (${data.length} bytes)`, 'midi');
                     this.send(partner, data);
-                    this._relaySniffer.receive(data);
                 }
             }
             return;
@@ -464,23 +428,6 @@ class DeviceRegistry {
             if (this._midiLoggingEnabled) {
                 this._log(`ROUTE: [${this._formatMidi(data)}] → ${destinations.join(', ')}`, 'midi');
             }
-        }
-    }
-
-    //==================================================================
-    // INTERNAL: Relay Sniffer Handler
-    //==================================================================
-
-    _handleSniffedJson(json) {
-        if (json.cmd === 'set-patch' && Array.isArray(json.controls)) {
-            this._log(`Sniffer: intercepted set-patch "${json.name}" (${json.controls.length} controls)`);
-            this._onControlSurface?.(json.controls);
-        }
-        // Capture controller's control-surface response (dial count, keyboard info)
-        if (json.op === 'control-surface' && json.controls) {
-            this._controlSurfaceInfo = json;
-            this._log(`Sniffer: intercepted control-surface (${JSON.stringify(json.controls)})`);
-            this._onControlSurfaceInfo?.(json);
         }
     }
 
