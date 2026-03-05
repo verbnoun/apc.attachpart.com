@@ -7,13 +7,17 @@
  *
  * Design: Thin client - device is authority, no local state storage.
  * Principle: "Host leads the dance" - we initiate all discovery.
+ *
+ * Command model: fire-and-forget mutations + per-type response queues
+ * for queries. No single-command bottleneck — multiple concurrent queries
+ * resolve independently via FIFO queues keyed by response type.
  */
 
 //======================================================================
 // CONSTANTS
 //======================================================================
 
-const API_TIMEOUT_MS = 15000;  // 15 seconds for command timeout
+const API_TIMEOUT_MS = 15000;  // 15 seconds for query timeout
 
 //======================================================================
 // UNIFIED DEVICE API CLASS
@@ -32,11 +36,8 @@ class UnifiedDeviceAPI {
         this.deviceInfo = null;
         this.capabilities = [];
 
-        // Command state (single command at a time)
-        this._pendingResolve = null;
-        this._pendingReject = null;
-        this._pendingCmd = null;
-        this._timeoutHandle = null;
+        // Response queues for query() — per-type FIFO
+        this._responseQueues = {};
 
         // SysEx assembly buffer
         this._sysexBuffer = [];
@@ -47,11 +48,21 @@ class UnifiedDeviceAPI {
         // Log callback
         this._logFn = null;
 
-        // Callbacks
+        // Callbacks — existing
         this._onSaveStatusChanged = null;
         this._onExternalPatchChange = null;
         this._onDmNotification = null;
         this._onDmFeedback = null;
+
+        // Callbacks — reactive data (fire when no queued waiter)
+        this._onPatchData = null;
+        this._onPatchList = null;
+        this._onConfig = null;
+        this._onDeviceInfo = null;
+        this._onControlSurface = null;
+        this._onEditorStatus = null;
+        this._onMutationAck = null;
+        this._onError = null;
     }
 
     //======================================================================
@@ -104,7 +115,7 @@ class UnifiedDeviceAPI {
         this._log('Discovering device capabilities...', 'info');
 
         try {
-            const info = await this._sendCommand({ cmd: 'get-device-info' });
+            const info = await this.query({ cmd: 'get-device-info' }, 'device-info');
 
             if (!info) {
                 this._log('Discovery failed: no response', 'error');
@@ -184,11 +195,6 @@ class UnifiedDeviceAPI {
      * Note: API doesn't manage ports - registry does
      */
     disconnect() {
-        if (this._timeoutHandle) {
-            clearTimeout(this._timeoutHandle);
-            this._timeoutHandle = null;
-        }
-
         if (this._firmwareUploader) {
             this._firmwareUploader.abort();
             this._firmwareUploader = null;
@@ -204,13 +210,19 @@ class UnifiedDeviceAPI {
             this.dmTransport = null;
         }
 
+        // Reject all pending query waiters
+        for (const [type, queue] of Object.entries(this._responseQueues)) {
+            for (const entry of queue) {
+                clearTimeout(entry.timer);
+                entry.reject(new Error('Disconnected'));
+            }
+        }
+        this._responseQueues = {};
+
         this._registry = null;
         this._portName = null;
         this.deviceInfo = null;
         this.capabilities = [];
-        this._pendingResolve = null;
-        this._pendingReject = null;
-        this._pendingCmd = null;
 
         this._log('Disconnected');
     }
@@ -235,81 +247,112 @@ class UnifiedDeviceAPI {
         this._onDmFeedback = callback;
     }
 
+    onPatchData(callback) {
+        this._onPatchData = callback;
+    }
+
+    onPatchList(callback) {
+        this._onPatchList = callback;
+    }
+
+    onConfig(callback) {
+        this._onConfig = callback;
+    }
+
+    onDeviceInfo(callback) {
+        this._onDeviceInfo = callback;
+    }
+
+    onControlSurface(callback) {
+        this._onControlSurface = callback;
+    }
+
+    onEditorStatus(callback) {
+        this._onEditorStatus = callback;
+    }
+
+    onMutationAck(callback) {
+        this._onMutationAck = callback;
+    }
+
+    onError(callback) {
+        this._onError = callback;
+    }
+
     //======================================================================
     // PUBLIC: IDENTITY Commands (all devices)
     //======================================================================
 
-    async getDeviceInfo() {
-        return this._sendCommand({ cmd: 'get-device-info' });
+    getDeviceInfo() {
+        return this.query({ cmd: 'get-device-info' }, 'device-info');
     }
 
     //======================================================================
     // PUBLIC: CONTROLLER Commands
     //======================================================================
 
-    async getControlSurface() {
+    getControlSurface() {
         this._requireCapability(CAPABILITIES.CONTROLLER, 'get-control-surface');
-        return this._sendCommand({ cmd: 'get-control-surface' });
+        return this.query({ cmd: 'get-control-surface' }, 'control-surface');
     }
 
     /**
      * Send patch data to controller (AP Protocol v3.0)
      * @param {string} name - Patch name
      * @param {Array} controls - Array of {input, label, cc}
-     * @returns {Promise<Object>} - { status: "ok", op: "set-patch" }
      */
-    async setPatch(name, controls) {
+    setPatch(name, controls) {
         this._requireCapability(CAPABILITIES.CONTROLLER, 'set-patch');
-        return this._sendCommand({ cmd: 'set-patch', name, controls });
+        this._send({ cmd: 'set-patch', name, controls });
     }
 
     //======================================================================
     // PUBLIC: CONFIG Commands
     //======================================================================
 
-    async getConfig() {
+    getConfig() {
         this._requireCapability(CAPABILITIES.CONFIG, 'config-get');
-        return this._sendCommand({ cmd: 'config-get' });
+        return this.query({ cmd: 'config-get' }, 'config');
     }
 
     //======================================================================
     // PUBLIC: PATCHES Commands
     //======================================================================
 
-    async listPatches() {
+    listPatches() {
         this._requireCapability(CAPABILITIES.PATCHES, 'list-patches');
-        return this._sendCommand({ cmd: 'list-patches' });
+        return this.query({ cmd: 'list-patches' }, 'list-patches');
     }
 
-    async getPatch(index) {
+    getPatch(index) {
         this._requireCapability(CAPABILITIES.PATCHES, 'get-patch');
-        return this._sendCommand({ cmd: 'get-patch', index });
+        return this.query({ cmd: 'get-patch', index }, 'get-patch');
     }
 
-    async selectPatch(index) {
+    selectPatch(index) {
         this._requireCapability(CAPABILITIES.PATCHES, 'select-patch');
-        return this._sendCommand({ cmd: 'select-patch', index });
+        this._send({ cmd: 'select-patch', index });
     }
 
-    async createPatch(name) {
+    createPatch(name) {
         this._requireCapability(CAPABILITIES.PATCHES, 'create-patch');
-        return this._sendCommand({ cmd: 'create-patch', name });
+        this._send({ cmd: 'create-patch', name });
     }
 
-    async deletePatch(index) {
+    deletePatch(index) {
         this._requireCapability(CAPABILITIES.PATCHES, 'delete-patch');
-        return this._sendCommand({ cmd: 'delete-patch', index });
+        this._send({ cmd: 'delete-patch', index });
     }
 
-    async renamePatch(index, name) {
+    renamePatch(index, name) {
         this._requireCapability(CAPABILITIES.PATCHES, 'rename-patch');
-        return this._sendCommand({ cmd: 'rename-patch', index, name });
+        this._send({ cmd: 'rename-patch', index, name });
     }
 
-    async movePatch(from, to) {
+    movePatch(from, to) {
         this._requireCapability(CAPABILITIES.PATCHES, 'move-patch');
         // Using fromIdx/toIdx to avoid macOS CoreMIDI bug with certain byte patterns
-        return this._sendCommand({ cmd: 'move-patch', fromIdx: from, toIdx: to });
+        this._send({ cmd: 'move-patch', fromIdx: from, toIdx: to });
     }
 
     /**
@@ -319,25 +362,24 @@ class UnifiedDeviceAPI {
      * @param {number} targetMuid - MUID of the device to pair with
      * @returns {Promise<Object>}
      */
-    async sendPair(targetMuid) {
-        return this._sendCommand({ cmd: 'pair', muid: targetMuid });
+    sendPair(targetMuid) {
+        return this.query({ cmd: 'pair', muid: targetMuid }, 'mutation-ack');
     }
 
     /**
      * Send unpair command to device
      * Clears pairing state on the device
-     * @returns {Promise<Object>}
      */
-    async sendUnpair() {
-        return this._sendCommand({ cmd: 'unpair' });
+    sendUnpair() {
+        this._send({ cmd: 'unpair' });
     }
 
     /**
      * @deprecated Use sendPair() instead. Kept for backward compat.
      */
-    async sendControllerAvailable(controllerInfo) {
+    sendControllerAvailable(controllerInfo) {
         this._log('sendControllerAvailable is deprecated — use sendPair()', 'warning');
-        return this._sendCommand({ cmd: 'controller-available', ...controllerInfo });
+        this._send({ cmd: 'controller-available', ...controllerInfo });
     }
 
     //======================================================================
@@ -360,73 +402,63 @@ class UnifiedDeviceAPI {
                 throw new Error('Not connected to device');
             }
 
-            const responsePromise = this._sendCommand({ cmd: 'init' });
-
-            const result = await Promise.race([
-                responsePromise.then(r => ({ type: 'response', data: r })),
-                new Promise(r => setTimeout(() => r({ type: 'poll' }), POLL_INTERVAL_MS))
-            ]);
-
-            if (result.type === 'response') {
-                return result.data;
+            try {
+                const result = await this.query({ cmd: 'init' }, 'editor-active', POLL_INTERVAL_MS);
+                return result;
+            } catch (e) {
+                if (e.message.startsWith('Timeout:')) {
+                    this._log('Init: polling...', 'info');
+                    continue;
+                }
+                throw e;
             }
-
-            this._clearPending();
-            this._log('Init: polling...', 'info');
         }
     }
 
     /**
      * Exit editor session without saving
-     * @returns {Promise<Object>} - { status: "editor-inactive" }
      */
-    async eject() {
+    eject() {
         this._requireCapability(CAPABILITIES.CONFIG, 'eject');
-        return this._sendCommand({ cmd: 'eject' });
+        this._send({ cmd: 'eject' });
     }
 
     /**
      * Save config and exit editor session
-     * @returns {Promise<Object>}
      */
-    async saveAndExit() {
+    saveAndExit() {
         this._requireCapability(CAPABILITIES.CONFIG, 'save-and-exit');
-        return this._sendCommand({ cmd: 'save-and-exit' });
+        this._send({ cmd: 'save-and-exit' });
     }
 
-    async getConfig() {
-        this._requireCapability(CAPABILITIES.CONFIG, 'config-get');
-        return this._sendCommand({ cmd: 'config-get' });
-    }
-
-    async setConfig(config) {
+    setConfig(config) {
         this._requireCapability(CAPABILITIES.CONFIG, 'config-set');
-        return this._sendCommand({ cmd: 'config-set', ...config });
+        return this.query({ cmd: 'config-set', ...config }, 'config');
     }
 
-    async configReset() {
+    configReset() {
         this._requireCapability(CAPABILITIES.CONFIG, 'config-reset');
-        return this._sendCommand({ cmd: 'config-reset' });
+        this._send({ cmd: 'config-reset' });
     }
 
     //======================================================================
     // PUBLIC: SAVE Command (works with PATCHES or CONFIG)
     //======================================================================
 
-    async save() {
+    save() {
         // Save works if device has either PATCHES or CONFIG capability
         if (!this.hasCapability(CAPABILITIES.PATCHES) && !this.hasCapability(CAPABILITIES.CONFIG)) {
             const name = this.getDeviceName();
             throw new Error(`Command 'save' requires PATCHES or CONFIG capability (${name} has neither)`);
         }
-        return this._sendCommand({ cmd: 'save' });
+        return this.query({ cmd: 'save' }, 'save-status');
     }
 
     //======================================================================
     // PUBLIC: PARAMS Commands (real-time patch editing)
     //======================================================================
 
-    async updateParam(index, param, options) {
+    updateParam(index, param, options) {
         this._requireCapability(CAPABILITIES.PARAMS, 'update-param');
         // Support both old signature (index, param, value) and new (index, param, {value, priority})
         const opts = typeof options === 'object' ? options : { value: options };
@@ -434,37 +466,37 @@ class UnifiedDeviceAPI {
         if (opts.value !== undefined) cmd.value = opts.value;
         if (opts.priority !== undefined) cmd.priority = opts.priority;
         if (opts.storeOnly) cmd.store_only = true;
-        return this._sendCommand(cmd);
+        this._send(cmd);
     }
 
-    async updateRange(index, param, min, max) {
+    updateRange(index, param, min, max) {
         this._requireCapability(CAPABILITIES.PARAMS, 'update-range');
-        return this._sendCommand({ cmd: 'update-range', index, param, min, max });
+        this._send({ cmd: 'update-range', index, param, min, max });
     }
 
-    async toggleModule(index, module, enabled) {
+    toggleModule(index, module, enabled) {
         this._requireCapability(CAPABILITIES.PARAMS, 'toggle-module');
-        return this._sendCommand({ cmd: 'toggle-module', index, module, enabled });
+        this._send({ cmd: 'toggle-module', index, module, enabled });
     }
 
-    async toggleModulation(index, target, source, enabled) {
+    toggleModulation(index, target, source, enabled) {
         this._requireCapability(CAPABILITIES.PARAMS, 'toggle-modulation');
-        return this._sendCommand({ cmd: 'toggle-modulation', index, target, source, enabled });
+        this._send({ cmd: 'toggle-modulation', index, target, source, enabled });
     }
 
-    async updateModulationAmount(index, param, value) {
+    updateModulationAmount(index, param, value) {
         this._requireCapability(CAPABILITIES.PARAMS, 'update-modulation-amount');
-        return this._sendCommand({ cmd: 'update-modulation-amount', index, param, value });
+        this._send({ cmd: 'update-modulation-amount', index, param, value });
     }
 
-    async toggleCC(index, param, enabled) {
+    toggleCC(index, param, enabled) {
         this._requireCapability(CAPABILITIES.PARAMS, 'toggle-cc');
-        return this._sendCommand({ cmd: 'toggle-cc', index, param, enabled });
+        this._send({ cmd: 'toggle-cc', index, param, enabled });
     }
 
-    async moveModule(index, fromModule, toModule) {
+    moveModule(index, fromModule, toModule) {
         this._requireCapability(CAPABILITIES.PARAMS, 'move-module');
-        return this._sendCommand({ cmd: 'move-module', index, fromModule, toModule });
+        this._send({ cmd: 'move-module', index, fromModule, toModule });
     }
 
     //======================================================================
@@ -476,9 +508,9 @@ class UnifiedDeviceAPI {
         return this._firmwareUploader.upload(firmwareBin, progressCallback);
     }
 
-    async restartDevice() {
+    restartDevice() {
         this._requireCapability(CAPABILITIES.FIRMWARE, 'restart-device');
-        return this._sendCommand({ cmd: 'restart-device' });
+        this._send({ cmd: 'restart-device' });
     }
 
     //======================================================================
@@ -564,10 +596,34 @@ class UnifiedDeviceAPI {
     }
 
     //======================================================================
-    // PRIVATE: Command handling
+    // PRIVATE: Command sending
     //======================================================================
 
-    _sendCommand(cmdObj) {
+    /**
+     * Fire-and-forget send. Encodes command to SysEx and sends via registry.
+     * No promise, no pending state, no timeout.
+     */
+    _send(cmdObj) {
+        if (!this._registry || !this._portName) {
+            this._log(`${cmdObj.cmd} rejected: not connected`, 'error');
+            return;
+        }
+        const sysex = encodeDmJsonToSysEx(cmdObj);
+        this._registry.send(this._portName, sysex);
+        this._log(cmdObj.cmd, 'tx');
+    }
+
+    /**
+     * Query with response. Sends command and returns a Promise that resolves
+     * when a response of the specified type arrives. Multiple concurrent queries
+     * of the same type are allowed — each registers in a per-type FIFO queue.
+     *
+     * @param {Object} cmdObj - Command to send (e.g., { cmd: 'get-patch', index: 0 })
+     * @param {string} responseType - Expected response type from _classifyResponse()
+     * @param {number} timeoutMs - Timeout in milliseconds (default: API_TIMEOUT_MS)
+     * @returns {Promise<Object>} - Resolved with the response JSON
+     */
+    query(cmdObj, responseType, timeoutMs = API_TIMEOUT_MS) {
         return new Promise((resolve, reject) => {
             if (!this._registry || !this._portName) {
                 this._log(`${cmdObj.cmd} rejected: not connected`, 'error');
@@ -575,52 +631,68 @@ class UnifiedDeviceAPI {
                 return;
             }
 
-            if (this._pendingResolve) {
-                this._log(`${cmdObj.cmd} rejected: busy with ${this._pendingCmd}`, 'error');
-                reject(new Error(`Busy: waiting for ${this._pendingCmd}`));
-                return;
+            if (!this._responseQueues[responseType]) {
+                this._responseQueues[responseType] = [];
             }
 
-            this._pendingResolve = resolve;
-            this._pendingReject = reject;
-            this._pendingCmd = cmdObj.cmd;
+            const entry = { resolve, reject, timer: null };
+
+            entry.timer = setTimeout(() => {
+                const q = this._responseQueues[responseType];
+                const idx = q?.indexOf(entry);
+                if (idx >= 0) q.splice(idx, 1);
+                reject(new Error(`Timeout: ${cmdObj.cmd}`));
+            }, timeoutMs);
+
+            this._responseQueues[responseType].push(entry);
 
             const sysex = encodeDmJsonToSysEx(cmdObj);
             this._registry.send(this._portName, sysex);
             this._log(cmdObj.cmd, 'tx');
-
-            this._timeoutHandle = setTimeout(() => {
-                const cmd = this._pendingCmd;
-                this._clearPending();
-                reject(new Error(`Timeout: ${cmd}`));
-            }, API_TIMEOUT_MS);
         });
     }
 
-    _resolve(data) {
-        if (this._pendingResolve) {
-            const resolve = this._pendingResolve;
-            this._clearPending();
-            resolve(data);
+    //======================================================================
+    // PRIVATE: Response queue helpers
+    //======================================================================
+
+    /**
+     * Resolve the oldest queued waiter for a response type.
+     * @returns {boolean} true if a waiter was resolved
+     */
+    _resolveQueue(type, json) {
+        const q = this._responseQueues[type];
+        if (q?.length > 0) {
+            const entry = q.shift();
+            clearTimeout(entry.timer);
+            entry.resolve(json);
+            return true;
         }
+        return false;
     }
 
-    _reject(error) {
-        if (this._pendingReject) {
-            const reject = this._pendingReject;
-            this._clearPending();
-            reject(error instanceof Error ? error : new Error(error));
+    /**
+     * Reject the oldest queued waiter across all types.
+     * Used for error responses where the target type is ambiguous.
+     * @returns {boolean} true if a waiter was rejected
+     */
+    _rejectFirstQueue(error) {
+        for (const [type, q] of Object.entries(this._responseQueues)) {
+            if (q.length > 0) {
+                const entry = q.shift();
+                clearTimeout(entry.timer);
+                entry.reject(error);
+                return true;
+            }
         }
+        return false;
     }
 
-    _clearPending() {
-        if (this._timeoutHandle) {
-            clearTimeout(this._timeoutHandle);
-            this._timeoutHandle = null;
-        }
-        this._pendingResolve = null;
-        this._pendingReject = null;
-        this._pendingCmd = null;
+    /**
+     * Check if any waiter is queued for a response type.
+     */
+    _hasQueuedWaiter(type) {
+        return (this._responseQueues[type]?.length ?? 0) > 0;
     }
 
     //======================================================================
@@ -706,7 +778,7 @@ class UnifiedDeviceAPI {
             if (this._firmwareUploader?.active && this._firmwareUploader.handleTransportFailure()) {
                 return;
             }
-            this._reject(new Error('Transport transfer failed'));
+            this._rejectFirstQueue(new Error('Transport transfer failed'));
             return;
         }
 
@@ -721,7 +793,7 @@ class UnifiedDeviceAPI {
             this._routeResponse(json);
         } catch (error) {
             this._log(`Failed to decode transport payload: ${error.message}`, 'error');
-            this._reject(error);
+            this._rejectFirstQueue(error);
         }
     }
 
@@ -741,6 +813,10 @@ class UnifiedDeviceAPI {
             this._log(`DM transport: malformed JSON: ${e.message}`, 'error');
         }
     }
+
+    //======================================================================
+    // PRIVATE: Response classification and dispatch
+    //======================================================================
 
     _classifyResponse(json) {
         if (json.error || json.status === 'error') return 'error';
@@ -766,37 +842,18 @@ class UnifiedDeviceAPI {
         return 'unknown';
     }
 
-    _responseMatchesCommand(responseType, pendingCmd, json) {
-        if (responseType === 'error') return true;
-        if (responseType === 'editor-active') return pendingCmd === 'init';
-        if (responseType === 'editor-inactive') return pendingCmd === 'eject';
-        if (responseType === 'save-status') return false;
-        if (responseType === 'list-patches') return pendingCmd === 'list-patches';
-        if (responseType === 'get-patch') return pendingCmd === 'get-patch';
-        if (responseType === 'restarting') return pendingCmd === 'restart-device';
-        if (responseType === 'device-info') return pendingCmd === 'get-device-info';
-        if (responseType === 'config') return pendingCmd === 'config-get' || pendingCmd === 'config-set';
-        if (responseType === 'control-surface') return pendingCmd === 'get-control-surface';
-        if (responseType === 'mutation-ack') {
-            return json.op === pendingCmd;
-        }
-
-        return false;
-    }
-
     _routeResponse(json) {
         const responseType = this._classifyResponse(json);
 
-        // Save status updates
+        // Save status updates — always fire callback, resolve queue only on 'saved'
         if (responseType === 'save-status') {
             const statusText = json.status === 'saved' ? 'Complete' : json.status;
             this._log(`Save status: ${statusText}`);
             if (this._onSaveStatusChanged) {
                 this._onSaveStatusChanged(json.status);
             }
-            // When we're waiting for a save response, 'saved' IS the response
-            if (this._pendingCmd === 'save' && json.status === 'saved') {
-                this._resolve(json);
+            if (json.status === 'saved') {
+                this._resolveQueue('save-status', json);
             }
             return;
         }
@@ -808,8 +865,8 @@ class UnifiedDeviceAPI {
             }
         }
 
-        // External patch change
-        if (json.op === 'select-patch' && !this._pendingCmd) {
+        // External patch change (unsolicited select-patch with no queued waiter)
+        if (json.op === 'select-patch' && !this._hasQueuedWaiter('mutation-ack')) {
             this._log(`External patch change: index=${json.current_index}`);
             if (this._onExternalPatchChange) {
                 this._onExternalPatchChange(json);
@@ -817,35 +874,36 @@ class UnifiedDeviceAPI {
             return;
         }
 
-        const pending = this._pendingCmd;
-
-        if (!pending) {
-            this._log(`Response with no pending command: ${JSON.stringify(json)}`, 'warn');
-            return;
-        }
-
+        // Error responses — reject oldest queued waiter, or fire callback
         if (responseType === 'error') {
             const msg = json.error || json.message || 'Unknown error';
             this._log(`Error: ${msg}`, 'error');
-            this._reject(new Error(msg));
+            if (!this._rejectFirstQueue(new Error(msg))) {
+                this._onError?.(json);
+            }
             return;
         }
 
-        if (responseType === 'saving-progress') {
-            this._log(`Saving: ${json.progress}%`);
+        // Try to resolve a queued waiter first
+        if (this._resolveQueue(responseType, json)) {
             return;
         }
 
-        if (!this._responseMatchesCommand(responseType, pending, json)) {
-            this._log(`Mismatched response: got ${responseType}/${json.op || ''} but pending=${pending}`, 'warn');
-            return;
+        // No queued waiter — fire reactive data callback
+        switch (responseType) {
+            case 'get-patch':       this._onPatchData?.(json); break;
+            case 'list-patches':    this._onPatchList?.(json); break;
+            case 'config':          this._onConfig?.(json); break;
+            case 'device-info':     this._onDeviceInfo?.(json); break;
+            case 'control-surface': this._onControlSurface?.(json); break;
+            case 'editor-active':
+            case 'editor-inactive': this._onEditorStatus?.(json); break;
+            case 'mutation-ack':    this._onMutationAck?.(json); break;
         }
-
-        this._resolve(json);
     }
 
     //======================================================================
-    // PRIVATE: DM Protocol Stubs (Phase 1 — log and discard)
+    // PRIVATE: DM Protocol handling
     //======================================================================
 
     _handleDmChannel(data) {
@@ -866,7 +924,7 @@ class UnifiedDeviceAPI {
                 return;
             }
 
-            // Notifications have "notification" key — fire callback, not promise
+            // Notifications have "notification" key — fire callback
             if (json.notification) {
                 this._log(`DM notification: ${json.notification}`);
                 if (this._onDmNotification) {
@@ -875,7 +933,7 @@ class UnifiedDeviceAPI {
                 return;
             }
 
-            // Command response — route through existing promise mechanism
+            // Command response — route through dispatcher
             this._routeResponse(json);
 
         } else if (format === 'transport') {

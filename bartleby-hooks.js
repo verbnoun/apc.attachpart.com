@@ -92,10 +92,10 @@ function useBartlebySession(api, { addLog }) {
 
         try {
             const response = await api.setConfig(partialConfig);
-            if (response.status === 'config') {
+            if (response.config) {
                 setConfig(response.config);
                 // saveStatus is driven by device broadcasts
-            } else if (response.status === 'error') {
+            } else if (response.error || response.status === 'error') {
                 addLog?.(`Bartleby config update failed: ${response.message}`, 'error');
             }
         } catch (e) {
@@ -125,17 +125,13 @@ function useBartlebySession(api, { addLog }) {
     /**
      * Exit EDITOR mode
      */
-    const eject = useCallback(async () => {
+    const eject = useCallback(() => {
         if (busy || !api) return;
         setBusy(true);
 
-        try {
-            await api.eject();
-            setSessionActive(false);
-            addLog?.('Bartleby EDITOR session ended', 'info');
-        } catch (e) {
-            addLog?.(`Bartleby eject failed: ${e.message}`, 'error');
-        }
+        api.eject();  // fire-and-forget
+        setSessionActive(false);
+        addLog?.('Bartleby EDITOR session ended', 'info');
 
         setBusy(false);
     }, [api, busy, addLog]);

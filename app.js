@@ -139,7 +139,7 @@ function App() {
 
     const addLog = useCallback((message, type = 'info') => {
         const timestamp = new Date().toLocaleTimeString();
-        setLogs(prev => [...prev.slice(-99), { message, type, timestamp }]);
+        setLogs(prev => [...prev.slice(-499), { message, type, timestamp }]);
     }, []);
 
     // Per-window info bar helpers
@@ -625,32 +625,28 @@ function App() {
         if (!api) return;
         const wid = `device-${portName}`;
 
-        try {
-            if (WindowManager.exists(wid)) WindowManager.setInfoBar(wid, { left: `Loading patch ${index}…` });
-            await api.selectPatch(index);
+        if (WindowManager.exists(wid)) WindowManager.setInfoBar(wid, { left: `Loading patch ${index}…` });
+        api.selectPatch(index);  // fire-and-forget
 
-            // If paired, select-patch triggers auto-exchange on synth.
-            // Defer loadPatch to exchange-complete handler — sending get-patch
-            // during exchange causes transport contention (exchange chunks
-            // get consumed by API transport instead of get-patch response).
-            const registry = deviceRegistryRef.current;
-            const pairs = registry?.getConfigPairs() || {};
-            const isPaired = Object.values(pairs).includes(portName);
+        // If paired, select-patch triggers auto-exchange on synth.
+        // Defer loadPatch to exchange-complete handler — sending get-patch
+        // during exchange causes transport contention (exchange chunks
+        // get consumed by API transport instead of get-patch response).
+        const registry = deviceRegistryRef.current;
+        const pairs = registry?.getConfigPairs() || {};
+        const isPaired = Object.values(pairs).includes(portName);
 
-            if (isPaired) {
-                updateSynthState(portName, { pendingPatchIndex: index });
-                refreshControllerConfig(portName);
-            } else {
+        if (isPaired) {
+            updateSynthState(portName, { pendingPatchIndex: index });
+            refreshControllerConfig(portName);
+        } else {
+            try {
                 await loadPatch(portName, index);
-                if (WindowManager.exists(wid)) {
-                    WindowManager.setInfoBar(wid, { left: '' });
-                }
+            } catch (err) {
+                addLog(`Failed to load patch: ${err.message}`, 'error');
             }
-        } catch (err) {
-            addLog(`Failed to select patch: ${err.message}`, 'error');
             if (WindowManager.exists(wid)) {
-                WindowManager.setInfoBar(wid, { left: err.message });
-                clearInfoBarDelayed(wid, 3000);
+                WindowManager.setInfoBar(wid, { left: '' });
             }
         }
     };
@@ -664,7 +660,7 @@ function App() {
         try {
             if (WindowManager.exists(wid)) WindowManager.setInfoBar(wid, { left: 'Creating patch…', right: 'Saving…' });
             const name = `New Patch ${(ss.patchList || []).length + 1}`;
-            await api.createPatch(name);
+            api.createPatch(name);  // fire-and-forget (serial MIDI guarantees ordering)
             const patches = await api.listPatches();
             updateSynthState(portName, { patchList: patches.patches || [] });
             await selectPatch(portName, patches.patches.length - 1);
@@ -688,7 +684,7 @@ function App() {
 
         try {
             if (WindowManager.exists(wid)) WindowManager.setInfoBar(wid, { left: `Deleting patch ${index}…`, right: 'Saving…' });
-            await api.deletePatch(index);
+            api.deletePatch(index);  // fire-and-forget
             const patches = await api.listPatches();
             updateSynthState(portName, { patchList: patches.patches || [], currentPatchIndex: -1, currentPatch: null });
             if (WindowManager.exists(wid)) {
@@ -711,7 +707,7 @@ function App() {
 
         try {
             if (WindowManager.exists(wid)) WindowManager.setInfoBar(wid, { left: `Renaming…`, right: 'Saving…' });
-            await api.renamePatch(index, newName);
+            api.renamePatch(index, newName);  // fire-and-forget
             const patches = await api.listPatches();
             updateSynthState(portName, { patchList: patches.patches || [] });
             if (WindowManager.exists(wid)) {
@@ -734,7 +730,7 @@ function App() {
 
         try {
             if (WindowManager.exists(wid)) WindowManager.setInfoBar(wid, { left: 'Moving…', right: 'Saving…' });
-            await api.movePatch(from, to);
+            api.movePatch(from, to);  // fire-and-forget
             const patches = await api.listPatches();
             updateSynthState(portName, { patchList: patches.patches || [], currentPatchIndex: to });
             if (WindowManager.exists(wid)) {
@@ -762,13 +758,12 @@ function App() {
 
         try {
             if (WindowManager.exists(wid)) WindowManager.setInfoBar(wid, { left: `${enabled ? 'Adding' : 'Removing'} ${moduleName}…` });
-            const result = await api.toggleModule(ss.currentPatchIndex, moduleName, enabled);
+            api.toggleModule(ss.currentPatchIndex, moduleName, enabled);  // fire-and-forget
             await loadPatch(portName, ss.currentPatchIndex);
             if (WindowManager.exists(wid)) {
                 WindowManager.setInfoBar(wid, { left: '', right: 'Saved' });
                 clearInfoBarDelayed(wid, 2000);
             }
-            return result;
         } catch (err) {
             addLog(`Failed to toggle module: ${err.message}`, 'error');
             if (WindowManager.exists(wid)) {
@@ -792,7 +787,7 @@ function App() {
 
         try {
             if (WindowManager.exists(wid)) WindowManager.setInfoBar(wid, { left: `${paramKey}…` });
-            await api.updateParam(ss.currentPatchIndex, paramKey, options);
+            api.updateParam(ss.currentPatchIndex, paramKey, options);  // fire-and-forget
             const _p = await loadPatch(portName, ss.currentPatchIndex);
             if (_p) { const _m = _p[Object.keys(_p).find(k => _p[k]?.[paramKey])]; if (_m?.[paramKey]) addLog(`[DBG] ${paramKey} → v=${_m[paramKey].initial} d=${_m[paramKey].display} p=${_m[paramKey].priority}`, 'info'); }
             else addLog('[DBG] loadPatch returned null', 'error');
@@ -817,7 +812,7 @@ function App() {
 
         try {
             if (WindowManager.exists(wid)) WindowManager.setInfoBar(wid, { left: `${paramKey} range…` });
-            await api.updateRange(ss.currentPatchIndex, paramKey, min, max);
+            api.updateRange(ss.currentPatchIndex, paramKey, min, max);  // fire-and-forget
             await loadPatch(portName, ss.currentPatchIndex);
             if (WindowManager.exists(wid)) {
                 WindowManager.setInfoBar(wid, { left: '', right: 'Saved' });
@@ -840,13 +835,12 @@ function App() {
 
         try {
             if (WindowManager.exists(wid)) WindowManager.setInfoBar(wid, { left: `${enabled ? 'Adding' : 'Removing'} ${sourceModule} → ${targetParam}…` });
-            const result = await api.toggleModulation(ss.currentPatchIndex, targetParam, sourceModule, enabled);
+            api.toggleModulation(ss.currentPatchIndex, targetParam, sourceModule, enabled);  // fire-and-forget
             await loadPatch(portName, ss.currentPatchIndex);
             if (WindowManager.exists(wid)) {
                 WindowManager.setInfoBar(wid, { left: '', right: 'Saved' });
                 clearInfoBarDelayed(wid, 2000);
             }
-            return result;
         } catch (err) {
             addLog(`Failed to toggle modulation: ${err.message}`, 'error');
             if (WindowManager.exists(wid)) {
@@ -866,7 +860,7 @@ function App() {
         const amountParam = `${targetParam}_${sourceModule}_AMOUNT`;
         try {
             if (WindowManager.exists(wid)) WindowManager.setInfoBar(wid, { left: `${amountParam}…` });
-            await api.updateModulationAmount(ss.currentPatchIndex, amountParam, amount);
+            api.updateModulationAmount(ss.currentPatchIndex, amountParam, amount);  // fire-and-forget
             await loadPatch(portName, ss.currentPatchIndex);
             if (WindowManager.exists(wid)) {
                 WindowManager.setInfoBar(wid, { left: '', right: 'Saved' });

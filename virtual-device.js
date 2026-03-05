@@ -72,7 +72,7 @@ class VirtualDevice {
                 if (json.cmd) {
                     this._logMidi('in', `cmd: ${json.cmd}`);
                     console.log(`[${this._portName}] RX: ${json.cmd}`);
-                    Promise.resolve().then(() => this.handleCommand(json));
+                    this.handleCommand(json);
                 } else {
                     this.handleExchangeResponse(json);
                 }
@@ -95,10 +95,7 @@ class VirtualDevice {
         this._logMidi('in', `cmd: ${json.cmd}`);
         console.log(`[${this._portName}] RX: ${json.cmd}`);
 
-        // Defer response to next microtask so API's pending state is fully set
-        Promise.resolve().then(() => {
-            this.handleCommand(json);
-        });
+        this.handleCommand(json);
     }
 
     /**

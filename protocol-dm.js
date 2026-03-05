@@ -131,8 +131,7 @@ function from14bit(val) {
  * Encode a JSON command as a 0x20 DM SysEx message.
  * Format: [F0][7D][00][20][json_bytes][F7]
  *
- * Not wired into _sendCommand() yet (Phase 5), but available for testing
- * and manual send.
+ * Used by _send() and query() for all DM command encoding.
  *
  * @param {Object} json - Command object (e.g., {cmd: 'list-patches'})
  * @returns {Uint8Array} Complete SysEx message including F0/F7

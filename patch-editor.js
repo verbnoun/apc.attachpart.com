@@ -141,8 +141,8 @@ function PatchEditorWindow({
     const [wiringFrom, setWiringFrom] = useState(null); // { moduleId, type }
     const [wiringMousePos, setWiringMousePos] = useState(null);
 
-    // Loading state
-    const [isLoading, setIsLoading] = useState(!currentPatch);
+    // Loading state — only start loading if there are patches to load
+    const [isLoading, setIsLoading] = useState(!currentPatch && patchList.length > 0);
     const [loadingIndex, setLoadingIndex] = useState(currentIndex >= 0 ? currentIndex : null);
 
     // Detect when loading completes (currentPatch changes from null to data)

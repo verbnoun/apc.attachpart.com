@@ -49,16 +49,11 @@ function FirmwareWindow({ device, deviceInfo, api, onClose, addLog }) {
         }
     };
 
-    const handleRestart = async () => {
+    const handleRestart = () => {
         if (!api) return;
-
-        try {
-            addLog('Restarting device...', 'info');
-            await api.restartDevice();
-            onClose();
-        } catch (err) {
-            addLog(`Restart failed: ${err.message}`, 'error');
-        }
+        addLog('Restarting device...', 'info');
+        api.restartDevice();  // fire-and-forget
+        onClose();
     };
 
     const getProgressText = () => {

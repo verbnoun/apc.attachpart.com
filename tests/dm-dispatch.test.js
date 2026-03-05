@@ -291,9 +291,9 @@ function injectDmMessage(api, json) {
 }
 
 describe('Phase 5 — command sending via 0x20', () => {
-    it('_sendCommand uses encodeDmJsonToSysEx (0x20 framing)', () => {
+    it('_send uses encodeDmJsonToSysEx (0x20 framing)', () => {
         const { api, sent } = createMockApi();
-        api._sendCommand({ cmd: 'list-patches' });
+        api._send({ cmd: 'list-patches' });
 
         expect(sent.length).toBe(1);
         const msg = sent[0];
@@ -309,9 +309,9 @@ describe('Phase 5 — command sending via 0x20', () => {
         expect(parsed.cmd).toBe('list-patches');
     });
 
-    it('pair command encodes correctly', () => {
+    it('pair command encodes correctly via query', () => {
         const { api, sent } = createMockApi();
-        api._sendCommand({ cmd: 'pair', muid: 42 });
+        api.query({ cmd: 'pair', muid: 42 }, 'mutation-ack');
 
         const msg = sent[0];
         expect(msg[3]).toBe(0x20);
@@ -327,31 +327,31 @@ describe('Phase 5 — command sending via 0x20', () => {
 // ============================================================================
 
 describe('Phase 5 — notification dispatch', () => {
-    it('0x20 JSON with notification key fires onDmNotification, not promise', async () => {
+    it('0x20 JSON with notification key fires onDmNotification, not query', async () => {
         const { api } = createMockApi();
         const notifications = [];
         api.onDmNotification((json) => notifications.push(json));
 
-        // Send a command to create a pending promise
-        const promise = api._sendCommand({ cmd: 'list-patches' });
+        // Send a query to create a queued waiter
+        const promise = api.query({ cmd: 'list-patches' }, 'list-patches');
 
-        // Inject a notification (should NOT resolve the promise)
+        // Inject a notification (should NOT resolve the query)
         injectDmMessage(api, { notification: 'exchange-start' });
 
         expect(notifications.length).toBe(1);
         expect(notifications[0].notification).toBe('exchange-start');
 
-        // Promise should still be pending (pendingCmd still set)
-        expect(api._pendingCmd).toBe('list-patches');
+        // Query should still be pending (queue entry still exists)
+        expect(api._responseQueues['list-patches'].length).toBe(1);
 
-        // Clean up — resolve the pending promise
+        // Clean up — resolve the pending query
         injectDmMessage(api, { status: 'ok', op: 'list-patches', patches: [] });
         await promise;
     });
 
-    it('0x20 JSON without notification key resolves pending promise', async () => {
+    it('0x20 JSON without notification key resolves queued query', async () => {
         const { api } = createMockApi();
-        const promise = api._sendCommand({ cmd: 'list-patches' });
+        const promise = api.query({ cmd: 'list-patches' }, 'list-patches');
 
         injectDmMessage(api, { status: 'ok', op: 'list-patches', patches: [] });
 
@@ -360,13 +360,30 @@ describe('Phase 5 — notification dispatch', () => {
         expect(result.op).toBe('list-patches');
     });
 
-    it('0x20 error response rejects pending promise', async () => {
+    it('0x20 error response rejects queued query', async () => {
         const { api } = createMockApi();
-        const promise = api._sendCommand({ cmd: 'delete-patch' });
+        const promise = api.query({ cmd: 'delete-patch' }, 'mutation-ack');
 
         injectDmMessage(api, { error: 'patch not found' });
 
         await expect(promise).rejects.toThrow('patch not found');
+    });
+
+    it('two concurrent get-patch queries both resolve independently', async () => {
+        const { api } = createMockApi();
+
+        const p1 = api.query({ cmd: 'get-patch', index: 0 }, 'get-patch');
+        const p2 = api.query({ cmd: 'get-patch', index: 1 }, 'get-patch');
+
+        // First response resolves first query (FIFO)
+        injectDmMessage(api, { index: 0, name: 'Patch A', osc: {} });
+        // Second response resolves second query
+        injectDmMessage(api, { index: 1, name: 'Patch B', osc: {} });
+
+        const r1 = await p1;
+        const r2 = await p2;
+        expect(r1.name).toBe('Patch A');
+        expect(r2.name).toBe('Patch B');
     });
 });
 
